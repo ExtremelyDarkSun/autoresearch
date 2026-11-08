@@ -1,0 +1,46 @@
+{
+  "_comment": "部署参数示例（⛔ 不含任何本机路径或真实凭据）。复制到部署侧填写，再用 gen-profile-patch.mjs 生成 patch 片段。",
+  "workspace": "C:/path/to/your/project",
+  "plugins": {
+    "agent-instruction-filter": {
+      "enabled": false,
+      "mode": "off",
+      "childOnly": true,
+      "policyPath": null,
+      "onError": "keep"
+    },
+    "doc-gap": {
+      "enabled": false,
+      "threshold": 0.8,
+      "notify": "hint",
+      "logLevel": "info",
+      "maxDocChars": 20000,
+      "projects": ["C:/path/to/your/project"],
+      "docs": [
+        { "label": "示例判据文档", "path": "C:/path/to/your/project/docs/rules.md" }
+      ],
+      "policy": {
+        "scope": {
+          "include": ["填写：本项目的哪些方面算「可能与文档有关」"],
+          "exclude": ["填写：哪些话题一律判 covered"]
+        },
+        "criteria": {
+          "covered": "文档明确写了这一点，含理由或边界",
+          "partial": "提到了但含糊、缺理由或缺边界",
+          "missing": "完全没有提到"
+        },
+        "anchor": "填写：放在提示词最后一段的范围锚点"
+      },
+      "judge": { "backend": "session", "timeoutMs": 20000, "maxTokens": 4000 }
+    },
+    "autodl-events": {
+      "enabled": false,
+      "pollMs": 5000,
+      "maxAgeMinutes": 45,
+      "delivery": "steer",
+      "maxTargets": 1,
+      "fallback": "hold",
+      "projects": ["C:/path/to/your/project"]
+    }
+  }
+}

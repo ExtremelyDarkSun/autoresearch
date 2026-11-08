@@ -1,0 +1,35 @@
+# GENERATED-BY: portable extraction (agent, 2026-11-09 01:20 +08:00)
+# LAST-EDIT: portable extraction (agent, 2026-11-09 01:20 +08:00)
+# PURPOSE: 本 bundle 的 Loader 补丁**模板**（出厂关闭）—— 往 profile 插一行 Host 插件
+# ORIGIN: install/dsh-doc-gap/cordis.patch.yml（去实例值：enabled 出厂 false，项目范围与文档清单改为空）
+# CUMULATIVE-DELTA: 首版。出厂 `enabled: false`：**未显式启用不会发生任何模型调用**。
+#   `projects` 空 = 不限项目（写上就是**规范化路径前缀**，不是子串）；`docs` 空 = 启用后什么也不判。
+#   ⚠️ 装载前先把 docs 与 policy 填好，并跑 verify-real-docs.mjs（退出码 2 = 未执行，不是通过）。
+#   只插入自己的行，⛔ 不覆盖任何出货行。
+- insert:
+    - id: doc-gap
+      name: '@autoresearch/dsh-doc-gap'
+      config:
+        # ⚠️ 出厂 false。改成 true 之前先确认 docs 与 policy 都已填好。
+        enabled: false
+        threshold: 0.8
+        # hint = 回合末尾提一句；ask = 让会话去 ask_user_question
+        notify: hint
+        logLevel: info
+        # 项目范围：**规范化路径前缀**（例如部署侧的项目根绝对路径）。空列表 = 不限项目。
+        projects: []
+        # 判据材料（不是落点）：判定器只拿它判「说了没有」，该补进哪份文件由会话按项目规矩判断。
+        docs: []
+        # ⚠️ 必须大于 docs 里每份文档的字符数，否则整份判「已截断」，判定材料不完整（插件会写 stderr 诊断）。
+        maxDocChars: 20000
+        # 判定政策：范围 / 三类判据 / 结尾锚点。⛔ 插件不内置任何项目专用范围，必须在这里给。
+        # 结构见 plugins/dsh-doc-gap/docs/policy.template.json。
+        policy:
+          scope:
+            include: []
+            exclude: []
+          anchor: ''
+        judge:
+          backend: session
+          timeoutMs: 20000
+          maxTokens: 4000

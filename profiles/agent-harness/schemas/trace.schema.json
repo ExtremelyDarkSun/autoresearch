@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "agent-harness/trace.schema.json",
+  "title": "agent harness 轨迹（JSON，一次运行一个文件）",
+  "description": "轨迹记录 agent 在**一道题**上做了哪些动作。检查只用两样：工具调用本身（工具名 + 参数）与（可选的）工具返回内容。工具返回里的路径不算 agent 的动作。",
+  "type": "object",
+  "required": ["steps"],
+  "additionalProperties": true,
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "可选：本轨迹对应哪道题。文件名通常已经包含了，这里再写一次便于核对。"
+    },
+    "schema_version": {
+      "type": "integer",
+      "description": "可选：轨迹格式版本。"
+    },
+    "steps": {
+      "type": "array",
+      "description": "按发生顺序排列的步骤。没有 tool_calls 的步骤表示纯文本回合。",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "step_id": {
+            "type": ["string", "integer"],
+            "description": "可选的步号。"
+          },
+          "source": {
+            "type": "string",
+            "description": "可选：谁产生的这一步（例如发起调用的 agent）。"
+          },
+          "message": {
+            "type": "string",
+            "description": "可选：本步的文本内容。"
+          },
+          "tool_calls": {
+            "type": "array",
+            "description": "本步发出的工具调用（可以是 0 个或多个）。",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "function_name": {
+                  "type": "string",
+                  "description": "工具名。兼容字段：name / tool。"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "工具名的别名。"
+                },
+                "arguments": {
+                  "description": "工具参数：对象，或对象序列化后的字符串。兼容字段：args。",
+                  "type": ["object", "string", "null"]
+                },
+                "tool_call_id": {
+                  "type": "string",
+                  "description": "可选：调用 id。"
+                }
+              }
+            }
+          },
+          "observation": {
+            "type": ["object", "string", "null"],
+            "description": "工具返回。对象时读 content / text / output / result 之一作为文本。",
+            "properties": {
+              "content": {
+                "description": "返回内容，可能是 JSON 字符串。",
+                "type": ["string", "object", "null"]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-notes": [
+    "路径判定：绝对路径不在 allowed_roots 之下、或命中 forbidden_path_patterns ⇒ 越界。相对路径与 ~ 开头的路径不判。",
+    "敏感片段判定：在工具参数的整体文本里搜字面子串（可配置是否连同 observation 一起搜）。",
+    "示例 examples/trace.example.json 全部是合成数据，没有真实题号、真实仓库或真实工具名。"
+  ]
+}

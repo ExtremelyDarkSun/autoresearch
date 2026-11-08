@@ -1,0 +1,20 @@
+{
+  "name": "@autoresearch/dsh-autodl-events",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Host plugin: turn backend machine-availability events into a session message (steer or inject), bound-target only.",
+  "type": "module",
+  "main": "lib/plugin.js",
+  "exports": {
+    ".": "./lib/plugin.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/plugin.js",
+    "lib/plugin-core.mjs",
+    "lib/index.js",
+    "lib/core.mjs",
+    "README.md"
+  ],
+  "license": "MIT"
+}

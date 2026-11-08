@@ -1,0 +1,18 @@
+# GENERATED-BY: portable extraction (agent, 2026-11-09 01:20 +08:00)
+# LAST-EDIT: portable extraction (agent, 2026-11-09 01:20 +08:00)
+# PURPOSE: 本 bundle 的 Loader 补丁**模板** —— 往 profile 插一行 Host 插件。安装由 install_bundle 完成。
+# ORIGIN: install/agent-instruction-filter/cordis.patch.yml（去实例值：出厂 mode 由 filter 改为 off）
+# CUMULATIVE-DELTA: 首版。出厂 `mode: off`（不注册监听器）；`policyPath: null` = 用本目录 policy.mjs（中性空规则）。
+#   要裁剪时必须**显式**给 policyPath 指向一份外置策略，并先跑 verify-real-policy.mjs 核。
+#   只插入自己的行，⛔ 不覆盖任何出货行（覆盖会把那一行的 config 整份替换）。
+- insert:
+    - id: agent-instruction-filter
+      name: '@autoresearch/dsh-agent-instruction-filter'
+      config:
+        # off = 不注册任何监听器（出厂）｜filter = 按策略裁｜strip = 显式整条丢弃（保留能力，⛔ 非默认）
+        mode: off
+        childOnly: true
+        # null = 用本目录 policy.mjs（rules 为空 ⇒ 逐字不动）。外置策略须为 JSON 且结构合法。
+        policyPath: null
+        # keep = 插件自身出错时保留原注入（fail-open，出厂）｜drop = 丢弃（显式选择）
+        onError: keep

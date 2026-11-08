@@ -1,0 +1,175 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "autoresearch/plan.schema.json",
+  "title": "一次研究的事前方案（plan）",
+  "description": "与 kernel/autoresearch/governance.py 的 validate_plan() 逐键对应。这不是官方通过率判据：它只判「方案能不能被独立审计、能不能冻结」。",
+  "type": "object",
+  "required": [
+    "id",
+    "goal",
+    "hypothesis",
+    "change_set",
+    "criteria",
+    "baseline",
+    "case_sets",
+    "previous_passes",
+    "branches",
+    "budget",
+    "input_files"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "方案号。同一 id 再冻结一次 ⇒ version + 1。"
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1,
+      "description": "这一轮要回答的问题（一句话）。"
+    },
+    "hypothesis": {
+      "description": "可被否掉的假设。写成对象时 id 用来核「一次一轮只改一个假设下的整组改动」。",
+      "oneOf": [
+        {"type": "string", "minLength": 1},
+        {
+          "type": "object",
+          "required": ["id", "text"],
+          "additionalProperties": true,
+          "properties": {
+            "id": {"type": "string", "minLength": 1},
+            "text": {"type": "string", "minLength": 1}
+          }
+        }
+      ]
+    },
+    "change_set": {
+      "type": "array",
+      "minItems": 1,
+      "description": "为验证这一个假设要改的整组改动。出现两个不同 hypothesis_id ⇒ 拒。",
+      "items": {
+        "oneOf": [
+          {"type": "string", "minLength": 1},
+          {
+            "type": "object",
+            "required": ["description"],
+            "additionalProperties": true,
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "description": {"type": "string", "minLength": 1},
+              "hypothesis_id": {"type": "string", "minLength": 1}
+            }
+          }
+        ]
+      }
+    },
+    "criteria": {
+      "type": "object",
+      "required": ["metric", "direction", "threshold", "source"],
+      "additionalProperties": true,
+      "properties": {
+        "metric": {"type": "string", "minLength": 1},
+        "direction": {"enum": ["increase", "decrease"]},
+        "threshold": {
+          "type": "number",
+          "description": "必须是有限数。NaN / Infinity / 布尔值一律拒。"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "门槛的出处：哪次读数 / 哪条规则 / 哪份契约。⛔ 不许写「经验值」。"
+        },
+        "unit": {"type": "string"}
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "required": ["label", "fingerprint"],
+      "additionalProperties": true,
+      "properties": {
+        "label": {"type": "string", "minLength": 1, "description": "对照的是谁"},
+        "fingerprint": {"type": "string", "minLength": 1, "description": "对照件的内容指纹"}
+      }
+    },
+    "case_sets": {
+      "type": "object",
+      "required": ["target", "regression", "control"],
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1},
+          "description": "回答「改动有没有用」。不能为空。"
+        },
+        "regression": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "description": "回答「改动有没有害」。必须覆盖 previous_passes 全部题号。"
+        },
+        "control": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "description": "回答「变化是不是装置/波动造成的」。可以为空。"
+        }
+      }
+    },
+    "previous_passes": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "description": "历史已通过的题号。必须全部出现在 case_sets.regression 里；同一类内不许重复。"
+    },
+    "branches": {
+      "type": "object",
+      "required": ["support", "contradict", "inconclusive"],
+      "additionalProperties": false,
+      "description": "结果分支表。三支 action 不许完全相同。",
+      "properties": {
+        "support": {"$ref": "#/definitions/branch"},
+        "contradict": {"$ref": "#/definitions/branch"},
+        "inconclusive": {"$ref": "#/definitions/branch"}
+      }
+    },
+    "budget": {
+      "type": "object",
+      "required": ["max_cost_units", "max_seconds"],
+      "additionalProperties": true,
+      "properties": {
+        "max_cost_units": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "单位由部署方定义（钱 / 机时 / 调用次数）。布尔值不算数值。"
+        },
+        "max_seconds": {"type": "integer", "minimum": 1}
+      }
+    },
+    "input_files": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*\\.\\.).*$",
+        "description": "仓库内相对路径；不许绝对路径、不许含 .."
+      }
+    },
+    "title": {"type": "string", "description": "叙述字段：改它不触发重新审计。"},
+    "notes": {"type": "string", "description": "叙述字段：改它不触发重新审计。"},
+    "rationale": {"type": "string", "description": "叙述字段：改它不触发重新审计。"}
+  },
+  "definitions": {
+    "branch": {
+      "type": "object",
+      "required": ["action"],
+      "additionalProperties": true,
+      "properties": {
+        "action": {"type": "string", "minLength": 1, "description": "这一支出现时下一步做什么"},
+        "interpretation": {"type": "string", "description": "这一支能说明什么、不能说明什么"}
+      }
+    }
+  },
+  "x-notes": [
+    "关键字段集合见 governance.KEY_FIELDS；只有改它们才会让上一版审计失效。",
+    "本文件不预填任何预算数值，也不含任何具体比赛/模型/题号。",
+    "校验函数：governance.validate_plan(plan) -> list[str]（空列表 = 通过）。"
+  ]
+}

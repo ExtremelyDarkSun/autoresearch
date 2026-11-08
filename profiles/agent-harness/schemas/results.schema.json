@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "agent-harness/results.schema.json",
+  "title": "agent harness 结果（JSONL，每行一题）",
+  "description": "结果文件是「这次读数是多少」的唯一来源。每行一个 JSON 对象，至少含 task_id 与 status。一个 task_id 只能出现一次。",
+  "type": "object",
+  "required": ["task_id", "status"],
+  "additionalProperties": true,
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "题号，必须与题单一致、且在文件内唯一。"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["passed", "failed", "infra_error", "timed_out"],
+      "description": "四态。infra_error = 环境/依赖/服务侧失败；timed_out = 跑满预算被中断。两者都不是通过，也不进通过率分母。"
+    },
+    "reason": {
+      "type": ["string", "null"],
+      "description": "可选的原因文本。status=passed 时若仍带原因文本，读取函数会在 summary.notes 里点出来供复核。"
+    },
+    "duration_seconds": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "可选：本题耗时（秒）。也接受 seconds / wall_seconds / elapsed_seconds 三个别名。"
+    },
+    "tool_calls": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "可选：本题工具调用次数（过程量，不参与通过判定）。"
+    },
+    "turns": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "可选：本题对话轮次（过程量）。"
+    },
+    "patch_files": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "可选：改动涉及的文件（过程量）。"
+    },
+    "notes": {
+      "type": ["string", "null"],
+      "description": "可选的自由文本。"
+    }
+  },
+  "x-notes": [
+    "通过率口径：passed / (passed + failed)。infra_error 与 timed_out 既不算通过也不算失败。",
+    "不写真实读数：本仓库不内置任何结果文件，示例 examples/results.example.jsonl 全部是合成数据。",
+    "sidecar：结果文件旁可以放 <结果名>.meta.json 或 run_meta.json，写当时的 limits 与 measurement，用来给「同测量配置」提供依据。"
+  ]
+}

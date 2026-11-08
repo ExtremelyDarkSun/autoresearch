@@ -1,0 +1,20 @@
+{
+  "_template": "intent_report.template.json",
+  "_usage": "独立监控者填这份。covers.trigger_ids 必须覆盖该意图全部未处理触发；covers.user_seq 是读到哪条用户原话。填完交回：record_monitor_report(intent_id, report, actor=<监控会话>)。⛔ 不要保留下划线键。",
+  "covers": {
+    "trigger_ids": ["<TRG-…>"],
+    "user_seq": 0
+  },
+  "verdict": "on_track",
+  "basis": "<凭什么这么判：指到原始结果 / 规则 / 外部契约>",
+  "findings": [
+    {
+      "kind": "direction",
+      "statement": "<观察到了什么>",
+      "evidence": "<原始文件路径或行号>",
+      "attribution": "quote"
+    }
+  ],
+  "open_questions": ["<还需要什么证据才能判>"],
+  "notes": "<可选>"
+}

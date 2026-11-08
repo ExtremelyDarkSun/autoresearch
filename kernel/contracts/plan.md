@@ -1,0 +1,170 @@
+<!--
+GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
+LAST-EDIT: portable extraction / repository bootstrap (2026-11-09 +08:00)
+PURPOSE: 一次实验的「事前设计」正文 —— 假设、一次一组同假设改动、判据与出处、三类对照与历史已通过项、结果分支、预算，以及冻结与指纹
+ORIGIN: none（新文件）。抽取自上游 EXPERIMENT_RULES.md §1.1/§1.2/§1.3/§1.5/§1.9 与 plan_audit.md §4/§6，去掉了题单规模阈值与个人渠道
+CUMULATIVE-DELTA: 首版。每个字段都与 kernel/autoresearch/governance.py 的 validate_plan() 一一对应。
+-->
+
+# 方案契约（一次一轮）
+
+> 机器可读版本：`kernel/contracts/plan.schema.json`；校验函数：`governance.validate_plan()`。
+> 这份文件解释**为什么**要这些字段，schema 说明**是什么**。
+
+---
+
+## 1 一条原则：预期先写，再动手
+
+凡是「跑一次看看」的改动，都先写方案再执行。方案是**事前**的，不许事后补。
+方案一旦冻结（`freeze_plan`），改关键字段就要重新审计；只改叙述字段不用（§6）。
+
+⛔ 方案不是承诺结果。它承诺的是：**这一轮要读的量、判据、对照、分支、预算，开跑前就定了。**
+
+---
+
+## 2 一次一轮只改「一个假设下的整组改动」
+
+| 概念 | 含义 |
+|---|---|
+| **假设** | 一句**可被否掉**的话。写 `{id, text}` 时 `id` 是这组改动的归属键 |
+| **整组改动** | 为验证这一个假设，一次要改的所有东西。允许一组多项 |
+| **不是** | 「一次只改一个变量」——那会把一个假设拆成十轮，成本翻十倍 |
+
+`change_set` 的写法：
+
+```json
+"change_set": [
+  {"id": "c1", "description": "把入口参数收紧到只接受整数", "hypothesis_id": "H1"},
+  {"id": "c2", "description": "补一条回归用例覆盖这次修复",   "hypothesis_id": "H1"}
+]
+```
+
+判据（`validate_plan` 机械判）：
+
+* `change_set` 非空；
+* 每项必须有 `description`；
+* 写了 `hypothesis_id` ⇒ 必须与 `hypothesis.id` 一致；
+* 出现**两个不同的** `hypothesis_id` ⇒ 拒（那说明这一轮在测两个假设，读数分不开）。
+
+⚠️ 一个 `description` 要能回答「改了什么」，不是「想让它变好」。
+
+---
+
+## 3 判据必须带出处
+
+```json
+"criteria": {
+  "metric": "通过题数",
+  "direction": "increase",
+  "threshold": 1,
+  "source": "上一轮读数 docs/results_20261108.jsonl（逐题核对）"
+}
+```
+
+| 字段 | 判据 |
+|---|---|
+| `metric` | 非空，且是**这一个设计能产出的量** |
+| `direction` | `increase` / `decrease` |
+| `threshold` | 有限数（`NaN` / `Infinity` / `true` 一律拒） |
+| `source` | 非空。**门槛从哪来**：哪次读数、哪条规则、哪份契约 |
+
+⚠️ 阈值不是「拍一个数」：要能说出它在什么条件下成立。
+⚠️ 「差 1 题算不算显著」这类问题不在本层判 —— 本层只保证**你写下的门槛有出处**。
+
+---
+
+## 4 三类对照，且历史已通过项一题都不能掉
+
+```json
+"case_sets": {
+  "target":     ["t1", "t2"],
+  "regression": ["r1", "r2"],
+  "control":    ["c1"]
+},
+"previous_passes": ["r1"]
+```
+
+| 类 | 回答什么问题 | 缺了会怎样 |
+|---|---|---|
+| `target` | 改动**有没有用** | 没有可读的量，这一轮白跑 |
+| `regression` | 改动**有没有害** | 答不出「本来能过的题被做坏了吗」 |
+| `control` | 变化是不是**装置/波动**造成的 | 分不清「模型变差」与「这批题本来就难」 |
+
+硬规则（机械判）：
+
+* `target` 非空；
+* 三类之间**不许重叠**（同一题不能同时扮演两种角色）；
+* 同一类内**不许重复题号**（后一次会覆盖前一次的落点）；
+* **`previous_passes` ⊂ `regression`** —— 历史已通过的题一题都不许从回归集合里掉出去。
+
+⚠️ `previous_passes` 只能收**在同一个测量装置上**确实通过过的题。换了装置、换了模型、
+换了预算，旧通过就不算这一类的依据。
+
+---
+
+## 5 结果分支表：三支行动必须不同
+
+```json
+"branches": {
+  "support":      {"action": "把 c1 进下一轮，继续同假设"},
+  "contradict":   {"action": "回退 c1，改假设"},
+  "inconclusive": {"action": "先补一轮重复读数，不改配置"}
+}
+```
+
+判据：
+
+* 三支都要有 `action`（这一支出现时**下一步做什么**）；
+* 三支 `action` **不许完全相同** —— 一样等于没有分支表；
+* 「判不了」是**允许的结果**，不许事后编一个收获。
+
+⚠️ 「跑不完 / 装置级失败」这一支并入 `inconclusive`，但**不许**并进「失败」：
+它说明这次没测出东西，不是模型不行。
+
+---
+
+## 6 预算与冻结
+
+```json
+"budget": {"max_cost_units": 10, "max_seconds": 600}
+```
+
+| 字段 | 判据 |
+|---|---|
+| `max_cost_units` | ≥0 的**整数**（`true` 不算 1） |
+| `max_seconds` | >0 的整数 |
+
+⛔ 本仓库**不预填**任何预算数值，也不提供隐藏默认值。要跑就显式给。
+
+**冻结与指纹**：`freeze_plan()` 存两样东西 ——
+
+| 东西 | 是什么 | 什么时候变 |
+|---|---|---|
+| `fingerprint` | 整份方案的哈希 | 改任何字段都变 |
+| `key_fingerprint` | **关键字段**（`governance.KEY_FIELDS`）的哈希 | 只有改关键字段才变 |
+
+⇒ 改 `notes` / `title` / `rationale` 这类**叙述字段**：`reaudit_required=False`，
+上一版审计**继续覆盖**。这是有意的取舍：不让「改一句动机」把审计作废，
+否则修改会被审计成本压住。代价是：叙述层与审计时看到的版本可以有差异。
+
+---
+
+## 7 输入文件清单
+
+`input_files` 是**这一轮依据哪些文件**做判断：相对路径、不含 `..`。
+
+判据：`validate_plan` 只查形状与相对性；**文件在不在、内容是不是那一版**由审计者的
+`sources{path, locator}` 承担（I3）。⛔ 不许写「见上轮报告」这种没法定位的引用。
+
+---
+
+## 8 写方案的顺序（照做，六步）
+
+1. 写一句**可被否掉**的假设（`hypothesis`）。
+2. 列出验证它需要的**整组改动**（`change_set`）。
+3. 定**读什么量**、门槛多少、**出处在哪**（`criteria`）。
+4. 选题：`target` 产生那个量；`regression` 包含全部 `previous_passes`；`control` 视情况。
+5. 写三支结果分支，确认三支行动不同（`branches`）。
+6. 给预算与输入文件（`budget` / `input_files`），跑 `validate_plan()`，再 `freeze_plan()`。
+
+⛔ 顺序反了（先跑再看判据）就是事后编判据 —— 审计会退回来，而且它是对的。

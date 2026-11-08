@@ -1,0 +1,15 @@
+{
+  "name": "@autoresearch/dsh-doc-gap",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Host plugin: at turn end, judge whether the point behind the user's question is missing from configured project docs, and hint the session. Disabled by default.",
+  "exports": {
+    ".": "./index.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

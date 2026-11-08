@@ -1,0 +1,15 @@
+{
+  "name": "@autoresearch/dsh-agent-instruction-filter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Host plugin: filter injected agent-instruction text for subagents, driven by an explicit policy (default: off / keep).",
+  "exports": {
+    ".": "./index.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

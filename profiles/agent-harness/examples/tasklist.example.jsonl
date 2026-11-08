@@ -1,0 +1,3 @@
+{"task_id": "demo-001", "repo": "example/demo-repo", "base_commit": "0000000", "statement": "给示例模块 demo.mathx.add 补上输入类型检查，并让既有测试通过。", "tags": ["demo", "unit"], "notes": "合成示例，用于说明题单形状"}
+{"task_id": "demo-002", "repo": "example/demo-repo", "base_commit": "0000000", "statement": "示例模块 demo.textx.slug 在空输入上崩了，请修好并补一个回归用例。", "tags": ["demo", "unit"]}
+{"task_id": "demo-003", "repo": "example/other-repo", "base_commit": "1111111", "statement": "把示例模块 demo.cli 的 --dry-run 参数接到执行路径上。", "tags": ["demo", "cli"]}

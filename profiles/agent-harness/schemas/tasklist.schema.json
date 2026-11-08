@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "agent-harness/tasklist.schema.json",
+  "title": "agent harness 题单（JSONL，每行一题）",
+  "description": "题单是「这次要测哪些题」的唯一声明。每行一个 JSON 对象，至少含 task_id。同一份题单里 task_id 必须唯一：轨迹 / 补丁 / 测试输出通常按题号命名，重复的题号会让后一次覆盖前一次。",
+  "type": "object",
+  "required": ["task_id"],
+  "additionalProperties": true,
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "题号。必须唯一；会被用作轨迹文件名，所以不要含路径分隔符。"
+    },
+    "repo": {
+      "type": "string",
+      "description": "可选的仓库标识（只作记录，不参与判定）。"
+    },
+    "base_commit": {
+      "type": "string",
+      "description": "可选的基线版本标识（只作记录）。"
+    },
+    "statement": {
+      "type": "string",
+      "description": "可选的题面 / 任务描述。长文本允许。"
+    },
+    "tags": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "可选的分组标签，用来分桶看通过率。"
+    },
+    "notes": {
+      "type": "string",
+      "description": "可选的备注（为什么收进这次题单）。"
+    }
+  },
+  "x-notes": [
+    "本仓库不内置任何真实题单。示例见 examples/tasklist.example.jsonl，内容全部是合成数据。",
+    "题单为空（0 行）会被 kernel.autoresearch.adapters.agent_harness.read_tasklist() 判为非法：空题单往往意味着命令行漏了参数，然后静默跑成默认全量。",
+    "题单 schema 允许额外字段：不同 harness 的题面结构不同，本仓库不强制统一。"
+  ]
+}

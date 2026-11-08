@@ -1,0 +1,61 @@
+{
+  "_template": "plan_audit_report.template.json",
+  "_usage": "独立审计者填这份。prepared_id 必须是 prepare_audit 返回的 id；七个 coverage 键一个都不能少。填完交回：调 record_audit(prepared_id, report, actor=<审计会话>)。⛔ 不要保留下划线键。",
+  "prepared_id": "<PREP-…>",
+  "coverage": {
+    "hypothesis": {
+      "verdict": "ok",
+      "note": "<什么观察会否定它 / 有没有把两件事混成一个假设>",
+      "sources": [{"path": "<文件>", "locator": "L1"}]
+    },
+    "design": {
+      "verdict": "ok",
+      "note": "<读数变好能否支持所声称的解释>",
+      "sources": [{"path": "<文件>", "locator": "L1"}]
+    },
+    "criterion": {
+      "verdict": "ok",
+      "note": "<门槛有出处吗 / 样本与波动够不够>",
+      "sources": [{"path": "<文件>", "locator": "L1"}]
+    },
+    "history": {
+      "verdict": "ok",
+      "note": "<是否已试过并被否掉（自己检索的）>",
+      "sources": [{"path": "<文件>", "locator": "L1"}]
+    },
+    "cost": {
+      "verdict": "ok",
+      "note": "<有没有更省的验证路径>",
+      "sources": [{"path": "<文件>", "locator": "L1"}]
+    },
+    "branches": {
+      "verdict": "ok",
+      "note": "<三支行动是否真的不同>",
+      "sources": [{"path": "<文件>", "locator": "L1"}]
+    },
+    "activation": {
+      "verdict": "ok",
+      "note": "<改动到读数要经过哪几跳、每跳的证据>",
+      "sources": [{"path": "<文件>", "locator": "L1"}]
+    }
+  },
+  "issues": [
+    {
+      "id": "AUD-<plan>-1",
+      "category": "criterion",
+      "blocking": false,
+      "problem": "<问题一句话>",
+      "consequence": "<不改会怎样>",
+      "suggestion": "<最小改法>",
+      "sources": [{"path": "<文件>", "locator": "L2"}]
+    }
+  ],
+  "resolves": [
+    {
+      "report_id": "<上一份报告 id>",
+      "issue_id": "<上一份报告里的 issue id>",
+      "reason": "<为什么这条已经关掉>",
+      "sources": [{"path": "<文件>", "locator": "L3"}]
+    }
+  ]
+}

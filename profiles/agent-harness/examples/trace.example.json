@@ -1,0 +1,49 @@
+{
+  "task_id": "demo-001",
+  "schema_version": 1,
+  "steps": [
+    {
+      "step_id": 1,
+      "source": "agent",
+      "message": "先看一眼示例模块。",
+      "tool_calls": [
+        {
+          "function_name": "read",
+          "arguments": {"path": "/opt/agent/workspace/example/demo-repo/demo/mathx.py"},
+          "tool_call_id": "call-1"
+        }
+      ],
+      "observation": {"content": "{\"status\": \"ok\", \"lines\": 40}"}
+    },
+    {
+      "step_id": 2,
+      "source": "agent",
+      "message": "补上类型检查。",
+      "tool_calls": [
+        {
+          "function_name": "edit",
+          "arguments": {
+            "path": "/opt/agent/workspace/example/demo-repo/demo/mathx.py",
+            "old": "def add(a, b):",
+            "new": "def add(a, b):\n    if not isinstance(a, int) or not isinstance(b, int):\n        raise TypeError('add() 只接受整数')"
+          },
+          "tool_call_id": "call-2"
+        }
+      ],
+      "observation": {"content": "{\"status\": \"ok\", \"changed\": true}"}
+    },
+    {
+      "step_id": 3,
+      "source": "agent",
+      "message": "跑仓库自带的测试。",
+      "tool_calls": [
+        {
+          "function_name": "shell",
+          "arguments": {"command": "cd /opt/agent/workspace/example/demo-repo && python -m pytest -q"},
+          "tool_call_id": "call-3"
+        }
+      ],
+      "observation": {"content": "{\"status\": \"ok\", \"exit_code\": 0}"}
+    }
+  ]
+}
