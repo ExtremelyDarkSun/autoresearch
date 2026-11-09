@@ -1,11 +1,18 @@
 # GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-# LAST-EDIT: latest framework synchronization, 2026-11-09
+# LAST-EDIT: audit-host binding, 2026-11-09（宿主证据绑定：expected 由服务层构造、created_at 取自宿主、K11/K12 与 check_start）
 # PURPOSE: 通用研究治理层 —— 事前方案校验与冻结哈希、独立方案审计的版本绑定与次数上限、专项意图的来源与节点监控、
 #          经验候选的四处置与修订失效、角色包/委派登记、必读与文档冷件台账。全部是本地 append-only 登记，不联网、不伪造授权。
-# ORIGIN: none（新文件）。机制抽取自上游组件 plan_audit.md / intent_monitor.md / research_lessons.md / trajectory_review.md /
-#         reading_required.json / CONTRACT.md / CONTEXT_LOADING.md / DOC_MAINTENANCE.md 与 EXPERIMENT_RULES.md 的
-#         事前设计、三类对照、结果分支表；只保留与具体赛事无关的通用部分，源头的个人渠道与实例值一律不带。
-# CUMULATIVE-DELTA: 2026-11-09 补齐探索性停止条件及来源、方向证据边界、工具变更与上下文纪律。
+# ORIGIN: none（新文件）。机制抽取自上游组件 plan_audit.md / plan_audit.py / plan_audit_host.py / intent_monitor.md /
+#         research_lessons.md / trajectory_review.md / reading_required.json / CONTRACT.md / CONTEXT_LOADING.md /
+#         DOC_MAINTENANCE.md 与 EXPERIMENT_RULES.md 的事前设计、三类对照、结果分支表；只保留与具体赛事无关的通用部分，
+#         源头的个人渠道与实例值一律不带。
+# CUMULATIVE-DELTA: 2026-11-09 宿主证据绑定改造：① 敏感动作（关闭审计 / 豁免 / 扩额）的 expected 命令对象由本层按动作参数
+#         构造，调用方只能给 proof（{session_id, seq}），不接受 caller 自带的 expected / created_at / report；
+#         ② 时序判定用宿主返回的 created_at，缺时间一律拒；③ audit_independence 的 payload 绑定 owner / actor /
+#         prepared_id / 报告全文（record_audit_file 用六键短声明），审计会话与 actor 对不上直接拒；④ 新增可信
+#         extend（每次 +1，每次都要新的可信用户命令，不能自扩；不设固定次数上限）；⑤ 新增 K11 历史启动识别（只认真实 workflow 启动记录，未来新轮不能豁免，
+#         做不到可信历史就显式未实现）；⑥ 修 check_start 的 closed 未评估缺口与未登记来源放行缺口；
+#         ⑦ `authorization` 进 KEY_FIELDS：scope / series_id / reservation_id / decision_id 不能当措辞改动免重审。
 #         没有 verifier 时一切自述只标 declared（永不冒充 verified）。
 
 """通用研究治理层。
@@ -32,6 +39,25 @@
     Governance(store, *, verifier=None, policy=None, experiment_id=None)
     Governance.__init__ 会建自己的表（幂等），不改 store 的表与触发器。
 
+宿主证据的绑定口径（2026-11-09）
+================================
+
+四个敏感动作（`policy_off` · `waiver` · `audit_extend` · `audit_independence`）的用户/子会话
+证据由**本层**构造完整 payload 交给注入的 verifier（生产是 `host_evidence.DSHHost`）：
+
+* 调用方只能给 **proof**：`{"session_id": ..., "seq": ...}`；给别的键（尤其是 `expected` /
+  `created_at` / `report`）直接拒 —— 否则「拿无关动作的真实命令关审计」就能走通。
+* 用户命令的 `expected` 由本层按动作参数现算（见 `policy_command()` / `waive_command()` /
+  `extend_command()`），verifier 必须核「真实用户消息里的命令 == expected」。
+* 时序判定只用**宿主返回的 created_at**（真实消息时间）。缺时间 ⇒ 不可判 ⇒ 拒。
+* `audit_independence` 的 payload 绑定 owner（prepare 记录的负责人）、actor（报告署名的审计会话）、
+  `prepared_id` 与报告全文（`record_audit_file` 用六键短声明 + 报告文件 SHA256）。审计会话号
+  出现时必须与 actor 一致，否则直接拒。
+
+`legacy_exempt` 只认**真实过去的启动记录**（同库 `wf_runs`，且启动早于本层第一次看到该方案），
+只说明「不追溯新审计要求」，`audited` 恒为 False；新轮次或做不到可信历史时 fail-closed
+并保留显式 `unimplemented` 标记，不伪造豁免。
+
 `plan` 的关键字段集合 = `KEY_FIELDS`。改这些字段 ⇒ 必须重新审计；
 改 `WORDING_FIELDS` 或其它字段 ⇒ 指纹不变 ⇒ **不要求重新审计**（来源：上游
 plan_audit.md §6.1 的教训 —— 改一句动机就让上一轮审计作废，反过来压制了修改）。
@@ -43,6 +69,7 @@ import hashlib
 import json
 import math
 import re
+import sqlite3
 import time
 
 from kernel.autoresearch.runtime.store import StoreError, canonical_json
@@ -52,6 +79,9 @@ from kernel.autoresearch.runtime.store import StoreError, canonical_json
 # ---------------------------------------------------------------------------
 
 #: 参与指纹的字段。改其中任何一个 ⇒ 旧审计不再覆盖。
+#: ⚠️ `authorization`（scope / series_id / reservation_id / decision_id）也在这里：
+#: 它决定这一轮算小样本还是大规模 / 线上提交，属于**实质授权**，⛔ 不能当措辞改动免重审。
+#: 但它**不强制每份计划都写**（没有预算准入的轮次可以不带）；见 `REQUIRED_KEY_FIELDS`。
 KEY_FIELDS = (
     "id",
     "goal",
@@ -64,7 +94,11 @@ KEY_FIELDS = (
     "branches",
     "budget",
     "input_files",
+    "authorization",
 )
+
+#: 方案**必须**写出的顶层字段。`authorization` 只在写了的时候参与指纹，不强制存在。
+REQUIRED_KEY_FIELDS = tuple(key for key in KEY_FIELDS if key != "authorization")
 
 #: 只影响叙述的字段。改它们**不**触发重新审计。
 WORDING_FIELDS = ("title", "notes", "rationale", "summary", "open_questions", "why")
@@ -125,8 +159,55 @@ DOC_TIERS = ("hot", "cold")
 INDEPENDENCE_DECLARED = "declared"
 INDEPENDENCE_VERIFIED = "verified"
 
+#: 用户在真实消息里必须原样发的那条命令的 action 名（宿主逐键核相等）。
+POLICY_COMMAND = "plan_audit_policy"
+WAIVE_COMMAND = "plan_audit_waive"
+EXTEND_COMMAND = "plan_audit_extend"
+
+#: 调用方能给的宿主证据只有这两个键。**不许带 expected / created_at / report**：
+#: expected 由本层构造，created_at 只能由宿主返回。
+PROOF_KEYS = ("session_id", "seq")
+
+#: 扩额**不设固定次数上限**（源契约 K12 只要求「再准备须可信用户 extend，不能自扩」）。
+#: 每次 extend 只 +1，且每次都要一条**新的**真实用户命令（命令含 used/limit/key_fingerprint 防重放）；
+#: ⛔ 没有任何参数或 policy 能让本层自己加额度。
+
+#: 宿主消息时间允许比本机时间快多少秒（时钟偏移容忍）。超过就判「未来时间不可信」。
+USER_TIME_FUTURE_TOLERANCE = 5.0
+
+#: 历史豁免只说明「不追溯」，绝不等于审过。
+LEGACY_LABEL = "历史豁免：规则生效前已启动，不追溯（未审计，不等于审过）"
+LEGACY_UNIMPLEMENTED = (
+    "unimplemented: 做不到可信历史启动记录 ⇒ legacy_exempt 不可用（显式未实现；不追溯不等于可伪造豁免）"
+)
+
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 PATH_KEYS = ("path", "cold_path", "index_path")
+
+
+def _bare_session(value) -> str:
+    """去掉可选的 `session-` 前缀，用于比较「是不是同一个会话」。"""
+    text = value.strip()
+    return text[len("session-"):] if text.startswith("session-") else text
+
+
+def _same_identity(left, right) -> bool:
+    if not (_text(left) and _text(right)):
+        return False
+    return _bare_session(left) == _bare_session(right)
+
+
+def _hard_path(path: str) -> bool:
+    """实质路径判定：`audit_support.hard_path` 之外，本层另把 `authorization` 整枝当硬。
+
+    `authorization.scope / series_id / reservation_id / decision_id` 决定这一轮算小样本、
+    大规模还是线上提交 —— ⛔ 不能当措辞或「定位修正」用小修绕过重审。
+    （`audit_support.hard_path` 的正式过滤由父 agent 补；这里是治理层的第二道。）
+    """
+    from .audit_support import hard_path
+    if hard_path(path):
+        return True
+    return str(path).split('.')[0] == 'authorization'
 
 
 class GovernanceError(ValueError):
@@ -193,7 +274,7 @@ def validate_plan(plan: dict) -> list[str]:
     if not isinstance(plan, dict):
         return ["plan 必须是 dict"]
 
-    for key in KEY_FIELDS:
+    for key in REQUIRED_KEY_FIELDS:
         if key not in plan:
             errors.append(f"缺少顶层字段 {key}")
     if errors and any(item.endswith("缺少顶层字段 id") for item in errors):
@@ -445,6 +526,19 @@ def validate_plan(plan: dict) -> list[str]:
                         f"实际 {item!r}"
                     )
 
+    # ---- authorization：预算准入声明（写了才进指纹，也是最容易被当成「措辞」偷改的一处）----
+    if "authorization" in plan:
+        authorization = plan.get("authorization")
+        if not isinstance(authorization, dict):
+            errors.append("authorization 必须是对象（scope / series_id / reservation_id / decision_id）")
+        else:
+            for key in ("series_id", "reservation_id"):
+                if key in authorization and not _text(authorization.get(key)):
+                    errors.append(f"authorization.{key} 写了就必须是非空字符串")
+            if "scope" in authorization \
+                    and authorization.get("scope") not in ("small", "large", "submission"):
+                errors.append("authorization.scope 必须是 small / large / submission")
+
     return errors
 
 
@@ -458,11 +552,18 @@ def _normalize(value):
 
 
 def plan_key_fields(plan: dict) -> dict:
-    """取出参与指纹的关键字段（缺的记为 None，保持键集合稳定）。"""
+    """取出参与指纹的关键字段（缺的记为 None，保持键集合稳定）。
+
+    `authorization` 只在计划里写了的时候才进指纹：没有预算准入的轮次不带它，
+    旧方案的指纹因此不变；一旦写了，改 scope / series_id / reservation_id /
+    decision_id 都会让旧审计失效（不是措辞改动）。
+    """
     if not isinstance(plan, dict):
         return {}
     fields: dict = {}
     for key in KEY_FIELDS:
+        if key == "authorization":
+            continue
         value = plan.get(key)
         if key in ("previous_passes", "input_files") and isinstance(value, list):
             value = sorted(str(item) for item in value)
@@ -474,7 +575,7 @@ def plan_key_fields(plan: dict) -> dict:
                 for kind in sorted(set(value) | set(CASE_SET_KINDS))
             }
         fields[key] = _normalize(value)
-    for key in ("execution_argv", "implementation"):
+    for key in ("execution_argv", "implementation", "authorization"):
         if key in plan:
             fields[key] = _normalize(plan[key])
     return fields
@@ -525,6 +626,17 @@ _SCHEMA = (
     "  key_fingerprint TEXT NOT NULL, reason TEXT NOT NULL, evidence_json TEXT NOT NULL,\n"
     "  independence TEXT NOT NULL, actor TEXT NOT NULL, created_at REAL NOT NULL,\n"
     "  UNIQUE(report_id, issue_id))",
+    "CREATE TABLE IF NOT EXISTS gov_audit_extensions(\n"
+    "  id INTEGER PRIMARY KEY, plan_id TEXT NOT NULL, key_fingerprint TEXT NOT NULL,\n"
+    "  used_before INTEGER NOT NULL, limit_before INTEGER NOT NULL,\n"
+    "  user_created_at REAL NOT NULL, independence TEXT NOT NULL,\n"
+    "  evidence_json TEXT NOT NULL, reason TEXT NOT NULL, actor TEXT NOT NULL,\n"
+    "  created_at REAL NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS gov_legacy_exemptions(\n"
+    "  id INTEGER PRIMARY KEY, plan_id TEXT NOT NULL, key_fingerprint TEXT NOT NULL,\n"
+    "  run_id TEXT NOT NULL, started_at REAL NOT NULL, basis TEXT NOT NULL,\n"
+    "  evidence_json TEXT NOT NULL, reason TEXT NOT NULL, actor TEXT NOT NULL,\n"
+    "  created_at REAL NOT NULL, UNIQUE(plan_id, run_id))",
     "CREATE TABLE IF NOT EXISTS gov_intents(\n"
     "  intent_id TEXT PRIMARY KEY, state TEXT NOT NULL, quote TEXT NOT NULL,\n"
     "  source_session TEXT NOT NULL, source_seq INTEGER NOT NULL,\n"
@@ -584,6 +696,8 @@ _APPEND_ONLY_TABLES = (
     "gov_audit_reports",
     "gov_audit_responses",
     "gov_waivers",
+    "gov_audit_extensions",
+    "gov_legacy_exemptions",
     "gov_lesson_confirmations",
     "gov_roles",
     "gov_delegations",
@@ -608,6 +722,8 @@ class Governance:
     policy : 可选 dict，覆盖默认政策（见 `DEFAULT_POLICY`）。
     experiment_id : 可选。给了就把事件挂在该实验号下（必须已存在于 store），
         不给则事件不挂实验（`exp_id=NULL`）。
+    clock : 可选 `() -> float`。本层自己的时间来源（默认 `time.time`），用于登记时间戳与
+        「宿主消息时间不得在未来」判定。⛔ 用户证据的时间永远取宿主返回的 `created_at`。
 
     **没有任何方法会自己造出一条 `verified`。** 独立性、授权、宿主读证据
     三者都只能由注入的 verifier 提供。
@@ -631,12 +747,16 @@ class Governance:
     #: 这几条不允许被 policy 关掉（否则等于关掉整层的安全阀）。
     LOCKED_POLICY = ("policy_off_requires_verified_evidence", "policy_off_after_prepare")
 
-    def __init__(self, store, *, verifier=None, policy=None, experiment_id=None):
+    def __init__(self, store, *, verifier=None, policy=None, experiment_id=None,
+                 clock=None):
         if store is None or not hasattr(store, "transaction"):
             raise GovernanceError("Governance 需要一个 runtime.store.Store 实例")
         self.store = store
         self.verifier = verifier
         self.experiment_id = experiment_id
+        #: 本层自己的时间来源。只用于「宿主时间不得在未来」这类判定与登记时间戳；
+        #: **用户证据的时间永远取宿主返回的 created_at**，不取调用方自报、也不取这里。
+        self.clock = clock or time.time
         merged = dict(self.DEFAULT_POLICY)
         if policy:
             if not isinstance(policy, dict):
@@ -672,7 +792,10 @@ class Governance:
     # -- 内部 ---------------------------------------------------------------
 
     def _now(self) -> float:
-        return time.time()
+        value = self.clock()
+        if not _finite(value):
+            raise GovernanceError("clock() 必须返回有限数值时间戳")
+        return float(value)
 
     def _emit(self, conn, kind: str, actor: str, payload: dict) -> None:
         try:
@@ -704,6 +827,209 @@ class Governance:
             return INDEPENDENCE_VERIFIED, dict(result)
         return INDEPENDENCE_DECLARED, {"result": result}
 
+    # -- 宿主证据：proof 由调用方给，expected 由本层构造 ---------------------
+
+    def _proof(self, evidence, kind: str) -> dict:
+        """只从调用方证据里取 `{session_id, seq}`。
+
+        **不接受调用方自带 `expected` / `created_at` / `report`**：expected 必须由本层
+        按动作参数构造，时间必须由宿主返回。给别的键一律拒 —— 否则「拿另一条真实用户
+        命令（或另一份动作的 expected）去关这个动作」的路径就成立了。
+        """
+        if evidence is None:
+            raise GovernanceError(
+                f"{kind} 需要宿主证据 proof={{session_id, seq}}：没有证据就不能核真实用户/子会话"
+            )
+        if not isinstance(evidence, dict):
+            raise GovernanceError(f"{kind} 的宿主证据必须是一个对象：{{session_id, seq}}")
+        if set(evidence) == {"proof"}:
+            inner = evidence["proof"]
+        elif set(evidence) == set(PROOF_KEYS):
+            inner = evidence
+        else:
+            extra = sorted(set(evidence) - set(PROOF_KEYS) - {"proof"})
+            raise GovernanceError(
+                f"{kind} 的宿主证据只能含 {list(PROOF_KEYS)}（或 {{'proof': {{…}}}}）；"
+                f"⛔ 不接受调用方自带 expected/created_at/report 等字段"
+                f"（多出：{extra or '嵌套 proof 之外的键'}）"
+            )
+        if not isinstance(inner, dict) or set(inner) != set(PROOF_KEYS):
+            raise GovernanceError(f"{kind} 的 proof 必须恰好是 {list(PROOF_KEYS)}")
+        session = inner["session_id"]
+        seq = inner["seq"]
+        if not _text(session) or any(ch.isspace() for ch in session) or len(session) > 200:
+            raise GovernanceError("proof.session_id 必须是非空、无空白的会话标识")
+        if not _non_negative_int(seq):
+            raise GovernanceError("proof.seq 必须是 ≥0 的整数（宿主消息序号）")
+        return {"session_id": session.strip(), "seq": seq}
+
+    def _verify_user_command(self, kind: str, expected: dict, evidence) -> dict:
+        """核「真实用户消息里恰好有 expected 这条命令」。
+
+        `expected` 由调用方动作参数**在本层**构造，调用方只能给 proof。
+        硬要求（缺一条都抛错，不降级成 declared）：
+        * 宿主结果必须回传它核过的 `command`，且与 expected **逐键相等**（⛔ 不许省略）；
+        * `created_at` 必须是可判定的宿主时间，且不得比本机时间快超过
+          `USER_TIME_FUTURE_TOLERANCE` 秒（未来时间不可信）；
+        * 回传的 `session_id` 去掉可选的 `session-` 前缀后必须等于 proof 的会话号；
+        * 回传的 `seq` 必须精确等于 proof 的 seq。
+        """
+        proof = self._proof(evidence, kind)
+        if self.verifier is None:
+            raise GovernanceError(
+                f"{kind} 需要注入宿主核验器（生产用 host_evidence.DSHost）："
+                "没有核验器就不能核真实用户证据；本层不会把自述当授权"
+            )
+        payload = {"proof": proof, "expected": expected}
+        try:
+            result = self.verifier.verify(kind, payload)
+        except Exception as exc:  # noqa: BLE001 - 核验器坏掉不等于核过
+            raise GovernanceError(
+                f"{kind} 的宿主核验失败：{type(exc).__name__}: {exc}"
+            ) from exc
+        if not isinstance(result, dict) or result.get("verified") is not True:
+            raise GovernanceError(f"{kind} 需要宿主返回 verified=True；拿不到就不放行")
+        command = result.get("command")
+        if command is None:
+            raise GovernanceError(
+                f"{kind} 的宿主结果没有回传核过的 command：无法证明核的是这条命令 ⇒ 拒绝"
+            )
+        if command != expected:
+            raise GovernanceError(
+                f"{kind} 的宿主核验命令与本次动作构造的 expected 不一致："
+                "另一条（别的动作 / 别的目标）的用户命令不能关这个动作"
+            )
+        created = result.get("created_at")
+        if not _finite(created) or float(created) <= 0:
+            raise GovernanceError(
+                f"{kind} 的宿主结果没有可判定的 created_at：时序不可判 ⇒ 拒绝"
+                "（时间只能来自宿主消息记录，不接受调用方自报）"
+            )
+        now = self._now()
+        if float(created) > now + USER_TIME_FUTURE_TOLERANCE:
+            raise GovernanceError(
+                f"{kind} 的宿主消息时间在未来（{float(created):.0f} > 本机 {now:.0f} + "
+                f"{USER_TIME_FUTURE_TOLERANCE:.0f}s）：不可信 ⇒ 拒绝"
+            )
+        session = result.get("session_id")
+        if not _text(session):
+            raise GovernanceError(
+                f"{kind} 的宿主结果缺 session_id：无法确认核的是哪个会话的消息 ⇒ 拒绝"
+            )
+        if not _same_identity(session, proof["session_id"]):
+            raise GovernanceError(
+                f"{kind} 的宿主核过的会话与 proof 不一致：{session!r} != "
+                f"{proof['session_id']!r} ⇒ 拒绝"
+            )
+        seq = result.get("seq")
+        if not _non_negative_int(seq):
+            raise GovernanceError(f"{kind} 的宿主结果缺合法的 seq：无法确认核的是哪条消息 ⇒ 拒绝")
+        if seq != proof["seq"]:
+            raise GovernanceError(
+                f"{kind} 的宿主核过的 seq 与 proof 不一致：{seq!r} != {proof['seq']!r} ⇒ 拒绝"
+            )
+        if result.get("kind") not in (None, kind):
+            raise GovernanceError(f"{kind} 的宿主结果 kind={result.get('kind')!r} 对应不上")
+        return {
+            "expected": expected,
+            "proof": proof,
+            "created_at": float(created),
+            "session_id": session,
+            "seq": seq,
+            "rpc_id": result.get("rpc_id"),
+            "command_sha256": result.get("command_sha256"),
+            "source": result.get("source"),
+        }
+
+    def _verify_independence(self, prepared: dict, actor: str, document: dict,
+                             evidence) -> tuple[str, dict]:
+        """核审计者独立性：payload 绑定 owner / actor / prepared_id / 报告全文。
+
+        没证据或核验器没核过 ⇒ `declared`（不冒充 verified）；核验成功但会话号/owner/
+        材料标识与记录对不上 ⇒ 直接抛错（这是被篡改的绑定，不是「没核过」）。
+        """
+        if evidence is None:
+            return INDEPENDENCE_DECLARED, {}
+        if self.verifier is None:
+            return INDEPENDENCE_DECLARED, {"reason": "no verifier injected"}
+        try:
+            proof = self._proof(evidence, "audit_independence")
+        except GovernanceError as exc:
+            return INDEPENDENCE_DECLARED, {"error": str(exc)}
+        payload = {
+            "proof": proof,
+            "owner_session": prepared["owner"],
+            "prepared_id": prepared["prepared_id"],
+            "report": document,
+        }
+        try:
+            result = self.verifier.verify("audit_independence", payload)
+        except Exception as exc:  # noqa: BLE001 - 核验器坏掉不等于核过
+            return INDEPENDENCE_DECLARED, {"error": f"{type(exc).__name__}: {exc}"}
+        if not isinstance(result, dict) or result.get("verified") is not True:
+            return INDEPENDENCE_DECLARED, {"result": result if isinstance(result, dict) else None}
+        session = result.get("session_id")
+        if not _text(session):
+            raise GovernanceError(
+                "宿主说核过了，但没有给出审计会话号：无法把独立性与报告署名人绑定，拒绝登记"
+            )
+        if not _same_identity(session, actor):
+            raise GovernanceError(
+                "宿主核过的审计会话与报告署名 actor 不一致 ⇒ 独立性不可信，拒绝登记"
+            )
+        if _same_identity(session, prepared["owner"]):
+            raise GovernanceError("宿主核过的审计会话就是方案负责人自己 ⇒ 不独立，拒绝登记")
+        owner = result.get("owner_session")
+        if not _text(owner):
+            raise GovernanceError("宿主结果缺 owner_session：无法绑定负责人，拒绝登记")
+        if not _same_identity(owner, prepared["owner"]):
+            raise GovernanceError("宿主核过的 owner 与 prepare 记录的负责人不一致，拒绝登记")
+        echoed = result.get("prepared_id")
+        if not _text(echoed):
+            raise GovernanceError("宿主结果缺 prepared_id：无法绑定被审材料，拒绝登记")
+        if echoed != prepared["prepared_id"]:
+            raise GovernanceError("宿主核过的被审材料标识与这次 prepare 不一致，拒绝登记")
+        verified = {
+            "proof": proof,
+            "owner_session": prepared["owner"],
+            "prepared_id": prepared["prepared_id"],
+            "document_sha256": _digest(document),
+            "session_id": session,
+            "seq": result.get("seq", proof["seq"]),
+            "created_at": result.get("created_at"),
+            "tool_call_id": result.get("tool_call_id"),
+            "source": result.get("source"),
+        }
+        return INDEPENDENCE_VERIFIED, verified
+
+    def _proof_reused(self, conn, table: str, proof: dict) -> bool:
+        """同一条宿主消息（session_id, seq）不能用两次来关不同动作。
+
+        旧库缺这张表 ⇒ 视为「没消费过」（只读兼容；真正写库的实例会先建表）。
+        """
+        if not self._table_exists(conn, table):
+            return False
+        for row in self._rows(conn, f"SELECT evidence_json FROM {table}"):
+            try:
+                payload = json.loads(row["evidence_json"] or "{}")
+            except ValueError:
+                continue
+            stored = payload.get("proof") if isinstance(payload, dict) else None
+            if isinstance(stored, dict) and stored.get("session_id") == proof["session_id"] \
+                    and stored.get("seq") == proof["seq"]:
+                return True
+        return False
+
+    @staticmethod
+    def _user_created(evidence_json: str):
+        """从已登记的宿主结果里取 created_at（宿主时间）。取不到返回 None。"""
+        try:
+            payload = json.loads(evidence_json or "{}")
+        except ValueError:
+            return None
+        value = payload.get("created_at") if isinstance(payload, dict) else None
+        return float(value) if _finite(value) else None
+
     def _row(self, conn, sql: str, params=()):
         row = conn.execute(sql, params).fetchone()
         return dict(row) if row else None
@@ -711,15 +1037,36 @@ class Governance:
     def _rows(self, conn, sql: str, params=()):
         return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
+    @staticmethod
+    def _table_exists(conn, name: str) -> bool:
+        return conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone() is not None
+
+    def _count(self, conn, table: str, plan_id: str) -> int:
+        """数一个方案在某张登记表里的行数。**旧库缺表视为 0**（只读兼容）。"""
+        if not self._table_exists(conn, table):
+            return 0
+        row = self._row(conn, f"SELECT COUNT(*) AS n FROM {table} WHERE plan_id=?", (plan_id,))
+        return int(row["n"]) if row else 0
+
     # ------------------------------------------------------------------
     # 政策
     # ------------------------------------------------------------------
 
-    def set_policy(self, *, scope: str, target: str, mode: str, actor: str, evidence=None) -> dict:
-        """写一条审计政策。**升级不设门槛，降级要真证据。**
+    def policy_command(self, *, scope: str, target: str, mode: str) -> dict:
+        """用户在真实消息里必须原样发出的关闭命令（由本层构造，调用方不能挑）。"""
+        return {"action": POLICY_COMMAND, "scope": scope, "target": target, "mode": mode}
 
-        `mode="off"` 必须带 verifier 核过的用户证据，且证据时间要晚于该范围
-        最后一次 `prepare_audit`（防「先准备、再偷偷关掉」）。
+    def set_policy(self, *, scope: str, target: str, mode: str, actor: str, evidence=None) -> dict:
+        """写一条审计政策。**升级不设门槛，降级要真用户消息。**
+
+        `mode="off"` 的三条硬要求：
+        * 必须由注入的宿主核验器核过一条**真实用户消息**，且消息里的命令与
+          `policy_command(scope, target, mode)` 逐键相等（调用方只能给 proof）；
+        * 时序判定用宿主返回的 `created_at`，且必须**严格晚于**该方案最后一次
+          `prepare_audit`（防「先准备、再偷偷关掉」）；缺时间不可判 ⇒ 拒；
+        * 同一条用户消息不能重复用来关闭（`(session_id, seq)` 只能用一次）。
         """
         if scope not in ("global", "plan", "role"):
             raise GovernanceError(f"scope 必须是 global / plan / role，实际 {scope!r}")
@@ -727,28 +1074,27 @@ class Governance:
             raise GovernanceError(f"mode 必须是 required / off，实际 {mode!r}")
         self._require_text(target, "target")
         self._require_text(actor, "actor")
+        expected = self.policy_command(scope=scope, target=target, mode=mode)
         independence = INDEPENDENCE_DECLARED
         verified: dict = {}
         if mode == "off":
-            independence, verified = self._verify("policy_off", evidence)
-            if independence != INDEPENDENCE_VERIFIED:
-                raise GovernanceError(
-                    "关闭审计需要宿主核过的用户证据（verifier 返回 verified=True）；"
-                    "本地自述不能关闭审计。没有注入 verifier 时这条路径永远不可用。"
-                )
-            created = evidence.get("created_at") if isinstance(evidence, dict) else None
-            if self.policy.get("policy_off_after_prepare") and _finite(created):
-                with self.store.transaction() as conn:
+            verified = self._verify_user_command("policy_off", expected, evidence)
+            independence = INDEPENDENCE_VERIFIED
+            created = verified["created_at"]
+            with self.store.transaction() as conn:
+                if scope == "plan":
                     last = self._row(
                         conn,
                         "SELECT MAX(created_at) AS t FROM gov_audits WHERE plan_id=?",
                         (target,),
                     )
-                if last and last.get("t") and float(created) < float(last["t"]):
-                    raise GovernanceError(
-                        "关闭审计的用户证据早于该方案最后一次 prepare_audit ⇒ 拒绝"
-                        "（先准备、再偷偷关掉的路径必须堵住）"
-                    )
+                    if last and last.get("t") is not None and created <= float(last["t"]):
+                        raise GovernanceError(
+                            "关闭审计的用户消息早于该方案最后一次 prepare_audit ⇒ 拒绝"
+                            "（先准备、再偷偷关掉的路径必须堵住）"
+                        )
+                if self._proof_reused(conn, "gov_policy", verified["proof"]):
+                    raise GovernanceError("这条用户消息已经用于关闭过政策：同一条决定不能重复消费")
         with self.store.transaction() as conn:
             conn.execute(
                 "INSERT INTO gov_policy(scope,target,mode,actor,evidence_json,independence,created_at)"
@@ -758,22 +1104,49 @@ class Governance:
             self._emit(conn, "governance_policy", actor,
                        {"scope": scope, "target": target, "mode": mode,
                         "independence": independence})
-        return {"scope": scope, "target": target, "mode": mode, "independence": independence}
+        return {"scope": scope, "target": target, "mode": mode,
+                "independence": independence, "expected": expected}
 
     def audit_policy(self, plan_id: str | None = None) -> dict:
-        """当前生效政策：plan 级 > global 级 > 默认 required。"""
+        """当前生效政策：plan 级 > global 级 > 默认 required。
+
+        关闭记录只有在**晚于该方案最后一次 prepare** 时才对它生效（宿主返回的
+        created_at 判；取不到时间的关闭记录一律不生效 ⇒ 回到 required）。这样即使
+        历史库里有一条写在 prepare 之前的 off，也不会被拿来免审。
+        """
         with self.store.transaction() as conn:
             rows = self._rows(conn, "SELECT * FROM gov_policy ORDER BY id")
-        effective = {"mode": "required", "source": "default(fail-closed)", "independence": None}
+            last_prep = None
+            if plan_id:
+                last = self._row(
+                    conn,
+                    "SELECT MAX(created_at) AS t FROM gov_audits WHERE plan_id=?",
+                    (plan_id,),
+                )
+                last_prep = last.get("t") if last else None
+        effective = {"mode": "required", "source": "default(fail-closed)",
+                     "independence": None, "plan_checked": bool(plan_id),
+                     "off_ignored": []}
         for row in rows:
-            if row["scope"] == "global" and row["target"] in ("*", ""):
-                effective = {"mode": row["mode"], "source": f"global@{row['id']}",
-                             "independence": row["independence"]}
-        if plan_id:
-            for row in rows:
-                if row["scope"] == "plan" and row["target"] == plan_id:
-                    effective = {"mode": row["mode"], "source": f"plan@{row['id']}",
-                                 "independence": row["independence"]}
+            applies = (row["scope"] == "global" and row["target"] in ("*", "")) \
+                or (plan_id is not None and row["scope"] == "plan" and row["target"] == plan_id)
+            if not applies:
+                continue
+            if row["mode"] == "off":
+                created = self._user_created(row["evidence_json"])
+                if created is None:
+                    effective["off_ignored"].append(
+                        {"policy_id": row["id"], "reason": "没有宿主 created_at，关闭记录不生效"})
+                    continue
+                if last_prep is not None and created <= float(last_prep):
+                    effective["off_ignored"].append(
+                        {"policy_id": row["id"],
+                         "reason": "关闭早于该方案最后一次 prepare，不生效"})
+                    continue
+            effective = {"mode": row["mode"], "source": f"{row['scope']}@{row['id']}",
+                         "independence": row["independence"],
+                         "plan_checked": bool(plan_id),
+                         "off_ignored": effective["off_ignored"]}
         return effective
 
     # ------------------------------------------------------------------
@@ -842,7 +1215,8 @@ class Governance:
 
         硬规则：
         * 政策 `off` ⇒ 拒绝准备（不存在「关了又偷偷审」的半状态）；
-        * 同一 `key_fingerprint` 最多 `max_audits` 次（默认 2），超限拒绝；
+        * 每个方案（跨版本累计）默认最多 `max_audits` 次（默认 2 = 首审 + 一次增量复审），
+          再要就用可信 `extend_audit()` 每次 +1；**每次扩额都要新的真实用户命令，不能自我扩额**；
         * `owner`（负责人）不能等于 `actor`（准备者）；
         * 返回的 `prepared_id` **绑定当前关键字段指纹**，报告必须带同一个。
         """
@@ -862,16 +1236,16 @@ class Governance:
         # 独立性要求落在**审计者**身上（record_audit 时核 owner != auditor）。
         key_fp = plan["key_fingerprint"]
         with self.store.transaction() as conn:
-            used = self._row(
-                conn,
-                "SELECT COUNT(*) AS n FROM gov_audits WHERE plan_id=?",
-                (plan_id,),
-            )["n"]
-            limit = int(self.policy["max_audits"])
+            used = self._count(conn, "gov_audits", plan_id)
+            extensions = self._count(conn, "gov_audit_extensions", plan_id)
+            limit = int(self.policy["max_audits"]) + int(extensions)
             if used >= limit:
                 raise GovernanceError(
-                    f"这个方案版本已经审过 {used} 次，达到上限 {limit}；"
-                    "扩额必须由用户在真实通道裁决，本层不提供自我扩额入口"
+                    f"这个方案累计已经审过 {used} 次，达到上限 {limit}"
+                    f"（首审 + 增量复审 {int(self.policy['max_audits'])} 次，"
+                    f"已扩额 {extensions} 次）；"
+                    "扩额必须由可信 extend_audit() 用**新的**真实用户命令逐次加，"
+                    "本层不提供自我扩额入口"
                 )
             index_no = used + 1
             prepared_id = "PREP-" + _digest(
@@ -897,13 +1271,19 @@ class Governance:
             "remaining": limit - index_no,
         }
 
-    def record_audit(self, prepared_id: str, report: dict, *, actor: str, evidence=None) -> dict:
+    def record_audit(self, prepared_id: str, report: dict, *, actor: str, evidence=None,
+                     _host_document: dict | None = None) -> dict:
         """登记一份独立审计报告。
 
         报告必须**恰好覆盖七个审项**（`AUDIT_CATEGORIES`），每项给
         `verdict` / `note` / `sources`（非空，每项 `{path, locator}`）。
         一致性强判：`verdict` 是 `issue`/`unknown` ⇒ 必须有同 category 的 issue；
         `unknown` 的那一项 issue 必须 `blocking=true`（判不出来不许默认通过）。
+
+        `evidence` 只能给 `{session_id, seq}`（哪条子会话消息）。独立性核验的 payload
+        由本层构造：owner=prepare 记录的负责人、actor=本函数署名、prepared_id、报告全文
+        （`record_audit_file` 走六键短声明）。宿主没核过 ⇒ `declared`；核过但会话号与
+        actor 对不上 ⇒ 直接拒。
         """
         self._require_text(actor, "actor")
         if not isinstance(report, dict):
@@ -1016,7 +1396,6 @@ class Governance:
                         reason = "why_blocking" if issue.get("blocking") else "why_not_blocking"
                         if not _text(issue.get(reason)):
                             errors.append(f"unknown issue 必须写 {reason}")
-        from .audit_support import hard_path
         grants = report.get("minor_fix_paths", [])
         if not isinstance(grants, list):
             errors.append("minor_fix_paths 必须是数组")
@@ -1024,7 +1403,7 @@ class Governance:
         for grant in grants:
             if not isinstance(grant, dict) or not _text(grant.get("path")) or not _text(grant.get("why")) or grant.get("issue_id") not in issue_ids:
                 errors.append("minor_fix_paths 必须按 issue 点名 {path, issue_id, why}")
-            elif hard_path(grant["path"]) or any(x.get("id") == grant["issue_id"] and x.get("blocking") for x in issues):
+            elif _hard_path(grant["path"]) or any(x.get("id") == grant["issue_id"] and x.get("blocking") for x in issues):
                 errors.append("硬实质路径或重大问题不能授权为小修：" + grant["path"])
 
         resolves = report.get("resolves", [])
@@ -1041,13 +1420,15 @@ class Governance:
         if errors:
             raise GovernanceError("审计报告不合规，拒绝登记：" + "；".join(errors), errors)
 
+        # 第一段只读：先把「谁在审、绑哪一版、要关哪些旧问题」核清，再去做宿主核验
+        #（宿主包里有文件 IO / 子进程，不能握着写事务）。
         with self.store.transaction() as conn:
             prepared = self._row(
                 conn, "SELECT * FROM gov_audits WHERE prepared_id=?", (prepared_id,)
             )
             if prepared is None:
                 raise GovernanceError(f"没有这个 prepared_id：{prepared_id!r}")
-            if prepared["owner"] == actor:
+            if _same_identity(prepared["owner"], actor):
                 raise GovernanceError(
                     "审计者不能是方案负责人（owner）：独立审计必须是另一个会话"
                 )
@@ -1074,7 +1455,32 @@ class Governance:
                 previous = self._row(conn, "SELECT * FROM gov_audit_reports WHERE report_id=? AND plan_id=?", (resolved["report_id"], prepared["plan_id"]))
                 if not previous or not any(x.get("id") == resolved["issue_id"] for x in json.loads(previous["report_json"]).get("issues", [])):
                     raise GovernanceError("resolves 必须指向同计划的既有问题")
-            independence, verified = self._verify("audit_independence", evidence)
+
+        # 第二段：宿主核验独立性。payload 由本层构造（owner / actor / prepared_id / 报告全文）。
+        document = report if _host_document is None else _host_document
+        independence, verified = self._verify_independence(prepared, actor, document, evidence)
+
+        # 第三段重新开写事务：期间若冒出第二份报告或版本变了，仍然拒。
+        with self.store.transaction() as conn:
+            existing = self._row(
+                conn, "SELECT report_id FROM gov_audit_reports WHERE prepared_id=?",
+                (prepared_id,),
+            )
+            if existing:
+                raise GovernanceError(
+                    f"这次 prepare 已经登记过报告（{existing['report_id']}）；一次准备只收一份报告"
+                )
+            latest = self._row(
+                conn,
+                "SELECT version, key_fingerprint FROM gov_plans WHERE plan_id=?"
+                " ORDER BY version DESC LIMIT 1",
+                (prepared["plan_id"],),
+            )
+            if latest is None or latest["key_fingerprint"] != prepared["key_fingerprint"]:
+                raise GovernanceError(
+                    "方案关键字段在这一轮审计期间变过 ⇒ 这份报告不能绑定当前版本；"
+                    "请对新版本重新 prepare + 复审"
+                )
             report_id = "AUD-" + _digest([prepared_id, report])[:12]
             conn.execute(
                 "INSERT INTO gov_audit_reports(report_id,prepared_id,plan_id,key_fingerprint,"
@@ -1098,7 +1504,7 @@ class Governance:
 
     def correct_audit(self, report_id: str, corrections: list, *, actor: str) -> dict:
         """自查只覆盖指定非阻断意见及可授权叶子，不增加审计次数。"""
-        from .audit_support import changes, hard_path
+        from .audit_support import changes
         self._require_text(actor, "actor")
         if not isinstance(corrections, list) or not corrections:
             raise GovernanceError("corrections 必须是非空数组")
@@ -1125,7 +1531,7 @@ class Governance:
                 if issue_id and (issue_id not in issues or issues[issue_id].get("blocking")):
                     raise GovernanceError("correct 不能关闭阻断或未知意见")
                 for path in item.get("paths", []):
-                    if hard_path(path):
+                    if _hard_path(path):
                         raise GovernanceError("硬实质变更必须复审：" + path)
                     if path.endswith(".locator"):
                         pass  # 只改定位叶子，文件 path 另有变更时仍需独立授权。
@@ -1140,12 +1546,382 @@ class Governance:
             self._emit(conn, "governance_audit_corrected", actor, {"report_id": report_id, "changed_paths": changed})
         return {"report_id": report_id, "key_fingerprint": after["key_fingerprint"], "reaudit_required": False}
 
-    def record_audit_file(self, prepared_id: str, path: str, declaration: dict, *, actor: str, evidence=None) -> dict:
+    def record_audit_file(self, prepared_id: str, path: str, declaration: dict, *,
+                          actor: str, evidence=None) -> dict:
+        """从报告文件登记审计：核「短声明（六键）↔ 报告文件字节 SHA256」后登记。
+
+        * 六键短声明 = `prepared_id` / `decision` / `decision_reason` / `report_file` /
+          `report_sha256` / `issues[{id,blocking}]`；多一键或少一键都拒；
+        * `declaration.report_sha256` 必须等于报告文件的**原始字节** SHA256（换文件即拒）；
+        * 宿主核验的文档是这条短声明（审计者真实回传的就是它）；payload 里仍带
+          owner / actor / prepared_id，`record_audit` 负责核会话与署名人一致。
+        """
         from .audit_support import load_bound_report
-        report = load_bound_report(path, declaration)
-        # 报告与短声明的可见消息真实性须由注入 verifier 核验。
-        proof = {"declaration": declaration, "host_evidence": evidence}
-        return self.record_audit(prepared_id, report, actor=actor, evidence=proof if evidence else None)
+        if not isinstance(declaration, dict):
+            raise GovernanceError("短声明必须是对象（六键：prepared_id/decision/decision_reason/"
+                                  "report_file/report_sha256/issues）")
+        try:
+            report = load_bound_report(path, declaration)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise GovernanceError(f"报告文件与短声明不一致，拒绝登记：{exc}") from exc
+        return self.record_audit(prepared_id, report, actor=actor, evidence=evidence,
+                                 _host_document=declaration)
+
+    def waive_command(self, report_id: str, issue_id: str) -> dict:
+        """豁免动作的用户命令（由本层按报告与当前关键指纹现算）。"""
+        self._require_text(report_id, "report_id")
+        self._require_text(issue_id, "issue_id")
+        with self.store.transaction() as conn:
+            report = self._row(conn, "SELECT * FROM gov_audit_reports WHERE report_id=?",
+                               (report_id,))
+            if report is None:
+                raise GovernanceError(f"没有这份审计报告：{report_id!r}")
+            issues = {x.get("id") for x in json.loads(report["report_json"]).get("issues", [])
+                      if isinstance(x, dict)}
+            if issue_id not in issues:
+                raise GovernanceError(f"issue_id={issue_id!r} 不在这份报告的 issues 里")
+            plan = self._row(
+                conn, "SELECT version, key_fingerprint FROM gov_plans WHERE plan_id=?"
+                      " ORDER BY version DESC LIMIT 1", (report["plan_id"],))
+            if plan is None or plan["key_fingerprint"] != report["key_fingerprint"]:
+                raise GovernanceError(
+                    "方案关键字段已经变过 ⇒ 这份报告的阻断与豁免都不覆盖当前版本；先复审"
+                )
+        return {"action": WAIVE_COMMAND, "plan_id": report["plan_id"],
+                "report_id": report_id, "issue_id": issue_id,
+                "key_fingerprint": report["key_fingerprint"]}
+
+    def waive(self, report_id: str, issue_id: str, *, reason: str, evidence, actor: str) -> dict:
+        """人工豁免一条审计意见。**必须有宿主核过的真实用户命令。**
+
+        三条硬要求：① 命令由本层按 `{action, plan_id, report_id, issue_id,
+        key_fingerprint}` 构造，调用方只能给 proof；② 用户消息时间（宿主 created_at）
+        必须不早于这份报告 —— 人不可能在报告存在之前就看过它；③ 命令绑当前关键指纹，
+        方案实质一变，豁免自动失效。
+        """
+        self._require_text(actor, "actor")
+        self._require_text(reason, "reason")
+        expected = self.waive_command(report_id, issue_id)
+        verified = self._verify_user_command("waiver", expected, evidence)
+        with self.store.transaction() as conn:
+            report = self._row(
+                conn, "SELECT * FROM gov_audit_reports WHERE report_id=?", (report_id,)
+            )
+            if report is None:
+                raise GovernanceError(f"没有这份审计报告：{report_id!r}")
+            if verified["created_at"] < float(report["created_at"]):
+                raise GovernanceError(
+                    "豁免的用户消息早于这份审计报告 ⇒ 那时这份报告还不存在；不能用来关它"
+                )
+            existing = self._row(
+                conn, "SELECT id FROM gov_waivers WHERE report_id=? AND issue_id=?",
+                (report_id, issue_id),
+            )
+            if existing:
+                raise GovernanceError("这条意见已经豁免过")
+            if self._proof_reused(conn, "gov_waivers", verified["proof"]):
+                raise GovernanceError("这条用户消息已经用于豁免过：同一条决定不能重复消费")
+            conn.execute(
+                "INSERT INTO gov_waivers(report_id,issue_id,key_fingerprint,reason,evidence_json,"
+                "independence,actor,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                (report_id, issue_id, report["key_fingerprint"], reason,
+                 canonical_json(verified), INDEPENDENCE_VERIFIED, actor, self._now()),
+            )
+            self._emit(conn, "governance_waiver", actor,
+                       {"report_id": report_id, "issue_id": issue_id,
+                        "key_fingerprint": report["key_fingerprint"]})
+        return {"report_id": report_id, "issue_id": issue_id,
+                "independence": INDEPENDENCE_VERIFIED,
+                "key_fingerprint": report["key_fingerprint"],
+                "expected": expected}
+
+    # ------------------------------------------------------------------
+    # 审计额度：可信 extend（每次 +1，不设自我扩额的入口）
+    # ------------------------------------------------------------------
+
+    def audit_budget(self, plan_id: str) -> dict:
+        """只读：这个方案（跨版本累计）用了多少、当前上限多少、是否可扩。
+
+        `limit = max_audits + extensions`；扩额次数本身**没有固定上限**（K12 只要求
+        每次都要可信用户 extend），所以这里不报 `max_extensions`。
+        """
+        self._require_text(plan_id, "plan_id")
+        with self.store.transaction() as conn:
+            used = self._count(conn, "gov_audits", plan_id)
+            extensions = self._count(conn, "gov_audit_extensions", plan_id)
+        limit = int(self.policy["max_audits"]) + int(extensions)
+        return {"plan_id": plan_id, "used": int(used), "limit": int(limit),
+                "extensions": int(extensions),
+                "remaining": max(int(limit) - int(used), 0),
+                "exhausted": int(used) >= int(limit),
+                "can_extend": int(used) >= int(limit)}
+
+    def extend_command(self, plan_id: str) -> dict:
+        """扩额动作的用户命令（由本层按当前额度现算，含 used/limit 防重放）。"""
+        plan = self.latest_plan(plan_id)
+        if plan is None:
+            raise GovernanceError(f"方案 {plan_id!r} 还没有冻结过")
+        budget = self.audit_budget(plan_id)
+        if budget["used"] < budget["limit"]:
+            raise GovernanceError(
+                f"审计额度还没用满（{budget['used']}/{budget['limit']}）：不能预先加额度"
+            )
+        return {"action": EXTEND_COMMAND, "plan_id": plan_id,
+                "used": budget["used"], "limit": budget["limit"],
+                "key_fingerprint": plan["key_fingerprint"]}
+
+    def extend_audit(self, plan_id: str, *, evidence, actor: str, reason: str = "") -> dict:
+        """可信用户扩额：只在额度用满后 +1。**每次都要一条新的真实用户命令。**
+
+        用户命令由 `extend_command()` 现算（含 `used` / `limit` / 当前关键指纹）：
+        旧指令在额度变化后对不上 ⇒ 不能拿一次批准反复扩。缺宿主时间、命令不等、
+        核验器缺失、同一条消息重复消费一律拒；**没有任何参数能绕过用户命令加额度**。
+        扩额次数本身不设固定上限：用户每次明确授权一条新命令就能再加一次。
+        """
+        self._require_text(actor, "actor")
+        expected = self.extend_command(plan_id)
+        verified = self._verify_user_command("audit_extend", expected, evidence)
+        with self.store.transaction() as conn:
+            used = self._count(conn, "gov_audits", plan_id)
+            extensions = self._count(conn, "gov_audit_extensions", plan_id)
+            limit = int(self.policy["max_audits"]) + int(extensions)
+            if int(used) != expected["used"] or int(limit) != expected["limit"]:
+                raise GovernanceError(
+                    "额度在核验期间变了 ⇒ 这条用户命令不能用于当前状态，请重新确认"
+                )
+            last = self._row(conn, "SELECT MAX(created_at) AS t FROM gov_audits WHERE plan_id=?",
+                             (plan_id,))
+            if last and last.get("t") is not None \
+                    and verified["created_at"] < float(last["t"]):
+                raise GovernanceError(
+                    "扩额的用户消息早于最后一轮审计 ⇒ 那时人还没看到审计结果；不能用来扩额"
+                )
+            if self._proof_reused(conn, "gov_audit_extensions", verified["proof"]):
+                raise GovernanceError("这条用户消息已经用于扩额过：同一条决定不能重复消费")
+            plan = self._row(
+                conn, "SELECT key_fingerprint FROM gov_plans WHERE plan_id=?"
+                      " ORDER BY version DESC LIMIT 1", (plan_id,))
+            conn.execute(
+                "INSERT INTO gov_audit_extensions(plan_id,key_fingerprint,used_before,"
+                "limit_before,user_created_at,independence,evidence_json,reason,actor,created_at)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (plan_id, (plan or {}).get("key_fingerprint", ""), int(used), int(limit),
+                 verified["created_at"], INDEPENDENCE_VERIFIED, canonical_json(verified),
+                 reason or "", actor, self._now()),
+            )
+            self._emit(conn, "governance_audit_extended", actor,
+                       {"plan_id": plan_id, "extensions": int(extensions) + 1,
+                        "limit": int(limit) + 1, "used": int(used)})
+        budget = self.audit_budget(plan_id)
+        return {"plan_id": plan_id, "expected": expected,
+                "independence": INDEPENDENCE_VERIFIED, **budget}
+
+    # ------------------------------------------------------------------
+    # K11 历史轮次：只认真实过去的启动记录；不追溯 ≠ 审过
+    # ------------------------------------------------------------------
+
+    def _workflow_runs(self, plan_id: str) -> list[dict]:
+        """读同一个库里 workflow 的真实启动记录（K11 的历史启动来源）。
+
+        表不存在（没接过执行主链）⇒ 返回空 ⇒ 调用方走「显式未实现」，不猜。
+        """
+        with self.store.transaction() as conn:
+            if not self._table_exists(conn, "wf_runs"):
+                return []
+            try:
+                rows = self._rows(
+                    conn, "SELECT * FROM wf_runs WHERE plan_id=? ORDER BY started_at",
+                    (plan_id,))
+            except sqlite3.OperationalError:
+                return []
+        return rows
+
+    def _first_governance_time(self, conn, plan_id: str):
+        """本层第一次看到这个方案的时间（冻结或第一次准备审计）。"""
+        plan = conn.execute(
+            "SELECT MIN(created_at) AS t FROM gov_plans WHERE plan_id=?", (plan_id,)
+        ).fetchone()
+        audit = conn.execute(
+            "SELECT MIN(created_at) AS t FROM gov_audits WHERE plan_id=?", (plan_id,)
+        ).fetchone()
+        values = [row["t"] for row in (plan, audit) if row is not None and row["t"] is not None]
+        return min(values) if values else None
+
+    def legacy_state(self, plan_id: str) -> dict:
+        """只读：这个方案现在算不算**真实历史轮次**。
+
+        `legacy_exempt=True` 只表示「规则生效前已起跑，不追溯新审计要求」；
+        `audited` 恒为 False，`label` 逐字写「未审计，不等于审过」。
+        """
+        plan = self.latest_plan(plan_id)
+        base = {"plan_id": plan_id, "legacy_exempt": False, "audited": False,
+                "available": False, "runs": [], "exempted_runs": [],
+                "reason": None, "label": "未审计", "unimplemented": False,
+                "key_fingerprint": None}
+        if plan is None:
+            base["reason"] = "方案不存在"
+            return base
+        base["key_fingerprint"] = plan["key_fingerprint"]
+        runs = self._workflow_runs(plan_id)
+        base["runs"] = [{"run_id": run.get("run_id"), "started_at": run.get("started_at")}
+                        for run in runs]
+        if not runs:
+            base["reason"] = LEGACY_UNIMPLEMENTED
+            base["unimplemented"] = True
+            return base
+        valid = [run for run in runs if _finite(run.get("started_at"))]
+        if not valid:
+            base["reason"] = LEGACY_UNIMPLEMENTED + "（启动记录没有可判定的 started_at）"
+            base["unimplemented"] = True
+            return base
+        with self.store.transaction() as conn:
+            first = self._first_governance_time(conn, plan_id)
+            if self._table_exists(conn, "gov_legacy_exemptions"):
+                exemptions = [row for row in self._rows(
+                    conn, "SELECT * FROM gov_legacy_exemptions WHERE plan_id=?", (plan_id,))
+                    if row["key_fingerprint"] == plan["key_fingerprint"]]
+            else:
+                exemptions = []
+        gated = [run for run in valid
+                 if first is not None and float(run["started_at"]) >= float(first)]
+        if gated:
+            base["gated_runs"] = [{"run_id": run["run_id"], "started_at": run["started_at"]}
+                                  for run in gated]
+            base["reason"] = (
+                "有启动记录晚于本层第一次看到该方案 ⇒ 那是受治理的新轮次，不能豁免；新轮走当前审计"
+            )
+            return base
+        covered = {row["run_id"] for row in exemptions}
+        base["available"] = True
+        uncovered = [run["run_id"] for run in valid if run["run_id"] not in covered]
+        if uncovered:
+            base["uncovered_runs"] = uncovered
+            base["reason"] = (f"真实历史启动记录还没有登记豁免：{uncovered} ⇒ 先 legacy_exempt"
+                              "（只豁免历史要求，不算审过）")
+            return base
+        base.update(legacy_exempt=True, audited=False, label=LEGACY_LABEL,
+                    exempted_runs=sorted(covered), reason=None)
+        return base
+
+    def legacy_exempt(self, plan_id: str, *, actor: str, reason: str, evidence=None) -> dict:
+        """登记「历史轮次不追溯新审计要求」。**只认真实过去的启动记录。**
+
+        硬要求（缺一条就 fail-closed，且错误里带 `unimplemented` 标记而不是造豁免）：
+        * 同库 `wf_runs` 里必须有这个方案的真实启动记录（workflow 起跑时落的那条）；
+        * 每条启动时间必须可判、在过去、且**早于本层第一次看到该方案的时间** ——
+          受治理之后才起的轮次（含未来新轮）一律不能豁免；
+        * 豁免绑当前关键字段指纹：方案实质一变，豁免不再覆盖。
+
+        `evidence`（宿主可信来源）可选；给了就必须是 `legacy_start` 且宿主核过时间。
+        生产 `DSHost` 目前不提供这种 kind ⇒ 这条路径会 fail-closed，不伪造。
+        """
+        self._require_text(actor, "actor")
+        self._require_text(reason, "reason")
+        plan = self.latest_plan(plan_id)
+        if plan is None:
+            raise GovernanceError(
+                "方案还没有冻结过：历史豁免要绑当前关键字段指纹，先 freeze_plan()",
+                ["legacy_plan_not_frozen"])
+        runs = self._workflow_runs(plan_id)
+        if not runs:
+            raise GovernanceError(LEGACY_UNIMPLEMENTED,
+                                  ["legacy_untrusted_history", "unimplemented"])
+        valid = [run for run in runs if _finite(run.get("started_at"))]
+        if not valid:
+            raise GovernanceError(
+                LEGACY_UNIMPLEMENTED + "（启动记录没有可判定的 started_at）",
+                ["legacy_untrusted_history", "unimplemented"])
+        now = self._now()
+        with self.store.transaction() as conn:
+            first = self._first_governance_time(conn, plan_id)
+            if self._table_exists(conn, "gov_legacy_exemptions"):
+                existing = {row["run_id"] for row in self._rows(
+                    conn, "SELECT * FROM gov_legacy_exemptions WHERE plan_id=?", (plan_id,))
+                    if row["key_fingerprint"] == plan["key_fingerprint"]}
+            else:
+                existing = set()
+        pending = []
+        for run in valid:
+            started = float(run["started_at"])
+            if started > now:
+                raise GovernanceError(
+                    "启动记录的时间在未来 ⇒ 不可信，不能当历史轮次",
+                    ["legacy_future_start"])
+            if first is not None and started >= float(first):
+                raise GovernanceError(
+                    "这条启动记录晚于本层第一次看到该方案 ⇒ 是受治理的轮次（或新轮），不能豁免；"
+                    "新轮必须走当前审计",
+                    ["legacy_new_round"])
+            if run["run_id"] not in existing:
+                pending.append(run)
+        if not pending:
+            return self.legacy_state(plan_id)
+        basis = "workflow_start_record"
+        verified: dict = {}
+        if evidence is not None:
+            proof = self._proof(evidence, "legacy_start")
+            with self.store.transaction() as conn:
+                reused = self._proof_reused(conn, "gov_legacy_exemptions", proof)
+            if reused:
+                raise GovernanceError("这条用户/宿主证据已经用于历史豁免", ["legacy_proof_reused"])
+            if len(pending) != 1:
+                raise GovernanceError(
+                    "一条可信来源证据只能绑一条启动记录；有多条历史 run 时逐条给证据",
+                    ["legacy_evidence_ambiguous"])
+            if self.verifier is None:
+                raise GovernanceError(
+                    "给了宿主证据但没有核验器：不能把历史启动记成可信来源",
+                    ["legacy_untrusted_history", "unimplemented"])
+            target = pending[0]
+            payload = {"proof": proof, "plan_id": plan_id, "run_id": target["run_id"],
+                       "started_at": float(target["started_at"])}
+            try:
+                result = self.verifier.verify("legacy_start", payload)
+            except Exception as exc:  # noqa: BLE001 - 不支持就是不可用，不猜
+                raise GovernanceError(
+                    f"宿主不能核历史启动（legacy_start）：{type(exc).__name__}: {exc}；"
+                    "这条路径保留为显式未实现，不伪造豁免",
+                    ["legacy_untrusted_history", "unimplemented"]) from exc
+            if not isinstance(result, dict) or result.get("verified") is not True:
+                raise GovernanceError("宿主没有核过这条历史启动证据",
+                                      ["legacy_untrusted_history"])
+            if not _finite(result.get("created_at")):
+                raise GovernanceError("宿主结果缺 created_at：历史启动时间不可判，拒绝",
+                                      ["legacy_untrusted_history"])
+            if result.get("run_id") not in (None, target["run_id"]):
+                raise GovernanceError("宿主核过的 run_id 与本地启动记录不一致",
+                                      ["legacy_binding_mismatch"])
+            if result.get("started_at") is not None \
+                    and float(result["started_at"]) != float(target["started_at"]):
+                raise GovernanceError("宿主核过的启动时间与本地记录不一致",
+                                      ["legacy_binding_mismatch"])
+            verified = {"proof": proof, "created_at": float(result["created_at"]),
+                        "run_id": target["run_id"],
+                        "started_at": float(target["started_at"]),
+                        "session_id": result.get("session_id"), "source": result.get("source")}
+            basis = "host_evidence"
+        with self.store.transaction() as conn:
+            for run in pending:
+                try:
+                    conn.execute(
+                        "INSERT INTO gov_legacy_exemptions(plan_id,key_fingerprint,"
+                        "run_id,started_at,basis,evidence_json,reason,actor,created_at)"
+                        " VALUES(?,?,?,?,?,?,?,?,?)",
+                        (plan_id, plan["key_fingerprint"], run["run_id"],
+                         float(run["started_at"]), basis, canonical_json(verified),
+                         reason, actor, self._now()),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise GovernanceError(
+                        "这条历史启动记录已经按另一版关键指纹登记过豁免：当前版本是新设计，"
+                        "必须走当前审计（不能拿旧轮次的启动记录豁免新设计）",
+                        ["legacy_binding_mismatch"]) from exc
+            self._emit(conn, "governance_legacy_exempt", actor,
+                       {"plan_id": plan_id, "runs": [run["run_id"] for run in pending],
+                        "audited": False, "basis": basis})
+        state = self.legacy_state(plan_id)
+        state["basis"] = basis
+        return state
 
     def respond_audit(self, report_id: str, dispositions: list, *, actor: str) -> dict:
         """登记主会话对每条审计意见的处置。
@@ -1214,45 +1990,8 @@ class Governance:
                        {"report_id": report_id, "issues": recorded})
         return {"report_id": report_id, "recorded": recorded}
 
-    def waive(self, report_id: str, issue_id: str, *, reason: str, evidence, actor: str) -> dict:
-        """人工豁免一条阻断项。**必须有 verifier 核过的用户证据。**
-
-        豁免绑定当时的 `key_fingerprint`：方案关键字段一变，豁免自动失效。
-        """
-        self._require_text(actor, "actor")
-        self._require_text(reason, "reason")
-        independence, verified = self._verify("waiver", evidence)
-        if independence != INDEPENDENCE_VERIFIED:
-            raise GovernanceError(
-                "豁免需要宿主核过的用户证据（verifier verified=True）；"
-                "本地自述不能关闭阻断项"
-            )
-        with self.store.transaction() as conn:
-            report = self._row(
-                conn, "SELECT * FROM gov_audit_reports WHERE report_id=?", (report_id,)
-            )
-            if report is None:
-                raise GovernanceError(f"没有这份审计报告：{report_id!r}")
-            existing = self._row(
-                conn, "SELECT id FROM gov_waivers WHERE report_id=? AND issue_id=?",
-                (report_id, issue_id),
-            )
-            if existing:
-                raise GovernanceError("这条意见已经豁免过")
-            conn.execute(
-                "INSERT INTO gov_waivers(report_id,issue_id,key_fingerprint,reason,evidence_json,"
-                "independence,actor,created_at) VALUES(?,?,?,?,?,?,?,?)",
-                (report_id, issue_id, report["key_fingerprint"], reason,
-                 canonical_json(verified), independence, actor, self._now()),
-            )
-            self._emit(conn, "governance_waiver", actor,
-                       {"report_id": report_id, "issue_id": issue_id,
-                        "key_fingerprint": report["key_fingerprint"]})
-        return {"report_id": report_id, "issue_id": issue_id,
-                "independence": independence, "key_fingerprint": report["key_fingerprint"]}
-
     def audit_state(self, plan_id: str) -> dict:
-        """三态投影。所有历史阻断跨版本存活，只读。"""
+        """三态投影。所有历史阻断跨版本存活；历史豁免不称 audited。只读。"""
         from .audit_state import audit_state
         return audit_state(self, plan_id)
 
@@ -1673,52 +2412,84 @@ class Governance:
     def check_start(self, *, intent_id: str | None = None, source_session: str | None = None) -> dict:
         """进入下一轮之前的一次检查。**只读**。
 
-        返回 `{allow, problems, diagnostics}`。`allow=False` ⇒ 不放行。
+        返回 `{allow, problems, diagnostics, source_registered}`。`allow=False` ⇒ 不放行。
 
-        边界（写进 docs，别读大）：这一层只能判「登记过的账有没有缺口」。
-        语义识别（什么算专项意图、什么算执行偏差）与绕过入口，仍靠主会话。
+        这一层只判「登记过的账有没有缺口」，但**不给假绿**：
+
+        * `closed` 的意图**不**直接放行：closed 只说明不派新监控，仍拦「已同步未评估」
+          的用户原话（修 L1 的 closed 分支缺口）；
+        * 没有专项意图是正常状态（不派监控），但**来源会话必须已知**：没给来源、或该会话
+          从没登记过用户原话水位 ⇒ 不可判 ⇒ 不放行（修 L1「未登记会话放行」缺口）；
+        * 给了 `source_session` 但它不是该意图的来源 ⇒ 不可判 ⇒ 不放行。
+
+        语义识别（什么算专项意图、什么算执行偏差）仍靠主会话；完整监控主链在
+        `monitoring.Monitoring.check_start`，本函数不冒充它。
         """
         problems: list[str] = []
         diagnostics: list[str] = []
         if intent_id is None:
             diagnostics.append("没有专项意图 ⇒ 不派监控（这是正常状态，不是缺口）")
-            if self.policy.get("block_unassessed_without_intent") and source_session:
-                with self.store.transaction() as conn:
-                    updates = self._rows(
-                        conn,
-                        "SELECT MAX(seq) AS top FROM gov_user_updates WHERE source_session=?",
-                        (source_session,),
-                    )
-                    assessed = self._rows(
-                        conn,
-                        "SELECT MAX(covers_seq) AS top FROM gov_intent_assessments"
-                        " WHERE source_session=?",
-                        (source_session,),
-                    )
-                top = updates[0]["top"] or 0
-                done = assessed[0]["top"] or 0
-                if top > done:
-                    problems.append(
-                        f"有已同步未评估的用户原话（评估水位 {done} < {top}）⇒ 先 assess_update"
-                    )
+            if not _text(source_session):
+                problems.append(
+                    "没有来源会话：无法核未评估的用户原话与监控遗漏（不可判 ⇒ 不放行）；"
+                    "请给 --source-session"
+                )
+                return {"allow": False, "problems": problems,
+                        "diagnostics": diagnostics, "source_registered": False}
+            with self.store.transaction() as conn:
+                updates = self._row(
+                    conn,
+                    "SELECT MAX(seq) AS top FROM gov_user_updates WHERE source_session=?",
+                    (source_session,),
+                )
+                assessed = self._row(
+                    conn,
+                    "SELECT MAX(covers_seq) AS top FROM gov_intent_assessments"
+                    " WHERE source_session=?",
+                    (source_session,),
+                )
+                registered = self._row(
+                    conn,
+                    "SELECT (SELECT COUNT(*) FROM gov_user_updates WHERE source_session=?)"
+                    " + (SELECT COUNT(*) FROM gov_intent_assessments WHERE source_session=?)"
+                    " + (SELECT COUNT(*) FROM gov_intents WHERE source_session=?) AS n",
+                    (source_session, source_session, source_session),
+                )["n"]
+            if not registered:
+                problems.append(
+                    f"来源会话 {source_session!r} 未登记（没有用户原话水位）⇒ 不可判，拒绝放行；"
+                    "先 sync_user_update 登记真实原话"
+                )
+                return {"allow": False, "problems": problems,
+                        "diagnostics": diagnostics, "source_registered": False}
+            top = int(updates["top"] or 0)
+            done = int(assessed["top"] or 0)
+            if self.policy.get("block_unassessed_without_intent") and top > done:
+                problems.append(
+                    f"有已同步未评估的用户原话（评估水位 {done} < {top}）⇒ 先 assess_update"
+                )
             return {"allow": not problems, "problems": problems,
-                    "diagnostics": diagnostics}
+                    "diagnostics": diagnostics, "source_registered": True}
 
         with self.store.transaction() as conn:
             row = self._row(conn, "SELECT * FROM gov_intents WHERE intent_id=?",
                             (intent_id,))
         if row is None:
             return {"allow": False, "problems": [f"意图 {intent_id!r} 不存在"],
-                    "diagnostics": diagnostics}
+                    "diagnostics": diagnostics, "source_registered": False}
+        if _text(source_session) and not _same_identity(source_session, row["source_session"]):
+            problems.append(
+                f"给的来源会话与意图登记的不一致：{source_session!r} != "
+                f"{row['source_session']!r} ⇒ 不可判，拒绝放行"
+            )
         if row["state"] == "closed":
-            diagnostics.append("意图已 closed ⇒ 不派监控")
-            return {"allow": True, "problems": problems, "diagnostics": diagnostics}
+            diagnostics.append("意图已 closed ⇒ 不派监控；但 closed ≠ 用户原话都评估过")
         state = self.intent_state(intent_id)
         problems.extend(state["problems"])
         if row["state"] == "blocked":
             problems.append("意图处于 blocked：阻碍解除前不放行新方向（blocked ≠ closed）")
         return {"allow": not problems, "problems": problems,
-                "diagnostics": diagnostics}
+                "diagnostics": diagnostics, "source_registered": True}
 
     # ------------------------------------------------------------------
     # 经验候选：四种处置 + 修订使旧确认失效

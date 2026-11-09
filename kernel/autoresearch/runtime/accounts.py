@@ -207,6 +207,10 @@ class Accounts:
             reservation = conn.execute('SELECT * FROM budget_reservations WHERE id=?', (reservation_id,)).fetchone()
             if reservation is None or reservation['status'] != 'reserved':
                 raise BudgetError('reservation is absent or already finalized')
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='wf_runs'").fetchone():
+                active = conn.execute('SELECT r.run_id FROM wf_runs r WHERE r.plan_id=? AND NOT EXISTS (SELECT 1 FROM wf_finishes f WHERE f.run_id=r.run_id)', (reservation['exp_id'],)).fetchone()
+                if active:
+                    raise BudgetError('workflow execution must be definitively terminal before budget finalization')
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reservation_bindings'").fetchone():
                 binding = conn.execute('SELECT request_key FROM reservation_bindings WHERE reservation_id=?', (reservation_id,)).fetchone()
                 if binding:

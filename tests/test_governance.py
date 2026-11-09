@@ -26,6 +26,7 @@ import pathlib
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -92,7 +93,11 @@ def audit_report(prepared_id: str, **overrides) -> dict:
 
 
 class FakeVerifier:
-    """假宿主：只证明「注入 verifier 这条路能走」，不代表现实里核过。"""
+    """假宿主：只证明「注入 verifier 这条路能走」，不代表现实里核过。
+
+    ⚠️ 它够不上「敏感动作」的新协议（没有 command / created_at / session / seq）。
+    关闭审计、waive、extend 必须用 `VerifiedCommandHost`；生产用真 `DSHHost`。
+    """
 
     def __init__(self, *, allow=True, kinds=None):
         self.allow = allow
@@ -106,6 +111,30 @@ class FakeVerifier:
         if self.kinds and kind not in self.kinds:
             return None
         return {"verified": True, "kind": kind, "by": "fake-host", "payload_seen": True}
+
+
+class VerifiedCommandHost:
+    """新协议的假宿主：expected 由治理层构造，proof 只有 {session_id, seq}。
+
+    返回字段与真 `DSHHost` 同形：command 回传、created_at 是宿主时间、session/seq 回指 proof。
+    它只证明治理层会核这些绑定；**命令与真实消息逐键相等**由真 DSHost 的测试证明。
+    """
+
+    def __init__(self, *, at=None):
+        self.calls = []
+        self.at = at
+
+    def verify(self, kind, payload):
+        self.calls.append((kind, payload))
+        if kind not in ("policy_off", "waiver", "audit_extend"):
+            return None
+        if not isinstance(payload, dict) or set(payload) != {"proof", "expected"}:
+            return None
+        proof = payload["proof"]
+        return {"verified": True, "kind": kind,
+                "session_id": proof["session_id"], "seq": proof["seq"],
+                "created_at": time.time() if self.at is None else self.at,
+                "command": payload["expected"]}
 
 
 class BrokenVerifier:
@@ -142,11 +171,25 @@ class PlanValidationTests(unittest.TestCase):
         self.assertEqual(gov.validate_plan(make_plan()), [])
 
     def test_missing_top_level_keys(self):
-        for key in gov.KEY_FIELDS:
+        for key in gov.REQUIRED_KEY_FIELDS:
             plan = make_plan()
             plan.pop(key)
             errors = gov.validate_plan(plan)
             self.assertTrue(any(key in item for item in errors), f"{key} 应被点名：{errors}")
+
+    def test_authorization_is_a_key_field_but_optional(self):
+        self.assertIn("authorization", gov.KEY_FIELDS)
+        self.assertNotIn("authorization", gov.REQUIRED_KEY_FIELDS)
+        self.assertEqual(gov.validate_plan(make_plan()), [])
+        auth = make_plan(authorization={"scope": "small", "series_id": "S1",
+                                        "reservation_id": "R1"})
+        self.assertEqual(gov.validate_plan(auth), [])
+        base = gov.plan_fingerprint(auth)
+        for key, value in (("scope", "large"), ("series_id", "S2"),
+                           ("reservation_id", "R2"), ("decision_id", "D1")):
+            changed = dict(auth, authorization=dict(auth["authorization"], **{key: value}))
+            self.assertNotEqual(gov.plan_fingerprint(changed), base, key)
+        self.assertEqual(gov.plan_fingerprint(dict(auth, notes="换个说法")), base)
 
     def test_not_a_dict(self):
         self.assertEqual(len(gov.validate_plan([1, 2])), 1)
@@ -453,14 +496,15 @@ class FreezeAndAuditTests(GovCase):
                              "suggestion": "减题",
                              "sources": [{"path": "p", "locator": "L3"}]}]
         recorded = self.gov.record_audit(prepared["prepared_id"], report, actor="reviewer")
+        # 旧式「自述 + 任意时间」被拒：豁免只收宿主 proof。
         with self.assertRaises(gov.GovernanceError) as ctx:
             self.gov.waive(recorded["report_id"], "AUD-P1-1", reason="人同意多花",
                            evidence={"quote": "就这样跑"}, actor="main")
-        self.assertIn("verifier", str(ctx.exception))
+        self.assertIn("宿主证据", str(ctx.exception))
 
-        gov_verified = gov.Governance(self.store, verifier=FakeVerifier())
+        gov_verified = gov.Governance(self.store, verifier=VerifiedCommandHost())
         gov_verified.waive(recorded["report_id"], "AUD-P1-1", reason="人同意多花",
-                           evidence={"quote": "就这样跑"}, actor="main")
+                           evidence={"session_id": "session-user", "seq": 1}, actor="main")
         state = gov_verified.audit_state("P1")
         self.assertTrue(state["ok"], state["problems"])
 
@@ -473,11 +517,11 @@ class FreezeAndAuditTests(GovCase):
         with self.assertRaises(gov.GovernanceError) as ctx:
             self.gov.set_policy(scope="global", target="*", mode="off", actor="main",
                                 evidence={"quote": "以后不用审"})
-        self.assertIn("verifier", str(ctx.exception))
+        self.assertIn("宿主证据", str(ctx.exception))
 
-        verified = gov.Governance(self.store, verifier=FakeVerifier())
+        verified = gov.Governance(self.store, verifier=VerifiedCommandHost())
         out = verified.set_policy(scope="global", target="*", mode="off", actor="main",
-                                  evidence={"quote": "以后不用审", "created_at": 9e9})
+                                  evidence={"session_id": "session-user", "seq": 1})
         self.assertEqual(out["independence"], "verified")
         self.assertEqual(verified.audit_policy()["mode"], "off")
         with self.assertRaises(gov.GovernanceError):

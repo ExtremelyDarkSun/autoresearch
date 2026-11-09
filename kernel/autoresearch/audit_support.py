@@ -28,13 +28,19 @@ def changes(before, after):
 
 
 def hard_path(path):
+    """实质路径：改它必须重新审计，⛔ 不能当「定位修正」或小修授权。
+
+    `authorization`（scope / series_id / reservation_id / decision_id）决定这一轮算小样本、
+    大规模还是线上提交，属于预算准入声明，整枝都算硬路径。
+    """
     parts = path.split('.')
     if parts[0] == 'criteria':
         return len(parts) < 2 or parts[1] in {'mode', 'metric', 'direction', 'threshold', 'stop_condition'}
     return (parts[0] in {'case_sets', 'previous_passes', 'change_set',
                          'baseline', 'hypothesis', 'goal', 'budget', 'execution_argv',
-                         'implementation', 'id'}
-            and parts[-1] != 'locator') or 'execution_argv' in parts or 'implementation' in parts
+                         'implementation', 'id', 'authorization'}
+            and parts[-1] != 'locator') \
+        or 'execution_argv' in parts or 'implementation' in parts or 'authorization' in parts
 
 
 def report_digest(path):

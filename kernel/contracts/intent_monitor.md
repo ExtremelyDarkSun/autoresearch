@@ -3,7 +3,7 @@ GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
 LAST-EDIT: portable extraction / repository bootstrap (2026-11-09 +08:00)
 PURPOSE: 跨轮专项意图与过程监控 —— 四态、三触发、来源必须可追、两个水位、闭合四理由、进下一轮前的检查
 ORIGIN: none（新文件）。抽取自上游 contracts/intent_monitor.md 的 §2–§13，去掉了个人通道、会话文件格式与具体 seq
-CUMULATIVE-DELTA: 首版。机械判据落在 governance.create_intent / register_trigger / record_monitor_report / close_intent / check_start。
+CUMULATIVE-DELTA: 2026-11-09 完整监控迁移到 monitoring 服务；同步完整报告、可信豁免与关闭、双水位及真实启动接线。
 -->
 
 # 专项意图与节点监控
@@ -97,21 +97,17 @@ CUMULATIVE-DELTA: 首版。机械判据落在 governance.create_intent / registe
 
 ## 6 报告字段
 
-```json
-{
-  "covers": {"trigger_ids": ["TRG-…"], "user_seq": 12},
-  "verdict": "on_track",
-  "basis": "逐题读数与计划一致（results.jsonl 已核）"
-}
-```
+报告至少包含 `prepared_id`、`owner_session`、`monitor_session`、`exp`、`direction_sha256`，以及 `intent`、`trajectory`、`findings`、`issues`、`next_direction`、`closure`、`covers`、`evidence_reads`。不得用旧的 covers/verdict/basis 三字段对象替代完整报告。
 
-`verdict` ∈ `on_track` / `drifting` / `blocked` / `achieved` / `unachievable`。
+`intent` 回到真实用户原话，逐字核引文；`trajectory` 每轮分开原始结果与主分析，保留来源和偏移起点；`findings` 判断证据是否支持解释；`issues` 可以为空，合理探索不能为凑内容编阻断；`next_direction` 说明下一方向是否仍连接用户目标；`closure` 只建议状态，不直接关意图。
 
-三件必做（`record_monitor_report` 机械判）：
+`covers` 必须与准备材料逐键相等，含全部触发、用户高水位及本次会话截止。报告所有会话引用不得越过截止，不能读取未来再声称历史回放。`direction_sha256` 必须与材料包一致。
 
-1. `covers.trigger_ids` 必须覆盖该意图**全部未处理触发**；
-2. `covers.user_seq` 必须 ≥ 它读到的用户原话序号；
-3. `basis` 非空，且指到原始结果/规则 —— 「看起来没问题」不是依据。
+`evidence_reads` 至少含一条负责人会话的 `raw_session`。独立子会话先读用户原话，再读原始结果，最后读主分析；不能只读负责人摘要，也不能 fork 继承主会话论证。允许定点核关键统计，不例行全量重算，不接管方案设计或启停执行。
+
+[监控服务](<../autoresearch/monitoring.py>)的 `prepare` 生成材料与派工指令，`record` 核完整报告及宿主 `monitor_independence` 证据。宿主核真实新派会话、父子谱系、材料标识与可见报告原文，不由负责人代写。正式字段形状和枚举用 `python research.py monitoring protocol` 查看。
+
+每条意见须 `accepted/declined/needs_user`、理由与来源。历史未关阻断持续拦截；“知悉”或 declined 不能消除。用户豁免须绑定真实用户命令 `{"action":"waive","report_id":"对应报告","issue_id":"对应问题"}`，不拿任意真实旧消息充当授权。
 
 ---
 
@@ -123,7 +119,8 @@ CUMULATIVE-DELTA: 首版。机械判据落在 governance.create_intent / registe
 | 无专项意图，但有未评估原话 | **拦** |
 | `active` / `blocked`，有未覆盖触发 / 报告过期 / 阻断未关 | **拦** |
 | `blocked` | **拦**（阻碍解除前不开新方向） |
-| `closed` | 放行；诊断行写明不派监控 |
+| `closed` 且无未评估新原话 | 放行；诊断行写明不派监控 |
+| `closed` 但有未评估新原话 | **拦**，闭合不能吞掉新要求 |
 | 取包 / 用户喊停 / 故障停机 | **一律不拦** |
 
 ---

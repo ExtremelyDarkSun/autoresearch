@@ -1,29 +1,37 @@
 <!--
 GENERATED-BY: repository creation, 2026-11-09 +08:00
-LAST-EDIT: portable framework synchronization, 2026-11-09
+LAST-EDIT: 2026-11-09 主入口落位：把「没有模块」的旧表述改成「有实际入口 / 尚缺接线 / 真实部署未验」，并指向 RUNNING.md
 PURPOSE: 给首次查看项目的人说明用途、边界和可执行检查。
 ORIGIN: reusable research mechanisms and target-specific evaluation adapters
-CUMULATIVE-DELTA: 2026-11-09 新增完整行为预期与109项验收入口，明确功能迁移未完成；保留既有研究规则同步。
+CUMULATIVE-DELTA: 2026-11-09 新增 [怎么跑](<docs/RUNNING.md>)（工作区 / 专题隔离 / 预算 / 执行主链 / 人读页 / 监控 / 审批 / 进度 / 问题台账的实际命令）；
+改写迁移状态段：主链入口已存在，但真实通道、真实云机与完整冷启动未验，若干接线仍在进行中；
+把只登记 Topics 的首次隔离改成真实 worktree + 独立环境命令（claim 保留）；明确 demo 只是底层事务合成、不代科研主链；109 编号验收表继续保留。
 -->
 # AutoResearch：可复用研究内核与 agent 比赛配置
 
 这套项目的目标是让 AI 围绕一个研究目标持续工作：先写假设和判断标准，再安排实验，保存原始证据，核查结果，决定下一步。人负责目标、方向和需要批准的动作。
 
-**功能迁移尚未完成。** 按原框架行为预期逐项审计，统一起跑检查、完整 AI 事前材料、研究页供料与回执、完整意图监控报告、审批与入向监听、持续推进及通用远端进度探针仍有缺失。现有离线测试通过不能证明整套框架已复原。验收依据见[完整行为预期](<kernel/contracts/framework_expectations.md>)，109 个编号的现状和补齐顺序见[迁移功能验收](<docs/EXPECTATIONS_ACCEPTANCE.md>)。
+**迁移状态：主链入口已经在仓库里，但不是「全部完成」。** 现在可以按 [怎么跑](<docs/RUNNING.md>) 依次调用工作区初始化、专题隔离、共享预算、研究执行主链（事前材料 → 起跑闸 → 真子进程 → 结束 → 复盘）、人读页供料与验收、意图与过程监控、审批与入向、进度采集与受管推进器、问题台账。以下三类**仍未完成**，逐项写在[迁移功能验收](<docs/EXPECTATIONS_ACCEPTANCE.md>)（109 个编号全部保留）：
+
+- **真实部署未验**：真实消息通道送达与回复、真实云机与平台提交、从 clone 到完整冷启动的全流程。
+- **接线进行中**：监控侧旧双账统一与起跑事务内复核、审批侧绑定实际 execution_plan、宿主侧 goal 持久事件与超期实读。
+- **本就是语义纪律**：结论是否成立、页面是否易读、审计是否有质量，机械检查证明不了。
+
+现有离线测试通过只证明被覆盖的机制，不证明整套框架已复原。验收依据见[完整行为预期](<kernel/contracts/framework_expectations.md>)。
 
 仓库有两层。**内核**处理任何研究项目都会遇到的事务、预算、任务接管、证据、审查、报告和部署。**agent 比赛配置**描述“要优化的是一个 agent harness”时才需要的题单、轨迹、工具、工作区、泄漏和评测预算。
 
 真实比赛资料、题库、模型、实验结果、现有结论、凭据、机器清单和个人宿主设置均不随仓库提供。它们放在另外建立的研究工作区。示例全部是合成数据。
 
-## 让 AI 带你完成第一次真实运行
+## 让 AI 带你走一轮
 
 克隆仓库后，在仓库目录启动有终端工具的 AI，发送：
 
-> 请完整读取 docs/FIRST_RUN_PROMPT.md，执行“交给 AI 的 prompt”一节。目标是配置我的 Kaggle 与 AutoDL，并完成一轮真实研究循环。先检查现有环境，再问我缺失的信息。不要只给我安装清单，也不要拿合成演示当成完成。
+> 请完整读取 docs/RUNNING.md，按里面的主入口命令带我走一轮：先 `doctor`，再问我目标、平台访问与预算这些**只有我能定**的事，然后依次建工作区、建专题隔离、做预算授权与预留、写事前计划并跑起跑闸。凡是要真实通道、云机或我本人授权的动作，先停下来问我；凡是文档标「尚未接线 / 待验」的，直接告诉我缺什么，不要自己编一个入口。
 
-完整指令见 [首次启动 prompt](docs/FIRST_RUN_PROMPT.md)。它引导 AI 检查环境、配置安全凭据引用、补齐真实执行接口、运行对照与候选、分析结果并核查资源停止。你只需提供目标、平台访问和预算等必要决定。
+**操作命令以 [怎么跑](<docs/RUNNING.md>) 为准。** 旧的[首次启动 prompt](docs/FIRST_RUN_PROMPT.md) 是更早的 onboarding 脚本：它会把「补齐真实执行接口」交给 AI 自己写。现在研究主链、人读页、监控、审批、进度与问题台账都已有实际入口，**缺的是部署配置与真实验收**；仓库里没有的接线，本文档与验收表直接写成缺口，⛔ 不靠「让 AI 补一段代码」来把首次可用性补圆。
 
-**这不是一键部署脚本。** 当前仓库不自带通用 Kaggle 客户端或完整远端评测启动器。prompt 明确要求 AI 在缺少接线时实际补齐并测试。首次循环需要比赛允许的数据、模型和评测器，不要求 Kaggle 线上提交。本次只核对了指令与仓库接口，尚未在全新机器完成真实平台验收。
+**这不是一键部署脚本。** 当前仓库不自带通用 Kaggle 客户端、完整远端评测启动器或消息通道客户端。真实首轮需要比赛允许的数据、模型与评测器，以及你自己的通道与凭据引用；尚未在全新机器完成真实平台验收。
 
 ## 第一次检查：三条命令
 
@@ -34,21 +42,30 @@ CUMULATIVE-DELTA: 2026-11-09 新增完整行为预期与109项验收入口，明
 ```powershell
 python -X utf8 -B research.py doctor
 python -X utf8 -B research.py demo --output .local/demo
-python -X utf8 -B research.py selftest --plugins
+python -X utf8 -B research.py selftest
+python -X utf8 -B research.py selftest --plugins     # 需要 Node.js
 ```
 
 `doctor` 检查配置、完整指令的字节量和部署边界。默认配置有效，但没有真实评测命令，因此会明确显示“不能发起真实评测”。这属于正常初始状态。
 
-`demo` 从一个**尚不存在**的目录开始，走通登记、预算预留、模拟执行、结果取回、资源核对和结案。演示生成 `REPORT.md` 和 `REPORT.json`。它只验证研究流程的机械机制，不能证明任何研究假设成立。第二次运行请换一个新目录。
+`demo` 从一个**尚不存在**的目录开始，走通登记、预算预留、模拟执行、结果取回、资源核对和结案，生成 `REPORT.md` 与 `REPORT.json`。⚠️ **它只是底层事务的合成演示**：没有事前四锚点、没有 argv 起跑闸、没有审计/监控/准入三闸、没有真实子进程、没有复盘与页面供料。**别拿它当统一科研主链已可用的证据**——主链看[怎么跑](<docs/RUNNING.md>)。第二次运行请换一个新目录。
 
-`selftest --plugins` 运行 Python 回归和三个插件的模拟宿主测试。测试不启动云机，不调用真实模型，不外发消息。
+`selftest` 运行 Python 回归；加 `--plugins` 再跑三个插件的模拟宿主测试。测试不启动云机，不调用真实模型，不外发消息。
 
 ## 目录怎么分
 
 | 位置 | 用途 | 应放什么 |
 |---|---|---|
 | [kernel/autoresearch/runtime](kernel/autoresearch/runtime/) | 通用事务内核 | 状态、追加事件、预算、任务与资源租约、幂等执行、结果取回、交付和回复台账 |
-| [kernel/autoresearch/governance.py](kernel/autoresearch/governance.py) | 通用研究治理 | 计划检查、冻结、独立审查、意图、复盘和经验确认 |
+| [kernel/autoresearch/governance.py](kernel/autoresearch/governance.py) | 通用研究治理 | 计划检查、冻结、独立审查（宿主绑定）、意图、复盘和经验确认 |
+| [kernel/autoresearch/workflow.py](kernel/autoresearch/workflow.py) | 研究执行主链 | 事前材料与来源哈希、起跑闸、真子进程与退出码、结束、复盘、只读状态 |
+| [kernel/autoresearch/reporting.py](kernel/autoresearch/reporting.py) | 人读页供料与验收 | 完整供料包、页面检查、scribe 回执、整轮交付、checkpoint 时效诊断 |
+| [kernel/autoresearch/monitoring.py](kernel/autoresearch/monitoring.py) | 意图与过程监控 | 四态、三触发、两水位、独立子会话报告核验、意见处置与跨报告阻断 |
+| [kernel/autoresearch/decisions.py](kernel/autoresearch/decisions.py) | 审批与入向 | 自包含审批页、先页后卡、双回执重算、两小时超时、文字回复窗口 |
+| [kernel/autoresearch/progress.py](kernel/autoresearch/progress.py) | 进度采集与推进器 | 声明式 spec、采集比较、租约、静默窗口、一次唤醒即退出、显式重挂 |
+| [kernel/autoresearch/progress_host.py](kernel/autoresearch/progress_host.py) | 宿主侧联动 | DSH goal 重放、超期只读、受管 job 登记台账（只读宿主） |
+| [kernel/autoresearch/issues.py](kernel/autoresearch/issues.py) | 问题台账（§9） | 首错登记、查重、负责人、修复、复验（argv + 退出码）、冷件索引 |
+| [kernel/autoresearch/{workflow,reporting,monitoring,decisions,progress,progress_host,budget,workspace,issues}_cli.py](kernel/autoresearch/) | 上面各层的命令行入口 | 由 `research.py <名称>` 转发 |
 | [kernel/contracts](kernel/contracts/) · [kernel/instructions](kernel/instructions/) | 内核现行契约与读取要求 | 原则、可执行条件、证据边界 |
 | [kernel/roles](kernel/roles/) · [kernel/templates](kernel/templates/) | 角色委派与空模板 | 角色材料、事前设计、人读现状页与交接 |
 | [kernel/hosts/dsh](kernel/hosts/dsh/) | 首个宿主适配 | 三套项目插件、配置生成和加载检查工具 |
@@ -72,15 +89,48 @@ python -X utf8 -B research.py init --workspace ../my-research
 
 轨迹检查入口是 `python profiles/agent-harness/checks/cli.py trace --help`，完整命令见 [配置与接口契约](docs/profiles.md)。
 
-开始一个长期课题时，先保存目标、独立工作区和分支，再接手负责人：
+开始一个长期课题时，先用**真实隔离命令**建专题（不是只登记一行元数据），再接手负责人：
 
 ```powershell
-python research.py topics --db ../my-research/.autoresearch/runtime.sqlite3 --commit create --topic demo-topic --title "示例课题" --objective "验证一个明确的研究问题" --workspace ../my-research/worktrees/demo-topic --branch research/demo-topic
-python research.py topics --db ../my-research/.autoresearch/runtime.sqlite3 --commit claim --topic demo-topic --session my-session --generation 0
-python research.py topics --db ../my-research/.autoresearch/runtime.sqlite3 show --topic demo-topic
+# 1) 建专题：研究文档 + 真实 worktree（或独立空 Git 仓库）+ 独立 Python 环境
+python -X utf8 -B research.py workspace topic --workspace ../my-research --topic demo-topic `
+    --objective "验证一个明确的研究问题" --requirements-file 需求原文.md `
+    --owner-session my-session [--code-repo C:\path\to\repo] [--revision HEAD] [--no-environment]
+
+# 2) 接手负责人（世代号；旧负责人继续写会被拒）
+python -X utf8 -B research.py topics --db ../my-research/.autoresearch/runtime.sqlite3 `
+    --commit claim --topic demo-topic --session my-session --generation 0
+
+# 3) 查看
+python -X utf8 -B research.py topics --db ../my-research/.autoresearch/runtime.sqlite3 show --topic demo-topic
 ```
 
-这些命令登记工作区与分支的归属，**不会替你执行 `git worktree add`、创建隔离环境或证明远端隔离**。真实实验适配器还要核查这些条件。负责人每次接管会改变世代号；旧负责人继续写会被拒绝。断线后的交接保存进展、未完成项、在途工作、证据和下一步。
+`workspace topic` 会真的建 `worktrees/<topic>` 与 `environments/<topic>`，失败时把 `status=incomplete` 与错误写进 `topics/<topic>/provision.json`，**不静默覆盖**。它**不装依赖、不跑评测**（`ready_for_evaluation=false`）。
+
+⚠️ 旧版只有 `topics create`：它只登记目录与分支字符串，**不会**建 worktree、不会建独立环境、也不证明远端隔离。真实实验仍需把这两步都做到；`claim` / 交接命令保留不变。
+
+实验前后各留一次专题主文档原始快照：
+
+```powershell
+python -X utf8 -B research.py workspace snapshot --workspace ../my-research --topic demo-topic --exp-id P1 --stage before
+```
+
+## 主入口一览（详细命令见[怎么跑](<docs/RUNNING.md>)）
+
+| 要做的事 | 入口 | 写在哪 |
+|---|---|---|
+| 初始化工作区 | `research.py init` | `<工作区>/.autoresearch/runtime.sqlite3`、`AGENTS.md` |
+| 建专题隔离 | `research.py workspace topic` / `snapshot` | `topics/<专题>/`、`worktrees/`、`environments/` |
+| 预算授权与预留 | `research.py budget grant/reserve/status/release/settle` | `budget_accounts` / `budget_reservations`（同一个库） |
+| 研究执行主链 | `research.py workflow prepare/check/launch/finish/review/status` | `wf_preparations` / `wf_runs` / `wf_finishes` / `wf_reviews` / `wf_events` |
+| 人读页供料与验收 | `research.py reporting prepare/check/ack/round-check/diagnose` | `topics/<专题>/STATUS.md` + `.autoresearch/state/reporting/<专题>/` |
+| 意图与过程监控 | `research.py monitoring register/sync/event/prepare/record/check` | `<工作区>/.autoresearch/monitoring.sqlite3` |
+| 审批与入向 | `research.py decisions prepare/send/status/inbox/overdue/reply/hook` | 决策台账 + 自包含审批页 + 通道回执 |
+| 进度采集与推进器 | `research.py progress probe/tick/watch/rearm/outcome/status` | 事件库 + 租约 + `needs_rearm` |
+| 宿主侧联动 | `research.py progress-host doctor/goal/overdue/plan/register/status` | 固定 deployment 配置 + append-only job 台账 |
+| 问题台账（§9） | `research.py issues record/status/assign/fix/verify/reopen/archive/index` | `<工作区>/.autoresearch/issues.sqlite3` |
+
+三条边界：**起跑闸是 fail-closed 的**（缺审计/监控/准入任一就拒绝启动，且不起来子进程）；**没有可信验证器时授权、豁免、交付确认会拒绝**；**通道、云机、平台凭据属于部署配置**，仓库只放引用。
 
 ## 怎么换成自己的比赛
 
@@ -121,12 +171,17 @@ python research.py instructions --captured path/to/captured-host-request.txt
 
 ## 现在能用什么，部署还要补什么
 
-本地可直接使用事务状态、课题接管、预算与授权证据账本、幂等执行和对账机制、计划检查、配置检查、合成演示、结果分析、轨迹检查以及插件自检。
+**本地可直接用（有实际入口 + 专项测试）**：事务状态与追加事件、课题接手与世代、专题真实隔离（worktree + 独立环境 + 主文档快照）、共享预算的授权/预留/释放/结算台账、幂等执行与对账、研究执行主链（事前四锚点 → 起跑闸 → 真子进程 → 结束 → 复盘）、人读页完整供料与回收回执、意图与过程监控（四态/三触发/两水位/独立报告核验/意见处置）、审批页与双回执状态机、入向文字回复窗口、通用进度采集与受管推进器（一次唤醒即退出 + 显式重挂）、宿主侧 goal/超期/job 只读联动、问题台账（查重/负责人/修复/复验/冷件索引）、配置与指令测量、插件自检。
 
-真实模型、正式评分环境、远端执行和真实授权来源需要部署适配器。需要可信证据的授权、审查豁免或交付确认，在没有可信验证器时默认拒绝；普通审查资料可以登记为本地声明，但不等于宿主已验证其独立性。离线演示中的签名与审查都是临时夹具，不能拿去给真实动作授权。
+**需要部署适配器（缺配置不等于缺功能，但也不等于已验）**：真实消息通道（页 + 卡 + 回执送达）、真实模型与正式评分环境、远端提交与云机、真实授权来源（宿主用户消息）。
 
-本项目保留持续研究与可选委派机制，但没有安装一个会自动在生产环境开实验的常驻服务。真实的持续推进，需要宿主接收任务、保存结果并重新挂回下一步。通知送达、进程退出和预算租约到期都不证明实验成功或机器空闲。
+**已知未完成**（逐项见[迁移功能验收](<docs/EXPECTATIONS_ACCEPTANCE.md>)）：监控侧旧双账统一与起跑事务内复核、审批侧绑定实际 execution_plan、宿主侧 goal 持久事件与超期实读、从 clone 到完整冷启动的端到端验收。**这些写成缺口，不当已完成。**
 
+需要可信证据的授权、审查豁免、交付确认，在没有可信验证器时**默认拒绝**；普通资料可登记为本地声明（`declared`），但那不等于宿主已验证。离线演示与测试里的签名、审查、通道都是临时夹具，不能拿去给真实动作授权。
+
+本项目**没有**安装一个会自动在生产环境开实验的常驻服务。持续研究靠受管推进器 + 显式重挂：一次唤醒处理完就退出并写 `needs_rearm`，由负责人挂回；通知送达、进程退出、租约到期都不证明实验成功或机器空闲。
+
+- 操作命令与未接线清单：[怎么跑](docs/RUNNING.md)。
 - 研究流程与制度边界：[研究说明](docs/research.md)。
 - 实际拆分与未搬迁内容：[迁移说明](docs/migration.md)。
 - 本次执行过的检查与结果：[验收记录](docs/VERIFICATION.md)。

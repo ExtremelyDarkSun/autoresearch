@@ -28,6 +28,13 @@ def write_new(path, text):
 
 def main(argv=None):
     args = list(sys.argv[1:] if argv is None else argv)
+    modules = {'workflow': '.workflow_cli', 'reporting': '.reporting_cli',
+               'monitoring': '.monitoring_cli', 'decisions': '.decisions_cli',
+               'progress': '.progress_cli', 'workspace': '.workspace_cli', 'budget': '.budget_cli',
+               'issues': '.issues_cli', 'progress-host': '.progress_host_cli'}
+    if args and args[0] in modules:
+        from importlib import import_module
+        return import_module(modules[args[0]], __package__).main(args[1:])
     if args and args[0] == 'governance':
         from .governance_cli import main as governance_main
         return governance_main(args[1:])
@@ -39,6 +46,17 @@ def main(argv=None):
         return runtime_main(args[1:])
     p = argparse.ArgumentParser(description='通用研究内核与 agent 比赛配置；外部部署需要显式配置。')
     sub = p.add_subparsers(dest='command', required=True)
+    for name, help_text in (
+        ('workflow', '事前材料、实际启动、结束与研究复盘'),
+        ('reporting', '研究页完整供料、版本验收回执与只读诊断'),
+        ('monitoring', '原话水位、独立意图监控与启动检查'),
+        ('decisions', '审批HTML、双回执、入向回复与超时'),
+        ('progress', '声明式进展采集与受管推进作业'),
+        ('workspace', '专题真实代码隔离、环境和研究快照'),
+        ('issues', '首错查重、负责人、修复复验和冷件索引'),
+        ('progress-host', '真实宿主goal、入向与受管作业的推进适配'),
+        ('budget', '真实用户预算授权、共享额度预留和只读状态')):
+        sub.add_parser(name, help=help_text)
     a = sub.add_parser('doctor', help='检查代码、配置和实际部署边界')
     a.add_argument('--profile', default=str(DEFAULT_PROFILE))
     a = sub.add_parser('demo', help='在新目录运行合成离线研究生命周期')
