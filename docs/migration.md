@@ -1,13 +1,15 @@
 <!--
 GENERATED-BY: repository bootstrap, 2026-11-09 +08:00
-LAST-EDIT: 2026-11-09 +08:00
+LAST-EDIT: 2026-11-09；加入完整行为预期验收与未完成结论。
 PURPOSE: 说明实际拆分落点、保留机制和运行边界。
 ORIGIN: extraction inventory and direct source inspection
-CUMULATIVE-DELTA: 按功能拆混合文件；实例内容不进入仓库。
+CUMULATIVE-DELTA: 2026-11-09 对照完整行为预期明确功能迁移未完成，补逐项验收链接；实例内容不进入仓库。
 -->
 # 迁移与拆分说明
 
 这次交付是独立的新 Git 项目。原项目继续保留，新项目不读取原项目的数据库、实验目录、当前比赛配置或凭据文件。
+
+**按完整行为预期验收，功能迁移尚未完成。** 本文的“保留机制”只描述局部抽取，不能外推整组行为已实现。具体缺失、入口未接线和部署未验证逐项见[109 项功能迁移验收](<EXPECTATIONS_ACCEPTANCE.md>)；验收依据见[中性化完整预期](<../kernel/contracts/framework_expectations.md>)。
 
 ## 内核、agent 比赛配置、其他
 

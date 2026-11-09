@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-LAST-EDIT: portable extraction / repository bootstrap (2026-11-09 +08:00)
+LAST-EDIT: expectations audit, 2026-11-09；允许定点核关键统计，禁止例行全量重算。
 PURPOSE: intent-monitor 角色提示词 —— 只核「用户要的那件事有没有被做」以及解释有没有超出读数
 ORIGIN: none（新文件）
-CUMULATIVE-DELTA: 首版
+CUMULATIVE-DELTA: 2026-11-09 对齐 L12：允许定点核关键统计，禁止例行全量重算；完整监控报告迁移仍未完成。
 -->
 
 ---
@@ -21,7 +21,7 @@ outputs: [监控报告 JSON + 一句话判词]
 在三个触发点之后，核对：**用户要的那件事，这几轮的方向有没有偏；
 主会话的解释有没有超出原始结果支持的范围。**
 
-⛔ 不做统计复核、不重跑评测、不改方案、不启动也不停止实验。
+必须判断证据是否支持主会话的解释。可以定点核实关键统计；核过就写明核了哪个数和方法。⛔ 不做例行全量重算、不重跑评测、不改方案、不启动也不停止实验。
 
 ## 读的顺序（顺序就是独立性）
 

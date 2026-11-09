@@ -3,11 +3,13 @@ GENERATED-BY: repository creation, 2026-11-09 +08:00
 LAST-EDIT: portable framework synchronization, 2026-11-09
 PURPOSE: 给首次查看项目的人说明用途、边界和可执行检查。
 ORIGIN: reusable research mechanisms and target-specific evaluation adapters
-CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
+CUMULATIVE-DELTA: 2026-11-09 新增完整行为预期与109项验收入口，明确功能迁移未完成；保留既有研究规则同步。
 -->
 # AutoResearch：可复用研究内核与 agent 比赛配置
 
-这套项目让 AI 围绕一个研究目标持续工作：先写假设和判断标准，再安排实验，保存原始证据，核查结果，决定下一步。人负责目标、方向和需要批准的动作。
+这套项目的目标是让 AI 围绕一个研究目标持续工作：先写假设和判断标准，再安排实验，保存原始证据，核查结果，决定下一步。人负责目标、方向和需要批准的动作。
+
+**功能迁移尚未完成。** 按原框架行为预期逐项审计，统一起跑检查、完整 AI 事前材料、研究页供料与回执、完整意图监控报告、审批与入向监听、持续推进及通用远端进度探针仍有缺失。现有离线测试通过不能证明整套框架已复原。验收依据见[完整行为预期](<kernel/contracts/framework_expectations.md>)，109 个编号的现状和补齐顺序见[迁移功能验收](<docs/EXPECTATIONS_ACCEPTANCE.md>)。
 
 仓库有两层。**内核**处理任何研究项目都会遇到的事务、预算、任务接管、证据、审查、报告和部署。**agent 比赛配置**描述“要优化的是一个 agent harness”时才需要的题单、轨迹、工具、工作区、泄漏和评测预算。
 

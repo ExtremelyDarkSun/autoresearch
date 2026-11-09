@@ -118,6 +118,15 @@
       "anchor": "## 1 交付一次",
       "why": "避免重复交付、例行重算与重复推进，不因局部流程问题停止全部已授权工作。",
       "scope": "full_document"
+    },
+    {
+      "id": "R7",
+      "role": "researcher",
+      "phase": "open",
+      "path": "kernel/contracts/framework_expectations.md",
+      "anchor": "## 完整编号表",
+      "why": "以完整行为预期核对功能，不把规则、同名函数或局部测试当完整迁移；相关状态见迁移功能验收表。",
+      "scope": "full_document"
     }
   ]
 }
