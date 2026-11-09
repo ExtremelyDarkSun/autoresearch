@@ -1,8 +1,11 @@
 # GENERATED-BY: portable extraction, 2026-11-09 +08:00
-# LAST-EDIT: 2026-11-09 +08:00
+# LAST-EDIT: 2026-11-09 18:30 只读句柄 _ReadOnlyHandle 委托 runtime.store.ReadonlyStore
 # PURPOSE: Reusable research mechanism or offline validation.
 # ORIGIN: research-runtime/topics.py
 # CUMULATIVE-DELTA: Instance history removed; state roots and target contracts separated.
+#   2026-11-09 只读路径零副作用：`_ReadOnlyHandle.connect()` 不再拼裸 `?mode=ro`，委托
+#   `ReadonlyStore`（WAL 库按 sidecar 实况选 mode=ro / immutable=1，读不创建 -shm/-wal）；
+#   缺库仍抛原来的 `OperationalError('no such table: topics (database is absent)')`。
 from __future__ import annotations
 import sys
 from pathlib import Path
@@ -14,9 +17,9 @@ import time
 from contextlib import closing, contextmanager
 from pathlib import Path
 try:
-    from kernel.autoresearch.runtime.store import Store, canonical_json
+    from kernel.autoresearch.runtime.store import ReadonlyStore, Store, canonical_json
 except ImportError:
-    from kernel.autoresearch.runtime.store import Store, canonical_json
+    from kernel.autoresearch.runtime.store import ReadonlyStore, Store, canonical_json
 TOPIC_STATUSES = frozenset(('active', 'paused', 'completed', 'archived'))
 SESSION_STATUSES = frozenset(('open', 'handed_off', 'crashed', 'superseded', 'closed'))
 INFLIGHT_STATUSES = frozenset(('open', 'released', 'lost'))
@@ -1145,20 +1148,23 @@ class Topics:
         return self.show(topic_id, checkpoint_limit=history_limit, history_before=history_before)
 
 class _ReadOnlyHandle:
+    """只读 `Topics` 句柄：连接方式委托 `runtime.store.ReadonlyStore`。
+
+    委托的原因（实测 SQLite 3.49.1）：裸 `mode=ro` 在缺 sidecar 的 WAL 库上会**创建**
+    `-shm` / `-wal` —— 那是写盘，不是只读。委托后 `ReadonlyStore.connect()` 按文件头与
+    sidecar 实况选 `mode=ro` / `immutable=1`，只读零创建；`-wal` 有而 `-shm` 缺的歧义态
+    抛 `StoreError`（调用方按不可判处理）。缺库仍保留原来的 `OperationalError` 形状
+    （上层只读投影按空板处理，⛔ 不建库）。
+    """
 
     def __init__(self, db_path):
-        self.db_path = str(db_path)
+        self._store = ReadonlyStore(db_path)
+        self.db_path = self._store.db_path
 
     def connect(self):
-        path = Path(self.db_path)
-        if not path.exists():
+        if not self._store.is_file():
             raise sqlite3.OperationalError('no such table: topics (database is absent)')
-        uri = path.resolve().as_uri() + '?mode=ro'
-        conn = sqlite3.connect(uri, uri=True, timeout=10, isolation_level=None)
-        conn.row_factory = sqlite3.Row
-        conn.execute('PRAGMA query_only=ON')
-        conn.execute('PRAGMA busy_timeout=10000')
-        return conn
+        return self._store.connect()
 
 def readonly_board(db_path):
     return _readonly_topics(db_path).overview()

@@ -1,8 +1,8 @@
 # GENERATED-BY: portable functional migration
-# LAST-EDIT: 2026-11-09
+# LAST-EDIT: 2026-11-09 18:30 Admission.check 只读连接改为共享 runtime.store.ReadonlyStore
 # PURPOSE: Connect shared runtime budget reservations and decision approval to real workflow launch.
 # ORIGIN: existing runtime Accounts and full behavior expectations
-# CUMULATIVE-DELTA: 2026-11-09 预算准入收紧：HostBudgetSource 逐键核真实用户命令，并核 verify 返回的 source/proof/session/seq/rpc/created_at；Admission.check 保持只读、缺表/坏计划 fail-closed。此前：Read-only admission; no caller self-approval or budget fabrication.
+# CUMULATIVE-DELTA: 2026-11-09 只读连接零副作用：Admission.check 不再自己拼 `?mode=ro`，委托 `runtime.store.ReadonlyStore`（WAL 库按 sidecar 实况选 mode=ro / immutable=1，读不创建 -shm/-wal；WAL 歧义态 StoreError 按「共享预算不可判」fail-closed）。此前：2026-11-09 可信时序收紧：HostBudgetSource 增加只读 trusted_ordering，返回宿主日志核验过的 session/seq/host_time，供 Accounts 在同一事务里判定新旧；跨会话不拿 seq 当全局序，时序不可判 fail-closed。此前：2026-11-09 预算准入收紧：HostBudgetSource 逐键核真实用户命令，并核 verify 返回的 source/proof/session/seq/rpc/created_at；Admission.check 保持只读、缺表/坏计划 fail-closed。此前：Read-only admission; no caller self-approval or budget fabrication.
 from __future__ import annotations
 import hashlib
 import json
@@ -77,10 +77,10 @@ class Admission:
             problems.append('共享预算数据库不存在')
             return result
         try:
-            with closing(sqlite3.connect(self.db.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
-                conn.row_factory = sqlite3.Row
-                # 双保险：即使 URI 写错也不允许本检查写入。
-                conn.execute('PRAGMA query_only=ON')
+            from .runtime.store import ReadonlyStore
+            # 只读连接委托 ReadonlyStore：WAL 库按文件头与 sidecar 实况选 mode=ro / immutable=1，
+            # 读不创建 -shm / -wal（裸 mode=ro 会）；WAL 歧义态抛 StoreError（下面按不可判处理）。
+            with closing(ReadonlyStore(self.db).connect()) as conn:
                 reservation = conn.execute('SELECT * FROM budget_reservations WHERE id=?', (auth['reservation_id'],)).fetchone()
                 account = conn.execute('SELECT * FROM budget_accounts WHERE series_id=?', (auth['series_id'],)).fetchone()
                 result['budget'] = {'reservation': dict(reservation) if reservation else None,
@@ -126,7 +126,14 @@ class HostBudgetSource:
     Instantiate from trusted deployment code; no command can select its own log root
     or supply its own `expected` object. The returned principal is the proof session,
     and every provenance field of the host verdict is checked against that proof.
+
+    `trusted_ordering` is the read-only timeline interface: it returns only the
+    session, seq and host time that the host verifier just accepted for this exact
+    event. `Accounts` uses it for fencing; caller-supplied time/seq fields are never
+    trusted (the event field set is exact, so they cannot even be added).
     """
+    requires_trusted_ordering = True
+
     def __init__(self, host, allowed_principals, *, clock=time.time):
         self.host = host
         if isinstance(allowed_principals, str):
@@ -143,8 +150,16 @@ class HostBudgetSource:
             raise ValueError('clock 必须可调用')
         self.allowed_principals = frozenset(principals)
         self.clock = clock
+        self._last = None
 
     def __call__(self, event):
+        return self._verified(event)[0]
+
+    def trusted_ordering(self, event):
+        """只读时序元数据：只由宿主核验结果产生，绝不采信调用方新增字段。"""
+        return self._verified(event)[1]
+
+    def _verified(self, event):
         if not isinstance(event, dict):
             raise ValueError('预算事件必须是对象')
         if set(event) != BUDGET_EVENT_FIELDS:
@@ -167,6 +182,11 @@ class HostBudgetSource:
             expected_session = session_id(proof['session_id'])
         except EvidenceError as exc:
             raise ValueError('proof.session_id 不合法：' + str(exc)) from None
+        # 同一进程内 verify 紧接着 trusted_ordering 会复用这次核验；
+        # 指纹不同就重新核验宿主日志，缓存只省重复读取，不是信任来源。
+        fingerprint = json.dumps(event, sort_keys=True, ensure_ascii=False, allow_nan=False)
+        if self._last is not None and self._last[0] == fingerprint:
+            return self._last[1], dict(self._last[2])
         # expected 只能由本适配器从事件本身构造；调用者没有自选入口。
         expected = {key: value for key, value in event.items() if key != 'proof'}
         verified = self.host.verify('user_command', {'proof': {'session_id': proof['session_id'],
@@ -202,4 +222,7 @@ class HostBudgetSource:
         if created_at > self.clock():
             # 只拒绝“未来”时间；不设最大年龄等无据时限。
             raise ValueError('用户消息时间在将来，不能作为已发生的授权证据')
-        return expected_session
+        ordering = {'session': expected_session, 'seq': proof['seq'],
+                    'host_time': float(created_at), 'rpc_id': rpc_id, 'source': source}
+        self._last = (fingerprint, expected_session, ordering)
+        return expected_session, ordering

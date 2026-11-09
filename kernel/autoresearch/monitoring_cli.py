@@ -1,15 +1,26 @@
 # GENERATED-BY: 完整功能迁移（意图与过程监控 CLI）
-# LAST-EDIT: 2026-11-09（首版；register/sync/assess/intent/event/prepare/record/respond/waive/close/check/status/diagnose/protocol）
+# LAST-EDIT: 2026-11-09（close 接通自然语言路径：--user-quote / --user-quote-file，与旧 proof 命令路径互斥；
+#            原话原样交给 Monitor.close，独立报告约束不跳过）
 # PURPOSE: 意图与过程监控的命令行入口。无 host adapter 时只做账本级诊断，会话层一律「不可判」，不返回假绿。
 # ORIGIN: 上游单文件工具的 CLI 子命令集；契约 kernel/contracts/intent_monitor.md；
 #         行为预期 L10 / L13（安全动作豁免、未登记拒绝、无 host 不可判）
 # CUMULATIVE-DELTA: 首版。写命令默认落盘；check/status/diagnose/protocol 只读。
+#         2026-11-09 补：`close` 的 withdrawn/replaced 除原有 `--proof/--proof-seq`（用户自己发
+#         `close_intent` JSON 命令）外，可用 `--user-quote`（内联 JSON 或 @文件）/ `--user-quote-file`
+#         给真实用户原话；两路互斥，原话原样交给 `Monitor.close(quote=…)`，仍必须有仍有效独立报告
+#         在 `closure.user_command` 里绑定同一条原话。
 """意图与过程监控 CLI。
 
 用法（`--help` 为准）：
 
     python -m kernel.autoresearch.monitoring_cli --root <workspace> \
         --adapter kernel/autoresearch/host_evidence.py --log-root <sessions> --session <id> <命令>
+
+    # 用户自然语言撤回 / 替换（仍须有仍有效的独立报告绑定同一条原话）：
+    ... close --reason withdrawn --to closed --report-id MON-… \
+        --user-quote '{"seq": 6, "text": "逐字原话"}'      # 也可 --user-quote-file 或 --user-quote @文件
+    # 用户自己发的 JSON 命令（旧路径，与上面互斥）：
+    ... close --reason withdrawn --to closed --report-id MON-… --proof-seq 7
 
 读命令（`status` / `diagnose` / `protocol` / `check`）**零写**：不建目录、不改事件库。
 没有 `--adapter` 时会话层一律判「不可判」（exit 2），绝不因为「读不到就说通过」。
@@ -148,6 +159,33 @@ def _read_json(path, label):
         raise MonitoringError(f"{label} 不是合法 JSON：{exc}") from exc
 
 
+def _user_quote(args, owner):
+    """解析 close 的自然语言原话：`--user-quote`（内联 JSON / `@文件`）或 `--user-quote-file`。
+
+    只做「读出来 + 补默认 session」，其余形状与逐字核验仍由 `Monitor.close` 做：
+    原话必须出现在负责人会话里、文本逐字、seq 不得超过报告高水位，且报告
+    `closure.user_command` 要绑定同一条原话。CLI 不提供任何绕过。
+    """
+    if args.user_quote_file is not None:
+        quote = _read_json(args.user_quote_file, "user-quote")
+    else:
+        raw = str(args.user_quote).strip()
+        if raw.startswith("@"):
+            quote = _read_json(raw[1:], "user-quote")
+        else:
+            try:
+                quote = json.loads(raw)
+            except ValueError as exc:
+                raise MonitoringError(
+                    f"--user-quote 既不是合法 JSON（{exc}），也不是 @文件；写法示例："
+                    "--user-quote '{\"seq\": 6, \"text\": \"逐字原话\"}'") from exc
+    if not isinstance(quote, dict):
+        raise MonitoringError("用户原话必须是 JSON 对象 {session, seq, text}")
+    quote = dict(quote)
+    quote.setdefault("session", owner)
+    return quote
+
+
 def _monitor(args, *, host_required: bool):
     root = Path(args.root).resolve() if args.root else DEFAULT_ROOT.resolve()
     host = _load_host(args.adapter, args.log_root, root)
@@ -269,15 +307,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--source", action="append", default=[])
 
     p = add("close", "闭合意图：四理由 + 最后一份仍有效报告 + 全部意见已处置。"
-                     "withdrawn/replaced 必须给真实用户命令消息的 proof（action=close_intent）")
+                     "withdrawn/replaced 两路互斥：--user-quote（真实用户原话，须由仍有效独立报告 "
+                     "closure.user_command 绑定同一条原话）或 --proof/--proof-seq"
+                     "（用户自己发的 close_intent JSON 命令）")
     p.add_argument("--reason", required=True, choices=list(CLOSURE_REASONS))
     p.add_argument("--to", required=True, choices=["closed", "none"])
     p.add_argument("--report-id", dest="report_id", required=True)
-    p.add_argument("--proof", help="proof JSON 文件：{\"session_id\": \"...\", \"seq\": N}")
-    p.add_argument("--proof-seq", dest="proof_seq", type=int, default=None,
-                   help="用户命令消息的 seq（会话默认就是负责人会话）")
+    proof_group = p.add_mutually_exclusive_group()
+    proof_group.add_argument("--proof",
+                             help="旧路径：命令消息 proof JSON 文件 {\"session_id\": \"...\", \"seq\": N}"
+                                  "（与 --user-quote / --user-quote-file 互斥）")
+    proof_group.add_argument("--proof-seq", dest="proof_seq", type=int, default=None,
+                             help="旧路径：用户命令消息的 seq（会话默认就是负责人会话；与 --user-quote 互斥）")
+    proof_group.add_argument("--user-quote", dest="user_quote", default=None,
+                             help="自然语言路径：真实用户原话 JSON 对象（内联）或 @文件；"
+                                  "形如 {\"seq\": 6, \"text\": \"逐字原话\"}（session 默认负责人会话）。"
+                                  "与 --proof/--proof-seq 互斥；⛔ 主会话自己传的话不算："
+                                  "必须有仍有效独立报告把同一条原话绑定成本次动作")
+    proof_group.add_argument("--user-quote-file", dest="user_quote_file", default=None,
+                             help="自然语言路径：原话 JSON 文件（格式同 --user-quote）")
     p.add_argument("--quote-text", dest="quote_text", default="",
-                   help="可选：命令消息里的逐字片段（会与 proof.seq 那条消息比对）")
+                   help="仅旧路径：命令消息里的逐字片段（会与 proof.seq 那条消息比对）")
     p.add_argument("--replacement-intent", dest="replacement_intent", default=None)
     p.add_argument("--source", action="append", default=[])
 
@@ -405,18 +455,32 @@ def main(argv=None) -> int:
                                 proof=proof, quote=quote,
                                 reason=args.reason, sources=_refs(args.source))
         elif args.command == "close":
+            # 旧路径与自然语言路径由 argparse 的互斥组保证不会同时出现。
             proof = None
+            quote = None
+            natural = args.user_quote is not None or args.user_quote_file is not None
             if args.proof:
-                if args.proof_seq is not None:
-                    raise MonitoringError("--proof 与 --proof-seq 只能用一种")
                 proof = _read_json(args.proof, "proof")
             elif args.proof_seq is not None:
                 proof = {"session_id": owner, "seq": args.proof_seq}
-            quote = None
-            if args.quote_text:
+            if natural:
+                if args.quote_text:
+                    raise MonitoringError(
+                        "--user-quote 与 --quote-text 不要混用：原话文本写在 --user-quote 的 JSON 里")
+                if args.reason in ("achieved", "unsatisfiable"):
+                    raise MonitoringError(
+                        f"{args.reason} 不接受用户原话：达成 / 不可满足必须由仍有效报告的 verdict 支撑")
+                quote = _user_quote(args, owner)
+            elif args.quote_text:
                 if proof is None:
-                    raise MonitoringError("--quote-text 需要同时给 --proof/--proof-seq")
+                    raise MonitoringError(
+                        "--quote-text 只用于旧路径：需要同时给 --proof/--proof-seq")
                 quote = {"seq": proof["seq"], "text": args.quote_text}
+            if args.reason in ("withdrawn", "replaced") and proof is None and quote is None:
+                raise MonitoringError(
+                    "withdrawn/replaced 需要 --user-quote（真实用户原话，须由仍有效独立报告的 "
+                    "closure.user_command 绑定同一条原话）或 --proof/--proof-seq"
+                    "（用户自己发的 close_intent JSON 命令）；两条路都不能跳过独立报告")
             out = monitor.close(owner, reason=args.reason, target=args.to,
                                 report_id=args.report_id, quote=quote,
                                 replacement_intent_id=args.replacement_intent,

@@ -40,7 +40,7 @@ def hard_path(path):
                          'baseline', 'hypothesis', 'goal', 'budget', 'execution_argv',
                          'implementation', 'id', 'authorization'}
             and parts[-1] != 'locator') \
-        or 'execution_argv' in parts or 'implementation' in parts or 'authorization' in parts
+        or any(key in parts for key in ('execution_argv', 'implementation', 'authorization', 'execution'))
 
 
 def report_digest(path):

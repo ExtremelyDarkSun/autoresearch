@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: operations manual migration, 2026-11-09
-LAST-EDIT: 2026-11-09 首版：把 109 项验收里的「有实际入口」写成可执行命令，并标出未接线与待验项
+LAST-EDIT: 2026-11-09 主链复核：删掉已修好的 progress 子命令 --help 缺陷与已接线的在途项；补生产计划模板、自动生命周期投影与待验边界
 PURPOSE: 主入口操作说明 —— 工作区、专题隔离、预算准入、研究执行主链、人读页供料、意图监控、审批入向、进度推进器、问题台账
 ORIGIN: kernel/autoresearch/{workspace,budget,workflow,reporting,monitoring,decisions,progress,progress_host,issues}_cli.py 的实际参数
-CUMULATIVE-DELTA: 首版。所有命令都取自当前 `--help`；未实测的写"未验"，⛔ 不把待配置写成待写代码。
+CUMULATIVE-DELTA: 2026-11-09 复核版。命令取自当前 `--help`；未实测的写"未验"，⛔ 不把待配置写成待写代码。
 -->
 
 # 怎么跑：主入口操作说明
@@ -22,7 +22,7 @@ CUMULATIVE-DELTA: 首版。所有命令都取自当前 `--help`；未实测的�
 
 ## 0 前置与最短路径
 
-- Python **3.11+**（内核只用标准库）；插件自检需要 Node **20+**。
+- Python **3.11+**（内核只用标准库）。飞书**加密事件收件**另需可选 `cryptography`（`python -m pip install -r requirements-feishu.txt`）；插件自检需要 Node **20+**，读取真实 DSH 压缩会话日志的可信核验需要支持 Zstandard 的 Node **24+**。
 - 源码仓库与研究工作区**分开**：工作区放数据、状态、页面和结果，不进 Git。
 - 最短路径（每步都能单独查，失败会明确报错）：
 
@@ -41,8 +41,10 @@ python -X utf8 -B research.py workflow check --workspace ../my-research --topic 
     --plan plans/P1.json --owner-session session-owner --intent-none -- python -m pytest -q
 ```
 
-⚠️ `workflow check/launch` 会**同时**核四样东西：当前审计（要宿主核过的独立性子会话报告）、意图监控（§6）、执行准入（§3 的预算预留 + §7 的决策）、实际 argv（§4）。
-缺任何一样都**拒绝启动且不起子进程**——这是有意的 fail-closed，不是待修的 bug。要让闸真的通过，就得把这几件部署件都接上；接不上的部分本文档直接写成「待验 / 在途」。
+`plans/P1.json` 从 [生产计划模板](<../kernel/templates/workflow.plan.template.json>) 复制后逐项填真实值（见 §4）。
+
+⚠️ `workflow check/launch` 会**同时**核这些：当前审计（要宿主核过的独立性子会话报告）、意图监控（§6）、执行准入（§3 的预算预留 + §7 的决策）、实际 argv（§4）、执行落点（专题已 provision 的 cwd/venv）、before 快照收据与前轮复盘状态。
+缺任何一样都**拒绝启动且不起子进程**——这是有意的 fail-closed，不是待修的 bug。要让闸真的通过，就得把这几件部署件都接上；接不上的部分本文档直接写成「待验」。
 
 ---
 
@@ -61,6 +63,7 @@ python -X utf8 -B research.py instructions --bundle .local/required-instructions
 python -X utf8 -B research.py instructions --captured 宿主实际请求.txt
 ```
 
+- 本轮测量（2026-11-09，**仅测量**）：来源合计 109,236 B，合并 bundle 111,655 B，建议总预算 139,568 B，最大单来源 15,948 B。它不是宿主实际注入证据；文档或 profile 一改就要重新测量。
 - 第二条只检查「你给的这段宿主请求」是否含完整正文；它**不**证明宿主真注入了。
 
 ## 2 专题隔离：`research.py workspace`
@@ -126,14 +129,26 @@ python -X utf8 -B research.py budget settle --workspace ../my-research \
 ```
 
 - `grant` 核的是**真实用户消息**，不是文件内容；`--event-file` 只要与那条消息逐键不等就被拒。
+- 授权时序走 `HostBudgetSource.trusted_ordering`：只返回宿主核过的 session / seq / host_time，`Accounts` 在同一个 `BEGIN IMMEDIATE` 里判新旧；跨会话不拿 seq 当全局序，不可判就 fail-closed。迟到的旧 `renew` 不能复活已被较新 `revoke` 撤回的预算。
+- 被拒的 `grant` **零副作用**：实验登记也在 `authorize` 的同一事务里、时序预检之后做，拒绝时整体回滚，不留下先写后拒的实验行或事件。
+- 远端执行的预算就是计划 `authorization` 的那笔预留，执行层按同一 scope 复核，**不另造**第二笔 `run` 预留。
 - 尚未终态（没写 `wf_finishes`）的 workflow run 会让 `release` / `settle` **被拒**——防「先释放、再启动」。
 - **没有受信计量适配器时 `settle` 只输出 pending 人工核账**，不会假装结算完成。
 
 ## 4 研究执行主链：`research.py workflow`
 
-一轮 = 一个 `plan_id`。计划是 `kernel/contracts/plan.schema.json` 的形状，另加两个**顶层**字段：
-`execution_argv`（显式 argv，或多组）与 `implementation`（五项 + `files`），以及可选的
-`authorization = {scope, series_id, reservation_id, decision_id}`。
+一轮 = 一个 `plan_id`。计划的主链形状见 [生产计划模板](<../kernel/templates/workflow.plan.template.json>)：除
+`kernel/contracts/plan.schema.json` 的治理字段外，还必须有 `execution_argv`（显式 argv，或多组）、
+`implementation`（五项 + `files`）、`execution`（`scope` / `resource_kind` / `cwd`）与
+`authorization = {scope, series_id, reservation_id, decision_id}`；`budget` **不预填**，要写本轮真实整数。
+
+⚠️ 通用治理模板 [plan.template.json](<../kernel/templates/plan.template.json>) 只是一份治理结构样例：它没有
+argv / 实现 / 执行落点 / 本轮授权，`check-plan` 通过**不能**当成主链可起跑。反过来，生产计划模板未填预算时
+`check-plan` 会因占位字符串失败——那是有意的，避免默认预算。
+
+⚠️ `workflow check/launch` 的 CLI 固定用 `ExecutionTarget(require_provision=True)`：专题必须先跑过
+`workspace topic`（有 `provision.json`、真实代码目录与独立 venv），否则直接拒；`execution.scope` 必须是
+`local`、`resource_kind` 必须是 `cpu`，远端与 GPU 落点一律拒；远端执行走 `research.py remote`（默认关闭，协议 v2 + 同一笔预算预留），不要用本地 `workflow` 冒充远端停机。
 
 ```powershell
 # 事前材料：四锚点 + 实现五项/files + argv → 冻结来源哈希（专题主文档/目标/用户原话/旧复盘来源）
@@ -161,14 +176,44 @@ python -X utf8 -B research.py workflow status --workspace ../my-research --topic
 |---|---|
 | argv 与计划里声明的不逐项相等 | 拒，**零子进程** |
 | 来源文件内容变了（按 sha256，不看 mtime） | 「已过期」，先重新 `prepare` |
+| 专题没有可用的 `provision.json` / 独立代码目录 / venv | 拒（先跑 `workspace topic`） |
+| `execution.scope` 不是 `local`，或 `resource_kind` 不是 `cpu` | 拒（本地入口不放行远端 / GPU；远端请用 `research.py remote`） |
+| before 主文档快照缺失或与 prepare 记录不符 | 拒（不许事后补造历史快照） |
 | 同专题前一轮已结束但没 `review` | 拒开新轮 |
 | 同一 `plan_id` 已经跑过 | 拒（不许事后补造事前材料），新轮次要新 plan id |
-| 审计 / 监控 / 执行准入任一没接线或不通过 | 拒 |
+| 审计 / 监控 / 执行准入任一没接线或不通过 | 拒（生产 CLI 固定接 `DSHHost` / `Monitoring` / `Admission`，没有跳过开关） |
+| 闸通过后、占用事务里发现计划/来源/审计/监控/准入变了 | 拒，零子进程（事务内再复核） |
 | 两个进程同时 `launch` | 只有一个占用成功并起子进程 |
 | 子进程超 `plan.budget.max_seconds` | 杀掉并记 `reason=timeout`（CLI 退出码 124） |
 | 文档写失败 | 只追加事件；**不改**已记录的退出码、**不阻**安全停 |
 
 ⚠️ `launch` 的退出码 = 被启动进程的真实退出码（0/3/-9 原样保留）；闸拒绝是 9；输入错误是 2。
+
+自动投影：`prepare` / `launch` / `review` 会由 `Lifecycle` 自动写
+`topics/<topic>/plans/<plan>/` 下的 `plan-vN.json`、`AI_WORK.md`、`receipts/*.json` 与前后快照，并把
+起跑（`running`）、run / round 终态与复盘结论投影成 `reporting` 事件。**投影失败只记诊断，不改决定与退出码**；
+页面是否已验收仍看 §5。
+
+### 远端执行：`research.py remote`
+
+远端走的不是本地 `workflow`，而是受管远端 CLI（部署默认关闭，配置在 `.autoresearch/remote/deployment.json`）：
+
+```powershell
+python -X utf8 -B research.py remote doctor --workspace ../my-research
+python -X utf8 -B research.py remote check --workspace ../my-research --topic demo --plan plans/P1.json \
+    --owner-session session-owner --intent-none --resource <资源租约键> -- <argv...>
+python -X utf8 -B research.py remote provision --workspace ../my-research [--force]
+python -X utf8 -B research.py remote start （同 check） -- <argv...>
+python -X utf8 -B research.py remote status / query / cancel / collect / release --workspace ../my-research (--run-id …)
+```
+
+- 默认 `SSHDeployment(enabled=False)`：没有部署配置时除 `doctor` / `status` 外一律拒绝，**一个远端请求都不发**。
+- 执行预算就是计划 `authorization` 的**同一笔**预留（`Runtime(budget_scopes=(scope,))`），不另造第二笔。
+- 协议 v2：停止必须有 `stop_verified=True` + 带绑定的 `stop_evidence`，并核 request / token / attempt；`argv_sha256` 对冻结命令；时间戳或 `state=completed` 标签**不算**停止。
+- 本地 `start`、远端 `claim` 与紧邻 `send` 用同一套事务内判据；`claim` 提交后、`send` 前调同一 `_lifecycle_call sync`，`running` / reporting / `AI_WORK` 立即生成；`unknown` 也保留投影，投影失败不伪终态、不阻 `cancel`。
+- 查询 `unknown` 时预算与资源都保留，不写结束记录。
+- ⚠️ **停止边界**：worker 只核本 job 的进程组（TERM→KILL 后重新核 pid / birth），**不覆盖**子进程主动 `setsid` 逃逸；更强隔离要部署 cgroup / namespace。Windows worker 无可靠组枚举 ⇒ `unknown`；不能把 group-stop 当成整台云机停止。
+- 代码 / 题单 scp 上传到远端 `unit/code|input` 仍是**独立部署步骤**，本模块不自动上传；真实 SSH / POSIX / 平台未验。
 
 ## 5 人读页与供料：`research.py reporting`
 
@@ -188,6 +233,8 @@ python -X utf8 -B research.py reporting --workspace ../my-research process-statu
 
 - `prepare` 生成**完整供料包**：来源清单 + 来源正文 + 旧页全文 + 缺项补读路径（超内联上限的来源显式标「未内联」并给路径，⛔ 不静默截断）。
 - `ack` 不声明 `--proof-json` 时回执只记 `declared`（调用方自述）；给了才可能出现 `verified`。
+- `RECEIPT.json` 同时带 `sources` / `source_fingerprint` / `body_sha256`：来源改了或页面字节变了，`check` 就不再算「已验收」。
+- `workflow` 的 `Lifecycle` 会自动写 `AI_WORK.md`、收据、`plan-vN.json` 与 before/after 快照，并把起跑 / 终态 / 复盘投影成 `reporting` 事件；`FEED.md` 与供料包仍由 `reporting prepare` 生成。人读页正文仍只由 scribe 会话写，工具不代写。
 - `diagnose` / `status` / `check` 是**只读的**（不改页面、锁、日志、DB）。
 - 八节内容与第 3 节四段（假设 → 判据 → 设置 → 结果）由 `governance.validate_status_page` 机械校验；**通过校验不证明结论成立**。
 
@@ -203,28 +250,57 @@ python -X utf8 -B research.py monitoring --root ../my-research --adapter … \
 python -X utf8 -B research.py monitoring --root ../my-research --adapter … \
     check --exp P1 --action launch        # 起跑闸：launch 必须过，安全动作豁免
 python -X utf8 -B research.py monitoring --root ../my-research status --session session-owner
+
+# close：旧 proof 路径与自然语言原话路径互斥
+python -X utf8 -B research.py monitoring --root ../my-research close --session session-owner \
+    --reason withdrawn --to closed --report-id R1 --proof-seq 9
+python -X utf8 -B research.py monitoring --root ../my-research close --session session-owner \
+    --reason withdrawn --to closed --report-id R1 \
+    --user-quote '{"session":"session-owner","seq":6,"text":"逐字原话"}'   # 也可 @文件 或 --user-quote-file
 ```
 
 - 三触发（结果分析 / 用户更新 / 重大偏差）才派监控；**心跳不是触发**（会被拒）。
 - 没有适配器时「会话层」判不了 ⇒ 写命令与 `launch` 闸**不放行**；`--allow-foreign` 只放宽只读诊断。
 - `record` 要独立子会话报告：fork / 自造 JSON 一律拒；`close` 只认四条理由 + 仍有效报告 + 全部意见已处置。
+- `close` 的自然语言路径已可用：`--user-quote`（内联 JSON 或 `@文件`）/ `--user-quote-file`，格式 `{session,seq,text}`，与旧 `--proof` / `--proof-seq` **互斥**；独立报告必须是 current + 新 spawn，`closure.user_command` 与用户原话同条绑定。`withdrawn` / `replaced` 可用，`achieved` / `unsatisfiable` 不能靠原话绕过。
+- `workflow launch` 的意图闸**只认** `Monitoring.check_start`（生产 CLI 固定 `Monitoring(workspace, host=DSHHost())`），旧 gov 意图账不参与生产拦截；占用事务里会再核一次。
+- V1–V3 语义核已做过一次：3 个合成案例、新 spawn 独立会话；V1 首次报告提到截止后数据被拒、修订后才通过。它**不是**生产 JSON 端到端。
 
-## 7 审批与入向：`research.py decisions`
+## 7 审批、入向与通道
 
 ```powershell
 python -X utf8 -B research.py decisions --db ../my-research/.autoresearch/runtime.sqlite3 \
     prepare --exp P1 --decision-id D1 --plan 方案集.json [--scope large] [--out .autoresearch/web]
 python -X utf8 -B research.py decisions --db … --channel 部署通道:factory send --decision-id D1
+python -X utf8 -B research.py decisions --db … --channel-config '{"app_id_ref":"env:FEISHU_APP_ID",…}' send --decision-id D1
 python -X utf8 -B research.py decisions --db … status --decision-id D1
 python -X utf8 -B research.py decisions --db … overdue
+python -X utf8 -B research.py decisions --db … authorize-check --exp P1 --owner-session session-owner
 python -X utf8 -B research.py decisions --db … hook [--exp P1]
 ```
 
-- `prepare` 生成**自包含**审批页（六块：背景 / 上下文 / 进展 / 方案集 / 待决定事项 / 证据索引；每条方案 13 个字段；执行规范绑 `plan_fingerprint`）。
-- `send` 是**先页后卡**，且必须有真实通道（`--channel module:factory`）；没有通道 ⇒ 拒绝发送，不假装送达。
+- `prepare` 生成**自包含**审批页（六块：背景 / 上下文 / 进展 / 方案集 / 待决定事项 / 证据索引；每条方案 13 个字段；执行规范绑 `execution_fingerprint` 的完整执行规范）。
+- `send` 是**先页后卡**，且必须有真实通道（`--channel module:factory` 或 `--channel-config <JSON / @文件>`）；没有通道 ⇒ 拒绝发送，不假装送达。
 - `status` 按台账**重算双回执**：手写 `success` 不被承认（B4/B5）。
+- `status` / `overdue` / `authorize-check` 走 `DecisionService.readonly`：**构造时不建表、不建目录、不装通道台账**；缺库 / 旧 schema 判「不可判」，不冒充通过。`prepare` / `send` / `hook` / `inbox` / `reply` 仍会写库（`hook` 会 tick 过期决策）。
 - 两小时未明确批准自动取消（`APPROVAL_TIMEOUT_SECONDS = 7200`）；入向文字回复窗口 300 s + 4 s 取整（`overdue` 可查）。
 - `hook` 给推进器/主链**单一判词**（零配置可跑）。
+
+### 通道：`research.py channels`
+
+```powershell
+python -X utf8 -B research.py channels --config channel.json doctor
+python -X utf8 -B research.py channels --db ../my-research/.autoresearch/runtime.sqlite3 \
+    --config channel.json listen [--host 127.0.0.1] [--port 8080]
+python -X utf8 -B research.py channels --db ../my-research/.autoresearch/runtime.sqlite3 \
+    --config channel.json poll [--cursor 12] [--limit 50]
+```
+
+- `doctor` **只读**：不构造 `FeishuChannel`、不建库 / 目录 / 台账、不联网、不打印凭据值；台账不存在就报「尚未初始化」。
+- `listen` 默认只绑 `127.0.0.1`；非回环地址要显式 `--allow-remote`。**没装 `cryptography`（加密事件解密后端）时在起服务前就 exit 2，且不建任何库 / 台账**——配置 Encrypt Key 后飞书会加密推送全部事件（含 challenge），挂一个必然 501 的服务没有意义。
+- 加密事件用 `python -m pip install -r requirements-feishu.txt`（只含 `cryptography`）；解密是 AES-256-CBC，解密后仍要把 token / 身份 / 重放全部再核一遍。
+- `listen` / `poll` 只把 `handle_webhook` 验签通过的事件交给 `DecisionService.ingest`；验签失败、重放、未订阅类型、`url_verification` 一律不进；核心还会再核一次来源，不存在「自动批准」路径。
+- 它不发消息（发送仍走 `decisions send`），也不做守护 / 重试；`poll` 的游标由调用方保存。真实租户送达、群 @ 条件与真实订阅未验。
 
 ## 8 进度采集与受管推进器：`research.py progress`
 
@@ -241,10 +317,8 @@ python -X utf8 -B research.py progress --root ../my-research --spec progress.spe
 - `watch` 是受管后台作业本体：**叫醒一次就退出并写 `needs_rearm`**，不设固定寿命（A3/A4/A6）；重挂必须显式 `rearm`。
 - `outcome` 是唤醒出口三选一：`advance` / `nothing`（必须给下一条件）/ `problem`（登记新问题）。
 - 采集失败 fail-closed：连续失败会形成 `progress_unavailable` 事件；租约带 fencing，第二个推进器拿不到。
-
-⚠️ 已知缺陷（写在这里避免你以为是用法错）：当前 `progress <子命令> --help` 会以 `KeyError: 'default'` 退出 1
-（`progress_cli.py` 的 `%(default)s` / `%(choices)s` 帮助占位符与 `argparse.SUPPRESS` 默认值冲突）。
-顶层 `progress --help` 正常；子命令参数以本文与源码为准，已报给 progress 侧修。
+- goal 维度来自 `progress-host` 对 DSH 会话 `goal/change` 事件的只读重放；没有 goal / paused / blocked / complete 可判成 coverage `none`，但 `phase=active` 且没有部署可信模块时 `activation` 不可判 ⇒ coverage 是 `unknown`（不冒充 full / none）。
+- 子命令 `--help` 与顶层 `--help` 都正常（此前 `KeyError: 'default'` 的格式化缺陷已修）；参数仍以 `--help` 为准。
 
 ## 9 宿主侧联动：`research.py progress-host`
 
@@ -294,7 +368,7 @@ python -X utf8 -B research.py issues --workspace ../my-research index
 | 临时件、生成物 | `.local/`（已 gitignore） | 不放仓库根 |
 | 用户原始要求 | `topics/<topic>/REQUIREMENTS.md`（`workspace topic` 逐字写入） | 不改写成摘要 |
 | 宿主日志根 | 由部署方选定（`DSHHost` 默认 `~/.dsh`，**不接受调用方自带路径**） | 不用工作区记录挑证据根 |
-| 消息通道 | 部署模块：`decisions --channel module:factory` | 不把凭据写进仓库 |
+| 消息通道 | 部署配置：`decisions --channel module:factory` 或 `--channel-config <JSON / @文件>`；收件用 `channels --config … listen/poll` | 不把凭据写进仓库 |
 | 监控宿主适配器 | `monitoring --adapter <file.py|module:attr> --log-root <根>` | 不把日志内容抄进仓库 |
 | 进度采集主机/路径 | `progress.spec.json`（含 ssh/fetch argv 与超时） | 不写死在代码里 |
 | 宿主联动配置 | `progress-host --deployment deployment.json` | 不用 CLI 临时参数改证据路径 |
@@ -304,17 +378,20 @@ python -X utf8 -B research.py issues --workspace ../my-research index
 
 ---
 
-## 12 现在还没接线 / 还没验（别读成已完成）
+## 12 还没验 / 待现场验收（别读成已完成）
 
 | 项 | 现状 | 归属 |
 |---|---|---|
-| 真实消息通道（页 + 卡 + 双回执实际送达） | `decisions` 侧状态机与页面可跑，**通道适配器离线待验** | 通道适配 + 部署 |
-| 真实云机 / 平台提交 | 仓库只有后端查询与参数化 argv；**没有**提交动作 | 部署 |
-| 意图与监控的**旧双账统一** + 起跑事务内复核 | 进行中 | monitoring |
-| `decisions` 绑定**实际 execution_plan**（防 research 子对象丢 argv） | 进行中 | decisions |
-| `progress-host` 的 DSH goal 持久事件 / overdue 实际读 | 进行中；**激活（activation）在进程内仍标 unknown** | progress-host |
-| 从 clone + 空工作区到分析、scribe、下一轮的**完整冷启动** | 待综合验收 | 父级验收 |
-| 单次真实宿主探针 | 已实测：独立子会话 spawn 绑定 / 固定 JSON 原文相等 / scribe 从空工作区写到整页（`ack` 回 `verified=true`、`session_verified=true`、`delivery_verified=false`）、八节校验无错。**这不等于完整真实云实验。** | 已记录，不外推 |
+| 真实消息通道租户送达与收件 | `channels doctor/listen/poll` 与 `decisions --channel-config` 已提供；`doctor` 只读，`listen` 缺 `cryptography` 时起服务前 exit 2 且不建库；加密 challenge / 文字 / 卡点击可离线走到认证入账与真实 `DecisionService` 批准。**真实租户**上传 / 送达 / 收件 / 群 @ 条件未验 | 通道适配 + 部署 |
+| 真实 SSH / POSIX / 平台验收 | 受管远端代码侧已完成：同一笔 `authorization` 预算、协议 v2（`stop_verified` + `stop_evidence` + request/token/attempt 绑定 + `argv_sha256` 核冻结命令）、本地 `start` / remote `claim` / 紧邻 `send` 同一事务判据与 TOCTOU 负例零 adapter 调用；查询不可判时保预算/资源，`release` 核 attempt/lease/request。**真实 SSH / POSIX 停止、机器空闲与平台未验**；代码 / 题单 scp 上传到 `unit/code|input` 是独立部署步骤（模块不自动上传） | 远端 + 部署 |
+| 真实 POSIX 停止 | 远端 worker 的进程组停止 / 硬超时只在 POSIX 上验证；Windows worker 无可靠组枚举 ⇒ `unknown`，Windows 本机安全用例是假 process + 真跨进程锁，真实 POSIX 仍 11 项 skip。⚠️ **只覆盖本 job 进程组**：子进程主动 `setsid` 逃逸不在内，更强隔离要部署 cgroup / namespace；group-stop ≠ 整台云机停止 | 远端 + 部署 |
+| 真实云机 / 平台提交 | 仓库只有 AutoDL 查询、事件与参数化 argv；**没有**提交动作 | 部署 |
+| 真实机器空闲 | 资源租约走调度器；默认 `idle_verifier` 只证明受管作业停了，不证明整台机器空闲；远端明确拒启动时保持 quarantine，需人工核 | 远端 + 部署 |
+| `progress-host` 的 goal `activation` | `goal/change` 持久事件已实读并可重放；**activation 进程内仍标 unknown**（宿主不落盘），coverage 不能冒充 full | progress-host |
+| 受管 job 的来源绑定 / 叫醒 | `verify_job` 已用真实宿主持久日志核过一次精确命令 + jobId 绑定（`verified=true`）；**watch 是否真的叫醒负责人、作业是否仍存活**未验 | progress-host + 部署 |
+| 完整冷启动（真实版） | 合成冷启动 6 项已过：同一空工作区、公开 init、Git/venv、真实 Monitoring、Accounts/Admission、DSHHost 解析合成日志、真实子进程、复盘、快照/报告投影、scribe 字节回演 `ack verified`；第二轮同一 `series-small` 另预留 3、真实运行后 `reserved_units=6`/`spent_units=0`、两笔 unknown 成本保持 `reserved`，第三轮因未复盘被拒。真实云机 / 平台 / 通道版本未做 | 父级验收 |
+| V1–V3 语义验收 | 3 个合成案例、新 spawn 独立会话：V2 识别 7/10 写成 9/10 并阻断、V3 合理探索放行；V1 **修订后**通过。不是生产 Monitoring JSON 端到端 | 父级验收 + monitoring |
+| 真实宿主探针 | 已实测：独立子会话 spawn 绑定 / 固定 JSON 原文相等 / scribe 从空工作区写到整页（`ack` 回 `verified=true`、`session_verified=true`、`delivery_verified=false`）、八节校验无错。**这不等于完整真实云实验。** | 已记录，不外推 |
 
 ## 13 `research.py demo` 的定位
 
@@ -330,6 +407,4 @@ python -X utf8 -B research.py <entry> --help
 python -X utf8 -B research.py <entry> <subcommand> --help
 ```
 
-`<entry>` ∈ `workflow · reporting · monitoring · decisions · progress · progress-host · budget · workspace · issues · governance · topics · runtime`。
-
-唯一的例外是第 8 节提到的 `progress` 子命令 `--help`（当前有格式化缺陷）；它的参数请看那里的说明与源码。
+`<entry>` ∈ `workflow · reporting · monitoring · decisions · channels · progress · progress-host · remote · budget · workspace · issues · governance · topics · runtime`。

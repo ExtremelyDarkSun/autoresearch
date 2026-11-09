@@ -1,8 +1,9 @@
 # GENERATED-BY: feishu 通道适配层导出, 2026-11-10 +08:00
-# LAST-EDIT: 2026-11-10 +08:00
+# LAST-EDIT: 2026-11-10 +08:00（加密事件默认内核解密，可选 cryptography）
 # PURPOSE: 部署通道适配层的唯一入口 —— 目前只有飞书，默认禁用，凭据只留引用
 # ORIGIN: kernel/autoresearch/decisions.py 的 ApprovalChannel 协议（通用决策链只带 FakeChannel）
 # CUMULATIVE-DELTA: 首版。导出 FeishuChannel / FeishuConfig / from_mapping / make_http_handler。
+#   2026-11-10 补：加密事件由 channels/crypto.py 解密；导出后端能力查询。
 """部署通道适配层。
 
 本包里的模块是**真实传输**实现，与 `tests/test_decisions.py` 里的 `FakeChannel` 同一份接口，
@@ -27,10 +28,21 @@ channel = FeishuChannel.from_mapping({
 
 ⚠️ 默认 `send_enabled=False`：任何 `send_*` 都抛 `NotSent`（确定没发出去），
 `health()` 返回 `ok=False`，核心（`DecisionService._assert_healthy`）因此在发送前就拦下。
+
+## 加密事件需要可选依赖
+
+飞书在配置 Encrypt Key 后会**加密推送所有事件**（`challenge` 也加密），而签名校验本身也
+要求 Encrypt Key。解密由 `channels/crypto.py` 用 `cryptography` 完成：
+
+    python -m pip install -r requirements-feishu.txt     # 只有 cryptography
+
+没装依赖不会静默降级：入向返回 501 `decryption_unavailable`，`channels_cli doctor` 把它
+算成 blocking。核心与其余功能仍然只用标准库。
 """
 
 from __future__ import annotations
 
+from . import crypto as channel_crypto
 from .feishu import (ADAPTER, CLICK_INTENTS, SOURCE, WEBHOOK_PATH, AmbiguousSend,
                      FeishuChannel, FeishuConfig, FeishuConfigError, FeishuError,
                      NotAuthenticated, build_decision_card, compute_signature, env_ref,
@@ -41,4 +53,5 @@ __all__ = [
     'FeishuChannel', 'FeishuConfig', 'FeishuConfigError', 'FeishuError',
     'NotAuthenticated', 'AmbiguousSend', 'build_decision_card', 'compute_signature',
     'env_ref', 'from_mapping', 'make_http_handler', 'serve', 'urllib_transport',
+    'channel_crypto',
 ]

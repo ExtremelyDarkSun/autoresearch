@@ -1,10 +1,12 @@
 # GENERATED-BY: research execution main chain migration, 2026-11-09
-# LAST-EDIT: 2026-11-09 首版：把 ai_work.py / exp_launch.py 的通用函数依赖拆成比赛无关主链（J1–J6 · K1 起跑检查 · I7）
+# LAST-EDIT: 2026-11-09 18:10 只读连接（_ReadOnlyStore / _read_conn）改走 runtime.store.ReadonlyStore
 # PURPOSE: 一次研究执行的主链 —— 事前四锚点与冻结、来源哈希过期、统一起跑闸（审计 / 意图 / 监控 / 实际 argv）、
 #          append-only 生命周期、真实结束原因与退出码、复盘验收与前轮阻断。本地 runner 只用显式 argv 数组、无 shell。
 # ORIGIN: 抽取自 AutoDL实验/tool/ai_work.py（prepare / check_start / start / finish / review 的通用逻辑）
 #         与 AutoDL实验/tool/exp_launch.py（先检查后起跑、传递真实退出码）；⛔ 不含专题号、机器、读数、渠道、预算值。
 # CUMULATIVE-DELTA: 首版。竞争无关：比赛语义留给 profile 与调用方的 argv/来源清单。
+#   2026-11-09：`_ReadOnlyStore` 与 `_read_conn` 不再自己拼 `?mode=ro`，委托 `runtime.store.ReadonlyStore`
+#   （WAL 库按 sidecar 实况选 mode=ro / immutable=1，只读不创建 -shm/-wal；-wal 有 -shm 缺判不可判）。
 
 """研究执行主链（J1–J6 · K1 起跑检查 · I7）。
 
@@ -152,7 +154,7 @@ from kernel.autoresearch.governance import (  # noqa: E402  (先补 sys.path 再
     validate_plan,
 )
 from kernel.autoresearch.execution_target import ExecutionTarget  # noqa: E402
-from kernel.autoresearch.runtime.store import Store, canonical_json  # noqa: E402
+from kernel.autoresearch.runtime.store import ReadonlyStore, Store, canonical_json  # noqa: E402
 from kernel.autoresearch.runtime.topics import Topics, TopicsError  # noqa: E402
 
 __all__ = (
@@ -248,17 +250,19 @@ class _ReadOnlyStore:
     1. `readonly=True` 的 `check/status` —— 不因为「读一下」就建库建表；
     2. `start()` 的占用事务里复核审计状态 —— 占用事务已经拿着写锁，复核必须是**只读**的
        另一个连接，⛔ 不能在事务里再开写事务（会等锁）。
+
+    **连接方式委托 `runtime.store.ReadonlyStore`**（本轮只读入口的统一实现）：
+    它读 SQLite 头里的日志模式与 `-wal` / `-shm` 实况再选路 —— 缺 sidecar 的 WAL 库用
+    `immutable=1`（`mode=ro` 会创建 `-shm` / `-wal`），有 `-wal` 无 `-shm` 直接判不可判。
+    ⛔ 本类不再自己拼 `?mode=ro` URI，也不在这里复制数据库。
     """
 
     def __init__(self, db_path):
-        self.db_path = Path(db_path)
+        self._store = ReadonlyStore(db_path)
+        self.db_path = Path(self._store.db_path)
 
     def connect(self):
-        conn = sqlite3.connect(self.db_path.as_uri() + "?mode=ro", uri=True,
-                               timeout=10, isolation_level=None)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA query_only=ON")
-        return conn
+        return self._store.connect()
 
     @contextmanager
     def transaction(self):
@@ -525,13 +529,16 @@ class Workflow:
 
     @contextmanager
     def _read_conn(self):
-        """只读连接：每句自动提交，不长期持读锁（别的进程还要写）。"""
+        """只读连接：每句自动提交，不长期持读锁（别的进程还要写）。
+
+        **连接方式委托 `runtime.store.ReadonlyStore`**：WAL 库按 sidecar 实况选
+        `mode=ro` / `immutable=1`，读操作不创建 `-shm` / `-wal`；缺 `-wal` 有 `-shm`
+        的歧义态抛 `StoreError`（调用方按「不可判」处理）。
+        """
         if not self.db.is_file():
             raise WorkflowError("工作区数据库不存在：先 prepare 或运行 init", code=2)
-        conn = sqlite3.connect(self.db.as_uri() + "?mode=ro", uri=True, timeout=10, isolation_level=None)
+        conn = ReadonlyStore(self.db).connect()
         try:
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA query_only=ON")
             yield conn
         finally:
             conn.close()
@@ -1301,7 +1308,8 @@ class Workflow:
         context = dict(context or {})
         try:
             outcome = getattr(lifecycle, action)(*args, **kwargs)
-            return {"ok": True, "wired": True, "kind": kind, "result": _jsonable(outcome)}
+            return {"ok": not isinstance(outcome, dict) or outcome.get('ok') is not False,
+                    "wired": True, "kind": kind, "result": _jsonable(outcome)}
         except Exception as exc:  # noqa: BLE001 - 投影失败不改变任何决定与退出码
             detail = f"{type(exc).__name__}: {exc}"
             try:
@@ -1470,6 +1478,120 @@ class Workflow:
         result["action"] = "check"
         return result
 
+    # -- 写事务内的只读启动复核（本地 start 与受管远端 claim/send 共用） --------
+
+    def _readonly_launch_recheck(self, conn, preparation, plan_obj, *, plan_id, owner_session,
+                                 intent_id=None, intent_none=False, action="launch", record=None):
+        """在**已有写事务**里做启动前的只读复核；本地起进程与受管远端发请求共用同一段判据。
+
+        为什么必须共用：`check()` 与真正的启动/发送之间有时序缝 —— 计划被重新冻结、来源文件改了、
+        用户又说了新原话、审计被新阻断、监控出现新待审、预算预留被释放，这些都可能在缝隙里发生。
+        只在 `check()` 里核一次等于「核完再改就放行」。
+
+        调用约束（⛔ 不要放宽）：
+        * 调用方必须已经持有 `BEGIN IMMEDIATE`（`self.store.transaction()`）的连接 `conn`；
+        * 本方法**只读**：读 `conn`、只读 Governance（独立只读连接）、读文件、只读监控与准入；
+          ⛔ 不在这里再开写事务（会自己等锁），⛔ 不在这里注册监控事件。
+
+        返回 `{"ok": bool, "checks": {...}, "failures": [{"kind", "message", "problems"}]}`；
+        `message` 是给用户看的完整句子（本地与远端的处置不同：本地零子进程、远端零远端请求），
+        调用方只决定怎么抛。
+        """
+        checks = {}
+        failures = []
+
+        def fail(kind, message, problems):
+            failures.append({"kind": kind, "message": message,
+                             "problems": [str(item) for item in (problems or [message])]})
+
+        # 1) 计划版本与冻结字节（后面的复核都建立在这一轮冻结的计划上）
+        latest = self._one_in(conn, "gov_plans",
+                              "SELECT version,plan_json FROM gov_plans WHERE plan_id=?"
+                              " ORDER BY version DESC LIMIT 1", (plan_id,))
+        plan_sha256 = _sha_text(canonical_json(json.loads(latest["plan_json"]))) if latest else None
+        version_ok = (latest is not None
+                      and int(latest["version"]) == int(preparation["plan_version"])
+                      and plan_sha256 == preparation["plan_sha256"])
+        checks["plan_version_recheck"] = {
+            "ok": version_ok,
+            "version": (None if latest is None else int(latest["version"])),
+            "expected_version": int(preparation["plan_version"])}
+        if not version_ok:
+            fail("plan_version",
+                 "拒绝启动：计划在 prepare 之后被改动或重新冻结 ⇒ 先重新 prepare"
+                 "（没有启动任何子进程 / 没有发出任何远端请求）",
+                 ["计划版本与准备记录不一致"])
+            return {"ok": False, "checks": checks, "failures": failures}
+
+        # 2) 生命周期 before 快照：必须与这份 preparation 绑定，且字节仍对得上
+        before = self._lifecycle_before_problem(preparation, conn)
+        checks["lifecycle_before_recheck"] = {"ok": not before, "problems": before}
+        if before:
+            fail("lifecycle_before",
+                 "拒绝启动：before 主文档快照缺失 / 与准备记录不一致（prepare 的生命周期未完成）"
+                 "⇒ 不允许事后补造历史快照（没有启动任何子进程 / 没有发出任何远端请求）："
+                 + "；".join(before), before)
+            return {"ok": False, "checks": checks, "failures": failures}
+
+        # 3) 事前来源哈希（来源文件 / 专题目标与主文档 / 该会话用户原话 / 旧复盘来源）
+        sources = self._expiry_problems(preparation, conn, prefer_topics=False)
+        checks["preparation_recheck"] = {"ok": not sources, "problems": sources}
+        if sources:
+            fail("preparation_sources",
+                 "拒绝启动：准备来源在闸之后变了（来源文件 / 专题目标或主文档 / 用户原话变了）"
+                 "⇒ 先重新 prepare（没有启动任何子进程 / 没有发出任何远端请求）："
+                 + "；".join(sources), sources)
+            return {"ok": False, "checks": checks, "failures": failures}
+
+        # 4) 审计状态（只读 Governance：占用事务持有写锁，不能在这里再开写事务）
+        try:
+            audit = self._readonly_gov().audit_state(plan_id)
+        except (GovernanceError, sqlite3.Error) as exc:
+            audit = {"ok": False, "problems": [f"审计状态复核不可判：{exc}"],
+                     "decision": None, "key_fingerprint": None}
+        checks["audit_recheck"] = {"ok": bool(audit.get("ok")),
+                                   "decision": audit.get("decision"),
+                                   "key_fingerprint": audit.get("key_fingerprint"),
+                                   "problems": list(audit.get("problems") or [])}
+        if not audit.get("ok"):
+            problems = list(audit.get("problems") or ["审计状态不可判"])
+            fail("audit",
+                 "拒绝启动：审计状态在闸之后变成了不通过（新阻断 / 政策撤销 / 意见变动）"
+                 "（没有启动任何子进程 / 没有发出任何远端请求）：" + "；".join(problems), problems)
+            return {"ok": False, "checks": checks, "failures": failures}
+
+        # 5) 监控（唯一意图权威；只读调用，安全动作之外都拦）
+        monitor = self._monitor_gate(
+            owner_session, plan_id, action,
+            intent_id=None if intent_none else (intent_id or None),
+            intent_none=bool(intent_none))
+        checks["monitor_recheck"] = monitor
+        if not monitor["ok"]:
+            fail("monitor",
+                 "拒绝启动：监控状态在闸之后变了（新用户原话 / 待审触发 / 意见未处置 / 登记变化）"
+                 "（没有启动任何子进程 / 没有发出任何远端请求）："
+                 + "；".join(monitor["problems"]), monitor["problems"])
+            return {"ok": False, "checks": checks, "failures": failures}
+
+        # 6) 执行准入（预算预留 / 作用域 / 决策）
+        #    此刻持有 RESERVED 写锁，别的进程无法提交 release / settle；核验器必须是**只读**的
+        #    （`Admission.check` 只读），否则它会在这里等锁 —— 异常也按拒绝处理。
+        try:
+            authorization = self._authorization_gate(plan_obj, owner_session, plan_id,
+                                                     dict(record or {}))
+        except sqlite3.Error as exc:
+            authorization = {"ok": False, "unwired": False, "fixture": False,
+                             "problems": [f"占用事务里复核执行准入失败"
+                                          f"（{type(exc).__name__}: {exc}）：不放行"]}
+        checks["authorization_recheck"] = authorization
+        if not authorization["ok"]:
+            fail("authorization",
+                 "拒绝启动：执行准入在占用事务里复核失败（预算预留已释放 / 过期 / 不属于本轮 / "
+                 "决策已撤回）（没有启动任何子进程 / 没有发出任何远端请求）："
+                 + "；".join(authorization["problems"]), authorization["problems"])
+
+        return {"ok": not failures, "checks": checks, "failures": failures}
+
     def start(self, *, topic, plan, owner_session, argv, intent_id=None, intent_none=False,
               actor="main", finish=True):
         """通过闸后**原子占用**唯一活跃 run，再用显式 argv 真的启动本地子进程，保留真实退出码。"""
@@ -1493,78 +1615,15 @@ class Workflow:
         env_additions = target.get("env_additions") or {}
 
         with self.store.transaction() as conn:
-            # 闸与占用之间可能有人改了计划 / 重新冻结 ⇒ 在同一个写事务里再核一次。
-            latest = self._one_in(conn, "gov_plans",
-                                  "SELECT version,plan_json FROM gov_plans WHERE plan_id=?"
-                                  " ORDER BY version DESC LIMIT 1", (plan_id,))
-            plan_sha256 = _sha_text(canonical_json(json.loads(latest["plan_json"]))) if latest else None
-            if latest is None or int(latest["version"]) != int(preparation["plan_version"]) \
-                    or plan_sha256 != preparation["plan_sha256"]:
-                raise WorkflowError(
-                    "拒绝启动：计划在 prepare 之后被改动或重新冻结 ⇒ 先重新 prepare（没有启动任何子进程）",
-                    ["计划版本与准备记录不一致"], code=9)
-            # 生命周期 before 收据复核：必须与这份 preparation 绑定，且快照字节仍对得上。
-            before_recheck = self._lifecycle_before_problem(preparation, conn)
-            gates["lifecycle_before_recheck"] = {"ok": not before_recheck,
-                                                 "problems": before_recheck}
-            if before_recheck:
-                raise WorkflowError(
-                    "拒绝启动：before 主文档快照缺失 / 与准备记录不一致（prepare 的生命周期未完成）"
-                    "⇒ 不允许事后补造历史快照：" + "；".join(before_recheck),
-                    before_recheck, code=9)
-            # 防「check → 改来源 / 新用户原话 → spawn」时序缝：在同一个写事务里复核事前来源哈希。
-            # ⛔ 只读文件与 sqlite；⛔ 不在这里注册 / 发监控事件。
-            prep_recheck = self._expiry_problems(preparation, conn, prefer_topics=False)
-            gates["preparation_recheck"] = {"ok": not prep_recheck, "problems": prep_recheck}
-            if prep_recheck:
-                raise WorkflowError(
-                    "拒绝启动：准备来源在闸之后变了（来源文件 / 专题目标或主文档 / 用户原话变了）"
-                    "⇒ 先重新 prepare（没有启动任何子进程）：" + "；".join(prep_recheck),
-                    prep_recheck, code=9)
-            # 审计状态复核：用只读 Governance（占用事务持有写锁，不能在这里再开写事务）。
-            try:
-                audit_recheck = self._readonly_gov().audit_state(plan_id)
-            except (GovernanceError, sqlite3.Error) as exc:
-                audit_recheck = {"ok": False, "problems": [f"审计状态复核不可判：{exc}"],
-                                 "decision": None, "key_fingerprint": None}
-            gates["audit_recheck"] = {
-                "ok": bool(audit_recheck.get("ok")),
-                "decision": audit_recheck.get("decision"),
-                "key_fingerprint": audit_recheck.get("key_fingerprint"),
-                "problems": list(audit_recheck.get("problems") or []),
-            }
-            if not audit_recheck.get("ok"):
-                raise WorkflowError(
-                    "拒绝启动：审计状态在闸之后变成了不通过（新阻断 / 政策撤销 / 意见变动）"
-                    "⇒ 没有启动任何子进程："
-                    + "；".join(audit_recheck.get("problems") or ["审计状态不可判"]),
-                    list(audit_recheck.get("problems") or ["审计状态不可判"]), code=9)
-            # 监控复核：同样是**只读**调用（Monitoring.check_start 零写；宿主读取只读）。
-            monitor_recheck = self._monitor_gate(
-                owner_session, plan_id, "launch",
-                intent_id=None if intent_none else (intent_id or None),
-                intent_none=bool(intent_none))
-            gates["monitor_recheck"] = monitor_recheck
-            if not monitor_recheck["ok"]:
-                raise WorkflowError(
-                    "拒绝启动：监控状态在闸之后变了（新用户原话 / 待审触发 / 意见未处置 / 登记变化）"
-                    "⇒ 没有启动任何子进程：" + "；".join(monitor_recheck["problems"]),
-                    monitor_recheck["problems"], code=9)
-            # 防「check → release → spawn」时序缝：在**同一个写事务**里再核一次执行准入。
-            # 此刻持有 RESERVED 写锁，别的进程无法提交 release / settle；核验器必须是**只读**的
-            # （Admission.check 只读），否则它会在这里等锁 —— 异常也按拒绝处理。
-            record = (gates.get("authorization") or {}).get("request") or {}
-            try:
-                recheck = self._authorization_gate(plan_obj, owner_session, plan_id, record)
-            except sqlite3.Error as exc:
-                recheck = {"ok": False, "unwired": False, "fixture": False,
-                           "problems": [f"占用事务里复核执行准入失败（{type(exc).__name__}: {exc}）：不放行"]}
-            gates["authorization_recheck"] = recheck
-            if not recheck["ok"]:
-                raise WorkflowError(
-                    "拒绝启动：执行准入在占用事务里复核失败（预算预留已释放 / 过期 / 不属于本轮）"
-                    "⇒ 没有启动任何子进程：" + "；".join(recheck["problems"]),
-                    recheck["problems"], code=9)
+            recheck = self._readonly_launch_recheck(
+                conn, preparation, plan_obj, plan_id=plan_id, owner_session=owner_session,
+                intent_id=intent_id, intent_none=intent_none, action="launch",
+                record=(gates.get("authorization") or {}).get("request") or {})
+            gates.update(recheck["checks"])
+            failures = recheck["failures"]
+            if failures:
+                first = failures[0]
+                raise WorkflowError(first["message"], first["problems"], code=9)
             count = conn.execute("SELECT COUNT(*) AS n FROM wf_runs").fetchone()["n"]
             run_id = "RUN-" + _sha_text(canonical_json(
                 [preparation["prepared_id"], argv_actual, count, self._now()]))[:16]

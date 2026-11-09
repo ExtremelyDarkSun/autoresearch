@@ -1,11 +1,17 @@
 # GENERATED-BY: ssh backend migration, 2026-11-09
-# LAST-EDIT: 2026-11-09 首版：系统 ssh/scp Adapter（submit/query/collect/cancel）+ 显式 provision + 本地/远端 receipt
+# LAST-EDIT: 2026-11-10 安全修复：协议 v2、receipt 绑定核验（request_hash/token/attempt）、
+#            终态必须有 stop_verified、安全 cancel 不被本地报告写入失败阻挡。
 # PURPOSE: 把 runtime.execution.Adapter 接到一台通过系统 ssh 可达的 POSIX 机器：默认关闭、不读凭据、不连真机；
 #          远端执行交给随 provision 推送的 ssh_worker.py，本文件只做安全的命令构造、状态映射与产物回传。
 # ORIGIN: none（新文件）。协议来自 runtime/execution.py 的 RunSpec / JobStatus / ResultBundle / Adapter。
-# CUMULATIVE-DELTA: 首版。三条硬边界：① `SSHDeployment.enabled` 默认 False，任何操作先抛 PermissionError；
+# CUMULATIVE-DELTA: 协议 v2（本地与远端 WORKER_VERSION 必须一致，provision 时核）。四条硬边界：
+#          ① `SSHDeployment.enabled` 默认 False，任何操作先抛 PermissionError；
 #          ② 所有远端命令都用**单一字符串**经 `shlex.quote` 逐 token 构造，⛔ 不拼未 quote 的参数、⛔ 不用 shell=True；
-#          ③ 连接失败/超时/远端不可判一律 `JobStatus(..., 'unknown')`，⛔ 不冒 completed/failed。
+#          ③ 连接失败/超时/远端不可判一律 `JobStatus(..., 'unknown')`，⛔ 不冒 completed/failed；
+#          ④ query/collect/cancel 的回报必须先和本地 receipt 的 request_hash / token / attempt_id 绑定，
+#             缺少绑定证据 ⇒ query unknown、collect 拒绝；终态还必须有 worker 的 `stop_verified=true`
+#             （原进程及其整个进程组已停），否则一律 unknown。安全 cancel 只要求 token（缺 hash 时学习补记），
+#             且本地 receipt 写不进去不改变已经核实的停止。
 """SSH 后端（系统 ssh/scp；默认关闭）。
 
 用法
@@ -39,8 +45,15 @@ shell 元字符带进 scp/ssh 路径。
   `remote_dir` 与十六进制 hash（`remote_dir` 本身也做白名单校验）。
 * **幂等**：本地 receipt 用 `O_CREAT|O_EXCL` 原子创建；远端 receipt 由 worker 用
   `mkdir` 原子创建。同一 request_key 的第二次 submit 只 query，不会重发；内容变了直接拒。
-* **未知不冒终态**：worker 只有在有终态记录（或取消后重新核过进程组已无进程）时才报终态；
-  连接中断、SSH 超时、字段缺失 ⇒ 本层一律 `unknown`，并且下次 submit/query 也不会重提。
+* **绑定**：每次 query/collect/cancel 的回报都要和 receipt 的 `request_hash`（远端 request-write
+  回执里学到的 `remote_request_hash`）、`token`、`attempt_id` 对上；缺一项 ⇒ query `unknown`、
+  collect 拒绝。⛔ 不把「另一个请求的 state.json」当成这一次的结果。
+* **终态要停止证据**：worker 报 `completed`/`failed`/`cancelled` 时还必须带 `stop_verified=true`
+  （原进程及其整个进程组已无活进程）。缺它 ⇒ 本层 `unknown`，不冒终态。
+* **未知不冒终态**：worker 只有在有终态记录（且带停止证据）时才报终态；连接中断、SSH 超时、
+  字段缺失 ⇒ 本层一律 `unknown`，并且下次 submit/query 也不会重提。
+* **安全 cancel 不被报告阻挡**：cancel 只要本地 receipt 有 token 就能发；本地 receipt 写不进去
+  只是 `recorded=false` 警告，⛔ 不把已经核实的停止改回 unknown。
 * **产物**：只按 `spec.required_artifacts` 取；缺失的不补、不造假，交给
   `Execution.validate_results` 判 partial；scp 回来的每个字节都再核一次 SHA256。
 """
@@ -61,11 +74,13 @@ from pathlib import Path
 from ..runtime.execution import (DefinitiveFailure, JobStatus, ResultBundle, RunSpec,
                                  canonical, digest)
 
-WORKER_VERSION = 1
+WORKER_VERSION = 2
 DEFAULT_TIMEOUT_S = 3600.0
 _SAFE_HOST = re.compile(r"^[A-Za-z0-9_.-]+$")
 _SAFE_PATH = re.compile(r"^/[A-Za-z0-9_./-]+$")
 _SAFE_REL = re.compile(r"^[A-Za-z0-9_./-]+$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_TERMINAL_STATES = ("completed", "failed", "cancelled")
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +280,55 @@ class SSHAdapter:
             os.fsync(stream.fileno())
         return True
 
+    def _note_receipt(self, path: Path, receipt: dict, **updates) -> None:
+        """补记本地 receipt。**报告写不进去不能改变已经核实的远端事实**。"""
+        if not isinstance(receipt, dict):
+            return
+        changed = {key: value for key, value in updates.items()
+                   if value is not None and receipt.get(key) != value}
+        if not changed:
+            return
+        receipt.update(changed)
+        try:
+            self._write_receipt(path, receipt, exclusive=False)
+        except OSError:
+            pass
+
+    def _bind_reply(self, receipt: dict, state: dict, *, require_remote_hash: bool = True,
+                    require_attempt: bool = True) -> str | None:
+        """回报是否属于本地 receipt 登记的那一次请求：token + request_hash + attempt_id。
+
+        返回 `None` 才算绑定成功；否则返回不能用的原因。⛔ 不许只信远端 `state` 字符串。
+        `require_remote_hash=False` 只给安全 cancel 用：停止不该被缺失的本地审计字段挡住，
+        但仍必须凭 receipt 里的 token（worker 会先核 token）并且回报的 hash 一旦存在就必须一致。
+        """
+        if not isinstance(state, dict):
+            return "远端状态不是对象"
+        token = receipt.get("token")
+        if not isinstance(token, str) or not token:
+            return "本地 receipt 缺 token"
+        if state.get("token") != token:
+            return "远端 token 与本地 receipt 不符"
+        request_hash = receipt.get("request_hash")
+        if not isinstance(request_hash, str) or not _SHA256.fullmatch(request_hash):
+            return "本地 receipt 缺合法 request_hash"
+        remote_hash = receipt.get("remote_request_hash")
+        if remote_hash is None:
+            if require_remote_hash:
+                return "本地 receipt 缺远端 request_hash（request-write 回执未核过）"
+        else:
+            if not isinstance(remote_hash, str) or not _SHA256.fullmatch(remote_hash):
+                return "本地 receipt 的 remote_request_hash 不是合法 SHA256"
+            if state.get("request_hash") != remote_hash:
+                return "远端 request_hash 与本地 receipt 不符"
+        attempt = receipt.get("attempt_id")
+        if attempt is None:
+            if require_attempt:
+                return "本地 receipt 缺 attempt_id"
+        elif state.get("attempt_id") != attempt:
+            return "远端 attempt_id 与本地 receipt 不符"
+        return None
+
     def _ssh_command(self, tokens) -> list[str]:
         return self.deployment.ssh_argv(remote_command(tokens))
 
@@ -408,6 +472,7 @@ class SSHAdapter:
             "state_dir": state_dir,
             "token": token,
             "attempt_id": attempt_id,
+            "output_dir": output_dir,
             "created_at": self.clock(),
         }, exclusive=True)
         receipt = self._read_receipt(receipt_path)
@@ -423,13 +488,27 @@ class SSHAdapter:
                                  stdin_bytes=canonical(document).encode("utf-8"))
             if written.get("ok") is not True:
                 raise self._worker_error(written)
+            write_reason = self._request_write_reason(written, token, attempt_id)
+            if write_reason:
+                raise RuntimeError(f"request-write 回执与本地请求不符：{write_reason}")
+            receipt = self._read_receipt(receipt_path) or receipt
+            self._note_receipt(receipt_path, receipt,
+                               remote_request_hash=written.get("request_hash"))
             reply = self._call("start", state_dir, timeout=self.deployment.start_timeout)
             if reply.get("ok") is not True:
                 raise self._worker_error(reply)
             state = reply.get("state") or {}
-            receipt.update({"state": state.get("state"), "pid": state.get("pid"),
-                            "birth": state.get("birth")})
-            self._write_receipt(receipt_path, receipt, exclusive=False)
+            bind_reason = self._bind_reply(receipt, state)
+            if bind_reason:
+                # 回报不能证明是这一次请求的执行记录 ⇒ 只能 unknown（保留未知，绝不冒终态）。
+                return JobStatus(remote_id, "unknown",
+                                 {"reason": f"start 回报与本地 receipt 不符：{bind_reason}",
+                                  "worker_state": state.get("state"),
+                                  "worker_reason": state.get("reason")})
+            self._note_receipt(receipt_path, receipt,
+                               state=state.get("state"), pid=state.get("pid"),
+                               birth=state.get("birth"),
+                               remote_request_hash=state.get("request_hash"))
             return self._job_status(state, remote_id)
         except DefinitiveFailure:
             raise
@@ -438,9 +517,23 @@ class SSHAdapter:
                              {"error": f"{type(exc).__name__}: {exc}",
                               "reason": "submit 响应不可判，禁止重提"})
 
+    @staticmethod
+    def _request_write_reason(written: dict, token: str, attempt_id: str) -> str | None:
+        worker_hash = written.get("request_hash")
+        if not isinstance(worker_hash, str) or not _SHA256.fullmatch(worker_hash):
+            return "request-write 没有回报合法 request_hash"
+        if written.get("token") != token:
+            return "request-write 回报的 token 与本地请求不符"
+        if written.get("attempt_id") != attempt_id:
+            return "request-write 回报的 attempt_id 与本地请求不符"
+        if written.get("protocol") != WORKER_VERSION:
+            return f"远端 protocol {written.get('protocol')!r} 与本地 {WORKER_VERSION} 不符"
+        return None
+
     def query(self, request_key: str, remote_id: str | None) -> JobStatus:
         self._require()
-        receipt = self._read_receipt(self._receipt_path(request_key))
+        receipt_path = self._receipt_path(request_key)
+        receipt = self._read_receipt(receipt_path)
         if not isinstance(receipt, dict):
             return JobStatus(remote_id, "unknown", {"reason": "没有本地 receipt，不能确认远端 job"})
         if remote_id and receipt.get("remote_id") and remote_id != receipt["remote_id"]:
@@ -448,8 +541,22 @@ class SSHAdapter:
         try:
             reply = self._call("query", receipt["state_dir"])
             if reply.get("ok") is not True:
-                return JobStatus(remote_id, "unknown", {"reason": reply.get("error")})
-            return self._job_status(reply.get("state") or {}, remote_id or receipt.get("remote_id"))
+                return JobStatus(remote_id, "unknown",
+                                 {"reason": reply.get("reason") or reply.get("error")})
+            state = reply.get("state") or {}
+            bind_reason = self._bind_reply(receipt, state)
+            if bind_reason:
+                return JobStatus(remote_id, "unknown",
+                                 {"reason": f"query 回报与本地 receipt 不符：{bind_reason}",
+                                  "worker_state": (state.get("state")
+                                                   if isinstance(state, dict) else None),
+                                  "worker_reason": (state.get("reason")
+                                                    if isinstance(state, dict) else None)})
+            self._note_receipt(receipt_path, receipt,
+                               state=state.get("state"), pid=state.get("pid"),
+                               birth=state.get("birth"),
+                               remote_request_hash=state.get("request_hash"))
+            return self._job_status(state, remote_id or receipt.get("remote_id"))
         except Exception as exc:  # noqa: BLE001
             return JobStatus(remote_id, "unknown",
                              {"error": f"{type(exc).__name__}: {exc}",
@@ -457,12 +564,25 @@ class SSHAdapter:
 
     def collect(self, request_key: str, remote_id: str, output_dir: str) -> ResultBundle:
         self._require()
-        receipt = self._read_receipt(self._receipt_path(request_key))
+        receipt_path = self._receipt_path(request_key)
+        receipt = self._read_receipt(receipt_path)
         if not isinstance(receipt, dict):
             raise RuntimeError("没有本地 receipt，不能取回")
+        if remote_id and receipt.get("remote_id") and remote_id != receipt["remote_id"]:
+            raise RuntimeError("collect 不允许切换原 job 的 remote_id")
         reply = self._call("collect", receipt["state_dir"])
         if reply.get("ok") is not True:
             raise RuntimeError(f"远端拒绝取回：{reply.get('reason') or reply.get('error')}")
+        if reply.get("state") != "completed":
+            raise RuntimeError(f"远端 collect 回报的状态不是 completed：{reply.get('state')!r}")
+        view = {"request_hash": reply.get("request_hash"),
+                "token": reply.get("token"),
+                "attempt_id": reply.get("attempt_id")}
+        bind_reason = self._bind_reply(receipt, view)
+        if bind_reason:
+            raise RuntimeError(f"collect 回报与本地 receipt 不符：{bind_reason}")
+        if reply.get("stop_verified") is not True:
+            raise RuntimeError("远端 collect 没有给出「原进程及其进程组已停」的证据，拒绝取回")
         artifacts: dict[str, bytes] = {}
         manifest: dict[str, str] = {}
         remote_output = reply.get("output_dir")
@@ -491,7 +611,8 @@ class SSHAdapter:
 
     def cancel(self, request_key: str, remote_id: str | None) -> JobStatus:
         self._require()
-        receipt = self._read_receipt(self._receipt_path(request_key))
+        receipt_path = self._receipt_path(request_key)
+        receipt = self._read_receipt(receipt_path)
         if not isinstance(receipt, dict):
             return JobStatus(remote_id, "unknown", {"reason": "没有本地 receipt，不能确认远端 job"})
         token = receipt.get("token")
@@ -503,7 +624,21 @@ class SSHAdapter:
             if reply.get("ok") is not True:
                 return JobStatus(remote_id, "unknown",
                                  {"reason": reply.get("reason") or reply.get("error")})
-            return self._job_status(reply.get("state") or {}, remote_id)
+            state = reply.get("state") or {}
+            # 安全 cancel 不被缺失的本地审计字段阻挡：只强制 token，hash/attempt 有就必须一致。
+            bind_reason = self._bind_reply(receipt, state, require_remote_hash=False,
+                                           require_attempt=False)
+            if bind_reason:
+                return JobStatus(remote_id, "unknown",
+                                 {"reason": f"cancel 回报与本地 receipt 不符：{bind_reason}",
+                                  "worker_state": (state.get("state")
+                                                   if isinstance(state, dict) else None)})
+            if isinstance(state, dict):
+                self._note_receipt(receipt_path, receipt,
+                                   state=state.get("state"),
+                                   remote_request_hash=state.get("request_hash"),
+                                   attempt_id=state.get("attempt_id"))
+            return self._job_status(state, remote_id or receipt.get("remote_id"))
         except Exception as exc:  # noqa: BLE001
             return JobStatus(remote_id, "unknown",
                              {"error": f"{type(exc).__name__}: {exc}",
@@ -524,8 +659,15 @@ class SSHAdapter:
         value = state.get("state")
         evidence = {key: state.get(key) for key in
                     ("state", "pid", "birth", "exitcode", "signal", "timed_out", "reason",
-                     "started_at", "finished_at")}
-        if value in ("completed", "failed", "cancelled"):
+                     "started_at", "finished_at", "request_hash", "attempt_id",
+                     "stop_verified", "cancel_requested", "argv_sha256")}
+        if isinstance(state.get("stop_evidence"), dict):
+            evidence["stop_evidence"] = state["stop_evidence"]
+        if value in _TERMINAL_STATES:
+            if state.get("stop_verified") is not True:
+                evidence["reason"] = ("远端报终态但没有停止证据（stop_verified != true）："
+                                      "不能确认原进程及其进程组已停")
+                return JobStatus(remote_id, "unknown", evidence)
             return JobStatus(remote_id, value, evidence)
         if value in ("starting", "running"):
             return JobStatus(remote_id, "running", evidence)

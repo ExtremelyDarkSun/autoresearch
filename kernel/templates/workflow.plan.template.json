@@ -1,0 +1,19 @@
+{
+  "_template": "workflow.plan.template.json",
+  "_usage": "生产Workflow计划。删除下划线键；所有占位须以实际来源填写。预算不提供默认值。small也必须有真实共享预算；large/submission另需绑定完整执行规范的已批准决策。",
+  "id": "<new-round-id>",
+  "goal": "<本轮研究问题，与专题目标的联系>",
+  "hypothesis": {"id": "<hypothesis-id>", "text": "<可被观察否掉的假设>"},
+  "change_set": [{"id": "<change-id>", "description": "<实际改动>", "hypothesis_id": "<hypothesis-id>"}],
+  "criteria": {"mode": "exploratory", "metric": "<观察什么>", "observation": "<支持/反驳/未看到的观察>", "interpretation_boundary": "<适用和不能外推的范围>", "conditions": "<装置样本与比较前提>", "stop_condition": "<何时结束或停止>", "source": "<事前判断依据的文件及定位>"},
+  "baseline": {"label": "<对照件>", "fingerprint": "<实际内容指纹>"},
+  "case_sets": {"target": ["<target-id>"], "regression": ["<previous-pass-id>"], "control": ["<control-id>"]},
+  "previous_passes": ["<previous-pass-id>"],
+  "branches": {"support": {"action": "<支撑时动作>"}, "contradict": {"action": "<反驳时动作>"}, "inconclusive": {"action": "<不确定时动作>"}},
+  "budget": {"max_cost_units": "<填写实际整数预算>", "max_seconds": "<填写实际秒数预算>"},
+  "input_files": ["<实际原始依据的工作区相对路径>"],
+  "implementation": {"expected_behavior": "<预期行为>", "load_path": "<实际加载入口>", "trigger": "<触发条件>", "observation": "<如何看到已激活>", "non_activation": "<如何判断未激活>", "files": [{"path": "<实现文件的工作区相对路径>", "locator": "<函数或行定位>"}]},
+  "execution_argv": ["<provision.json中python对应的绝对路径>", "<独立code目录内真实脚本路径>", "<逐项参数>"],
+  "execution": {"scope": "local", "resource_kind": "cpu", "cwd": "<provision.json中的code_path>"},
+  "authorization": {"scope": "small", "series_id": "<真实预算series-id>", "reservation_id": "<本轮独占预算reservation-id>"}
+}

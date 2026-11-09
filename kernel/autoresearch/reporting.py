@@ -1,5 +1,5 @@
 # GENERATED-BY: portable reporting migration, 2026-11-09 +08:00
-# LAST-EDIT: 2026-11-09 +08:00（真实宿主接线：proof 必填、会话标识归一、I3 轮数口径记录）
+# LAST-EDIT: 2026-11-09 18:40 `_lease_state` 只读连接委托 runtime.store.ReadonlyStore
 # PURPOSE: 研究现状页的完整供料、来源字节版本、正文验收回执、运行/整轮事件、只读诊断与流程状态投影。
 # ORIGIN: 上游供料与交付工具的通用机制（供料包、来源快照指纹、正文验收、只读诊断、流程状态分离、事件追加），
 #         去掉全部私人实例事实（机器名、会话号、比赛数据、历史台账与真实读数）。
@@ -7,6 +7,8 @@
 #         declared / verified 两级。2026-11-09 真实宿主接线：`host_verifier` 必须配显式 `proof`；
 #         验证器抛错即拒且不落回执；会话标识比较忽略 `session-` 前缀（宿主会归一）；
 #         轮数上限记为「总量 3 轮（含当前实验）」，不改校验器。
+#         2026-11-09 只读零副作用：`_lease_state` 不再拼裸 `?mode=ro`，委托 `ReadonlyStore`
+#         （WAL 读不创建 -shm/-wal）；不可读仍返回 UNKNOWN，不推断租约。
 
 """研究现状页的供料、版本、验收回执与只读诊断。
 
@@ -75,6 +77,7 @@ from kernel.autoresearch.governance import (
     STATUS_SECTIONS,
     validate_status_page,
 )
+from kernel.autoresearch.runtime.store import ReadonlyStore, StoreError  # noqa: E402
 
 SCHEMA = 1
 
@@ -1804,13 +1807,15 @@ def _lease_state(db, topic):
     if not path.is_file():
         return {'state': 'UNKNOWN', 'why': '数据库不存在；不推断租约', 'last_activity': None}
     try:
-        connection = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)
+        # 连接方式委托 runtime.store.ReadonlyStore：WAL 库按 sidecar 实况选
+        # mode=ro / immutable=1，读不创建 -shm / -wal；不可读一律 UNKNOWN，不推断。
+        connection = ReadonlyStore(path).connect()
         try:
             row = connection.execute(
                 'SELECT leader_session_id, leader_since FROM topics WHERE id=?', (topic,)).fetchone()
         finally:
             connection.close()
-    except sqlite3.Error as exc:
+    except (sqlite3.Error, StoreError) as exc:
         return {'state': 'UNKNOWN', 'why': f'租约不可读：{type(exc).__name__}',
                 'last_activity': None}
     if row is None:

@@ -12,7 +12,7 @@
 #         prepared_id / 报告全文（record_audit_file 用六键短声明），审计会话与 actor 对不上直接拒；④ 新增可信
 #         extend（每次 +1，每次都要新的可信用户命令，不能自扩；不设固定次数上限）；⑤ 新增 K11 历史启动识别（只认真实 workflow 启动记录，未来新轮不能豁免，
 #         做不到可信历史就显式未实现）；⑥ 修 check_start 的 closed 未评估缺口与未登记来源放行缺口；
-#         ⑦ `authorization` 进 KEY_FIELDS：scope / series_id / reservation_id / decision_id 不能当措辞改动免重审。
+#         ⑦ `authorization` 与 `execution` 进入 KEY_FIELDS：授权范围、运行单元和指纹变化都需要重新审计。
 #         没有 verifier 时一切自述只标 declared（永不冒充 verified）。
 
 """通用研究治理层。
@@ -95,10 +95,11 @@ KEY_FIELDS = (
     "budget",
     "input_files",
     "authorization",
+    "execution",
 )
 
-#: 方案**必须**写出的顶层字段。`authorization` 只在写了的时候参与指纹，不强制存在。
-REQUIRED_KEY_FIELDS = tuple(key for key in KEY_FIELDS if key != "authorization")
+#: 方案必须写出的顶层字段；authorization 与 execution 可省略，写了就参与审计指纹。
+REQUIRED_KEY_FIELDS = tuple(key for key in KEY_FIELDS if key not in ('authorization', 'execution'))
 
 #: 只影响叙述的字段。改它们**不**触发重新审计。
 WORDING_FIELDS = ("title", "notes", "rationale", "summary", "open_questions", "why")
@@ -207,7 +208,7 @@ def _hard_path(path: str) -> bool:
     from .audit_support import hard_path
     if hard_path(path):
         return True
-    return str(path).split('.')[0] == 'authorization'
+    return str(path).split('.')[0] in ('authorization', 'execution')
 
 
 class GovernanceError(ValueError):
@@ -562,7 +563,7 @@ def plan_key_fields(plan: dict) -> dict:
         return {}
     fields: dict = {}
     for key in KEY_FIELDS:
-        if key == "authorization":
+        if key in ('authorization', 'execution'):
             continue
         value = plan.get(key)
         if key in ("previous_passes", "input_files") and isinstance(value, list):
@@ -575,7 +576,7 @@ def plan_key_fields(plan: dict) -> dict:
                 for kind in sorted(set(value) | set(CASE_SET_KINDS))
             }
         fields[key] = _normalize(value)
-    for key in ("execution_argv", "implementation", "authorization"):
+    for key in ("execution_argv", "implementation", "authorization", "execution"):
         if key in plan:
             fields[key] = _normalize(plan[key])
     return fields

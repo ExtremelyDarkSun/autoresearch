@@ -1,11 +1,17 @@
 # GENERATED-BY: ssh backend migration, 2026-11-09
-# LAST-EDIT: 2026-11-09 首版：远端 worker（工作单元布局、指纹核验、独立环境、进程组、硬超时、取消/取回）
+# LAST-EDIT: 2026-11-10 安全修复：取消意向 + 跨进程锁、进程组停止证明、unknown 不冒终态、
+#            run 记录与 request 的 hash/token/attempt 绑定；协议版本 2。
 # PURPOSE: 在远端机器上执行一次 RunSpec：建孤立 code/env/input/output、核代码/题单/环境指纹真实字节、
 #          起独立进程组、持久运行记录、硬超时、取消核 token+进程出生时间、按清单取回产物。
 # ORIGIN: none（新文件）。对接口径见 kernel/autoresearch/backends/ssh.py；协议来自 runtime/execution.py 的
 #         RunSpec / JobStatus / ResultBundle。
-# CUMULATIVE-DELTA: 首版。纯标准库；POSIX 用 setsid/killpg，Windows 用 CREATE_NEW_PROCESS_GROUP + taskkill，
-#         但真实远端按 POSIX 设计；取消必须核 token 与进程出生时间，防 PID 复用误杀。
+# CUMULATIVE-DELTA: 协议 v2。① start/supervise/cancel 用跨进程文件锁 + `cancel.json` 意向标记互斥，
+#          无 pid 的取消只记意向、⛔ 不报 cancelled，且阻止之后的晚启动；② 任何终态都必须先证明
+#          「原进程及其整个进程组已无活进程」（POSIX 读 /proc，退回 ps；Windows 不能枚举 ⇒ 只能 unknown）；
+#          ③ 硬超时 TERM→KILL 后组未停 ⇒ unknown（保留 pid/birth 供再次取消），⛔ 不报 failed；
+#          ④ query/cancel/collect 先把 state.json 与 request.json 的 request_hash/token/attempt_id/spec/
+#          output_dir/argv 对齐，再回报；⑤ 停止已核但运行记录写不进去时仍如实回报停止（报告不挡安全停）。
+#          ⛔ 不回滚 `_probe_python` 的 importlib.metadata 真实包指纹与独立环境 prefix 核验。
 """SSH 远端 worker（自包含，只用标准库）。
 
 这个文件会被 `ssh.py` 的 `provision()` **原样推到远端**，然后用
@@ -19,23 +25,37 @@
       env/              # environment_root：venv 或指向现成独立环境
       input/            # input_root：题单 manifest + 共享输入
       output/           # output_root：每次 attempt 一个子目录
-      .ssh_worker/<request_hash>/   # 运行记录（request.json / state.json / 日志）
+      .ssh_worker/<request_hash>/   # 运行记录（request.json / state.json / cancel.json / lock / 日志）
 
 运行记录 `state.json` 的字段（原子写）::
 
     request_hash, attempt_id, state, token, pid, birth, started_at, finished_at,
-    timeout_s, argv, spec, output_dir, exitcode, signal, timed_out, reason
+    timeout_s, argv, spec, environment, output_dir, exitcode, signal, timed_out,
+    reason, protocol, cancel_requested, stop_verified, stop_evidence
 
-安全边界
-========
+协议版本 2 的停止语义
+=====================
 
-* **进程组**：子进程用新 session（POSIX）或新进程组（Windows）启动；取消对整个组发
-  TERM → KILL，然后**重新核**「进程不在或出生时间已变」才写 `cancelled`；
-  出生时间不符 ⇒ 原进程已死（PID 被复用），只记 cancelled，**绝不向新进程发信号**。
-* **未知不冒终态**：没有终态记录、进程查不到、记录损坏、连接中断 ⇒ `unknown`。
+* **取消意向先落盘**：`cmd_cancel` 先写 `.ssh_worker/<hash>/cancel.json`（绑定
+  request_hash/token/attempt_id），再决定能不能停。**没有 pid 不等于已停**：只记意向并返回
+  `unknown`，由 `cmd_start`/`cmd_supervise` 在跨进程锁内看到意向、**拒绝晚启动**并记
+  `cancelled`（`stop_verified=true`，method=`never-launched`）。
+* **锁**：`cmd_start`/`cmd_supervise` 的「检查意向 → 写 STARTING → spawn」与 `cmd_cancel`
+  的「读记录 → 写意向 → 发信号」都在 `<state_dir>/lock` 的排他锁内，跨进程互斥。
+* **终态必须证明整组已停**：`completed`/`failed`/`cancelled` 都要求
+  `stop_verified=true`。POSIX 枚举 `/proc`（退回 `ps`）确认原进程组里没有活进程（僵尸不算活）；
+  主进程 exit 0 但同组还有活子进程 ⇒ `unknown`，保留 pid/birth，⛔ 不写 completed。
+* **组的边界**：证明覆盖的是这次 job 的进程组（pgid=leader pid）。子进程若自己 `setsid`
+  另起组/会话，worker 从组 id 上看不到它；这类逃逸不在本证明范围内（要更强保证需远端
+  cgroup/namespace 支撑）。
+* **PID 复用**：取消必须先核 token 与出生时间；出生时间未知或已变 ⇒ ⛔ 不发信号，只报 `unknown`
+  （组已空时 `pid-reused-original-gone` 才可记 cancelled）。
+* **超时失败不冒充停止**：TERM → KILL 之后组仍在（或本平台不能枚举）⇒ `unknown`，
+  `timed_out=true` 但不写 failed。
+* **未知不冒终态**：没有终态记录、进程查不到、记录损坏、连接中断、request/state 不一致 ⇒ `unknown`。
 * **指纹核真实字节**：代码按整棵树的 `{相对路径: sha256}` 重算；题单按
-  `input/manifest.json` 里逐题文件重算；环境按解释器字节 + 版本 + 包清单重算。
-  ⛔ 不认 `isolated_environment=True` 这种布尔声明。
+  `input/manifest.json` 里逐题文件重算；环境按解释器字节 + 版本 + **importlib.metadata 真实包清单**
+  + 独立 env prefix 重算。⛔ 不认 `isolated_environment=True` 这种布尔声明。
 * **硬超时在远端**：由 supervisor 进程计时并杀整个进程组，不是靠本地 SSH 超时。
 """
 
@@ -53,9 +73,12 @@ import signal
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
-WORKER_VERSION = 1
+WORKER_VERSION = 2
+PROTOCOL_FEATURES = ("request-binding", "cancel-intent-lock", "process-group-proof",
+                     "argv-digest")
 STATE_STARTING = "starting"
 STATE_RUNNING = "running"
 STATE_COMPLETED = "completed"
@@ -66,6 +89,9 @@ FINAL_STATES = frozenset({STATE_COMPLETED, STATE_FAILED, STATE_CANCELLED})
 KNOWN_STATES = frozenset({STATE_STARTING, STATE_RUNNING, *FINAL_STATES})
 GRACE_SECONDS = 3.0
 START_WAIT_SECONDS = 15.0
+LOCK_WAIT_SECONDS = 30.0
+LOCK_POLL_SECONDS = 0.02
+GROUP_POLL_SECONDS = 0.1
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
@@ -265,6 +291,164 @@ def _state_paths(state_dir) -> tuple[Path, Path, Path]:
 
 
 # ---------------------------------------------------------------------------
+# 跨进程互斥 / 取消意向 / 运行记录与请求的绑定
+# ---------------------------------------------------------------------------
+
+
+def _lock_handle(handle) -> None:
+    if os.name == "posix":
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    else:
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+
+
+def _unlock_handle(handle) -> None:
+    if os.name == "posix":
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    else:
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+@contextmanager
+def state_lock(state_dir, *, timeout: float = LOCK_WAIT_SECONDS):
+    """`<state_dir>/lock` 的跨进程排他锁。
+
+    「检查取消意向 → 写 STARTING → spawn supervisor」与「读记录 → 写意向 → 发信号」必须互斥，
+    否则取消会看到「还没有 pid」而放行一次晚启动。锁只保护状态转换，不保护耗时的指纹计算与等待。
+    """
+    path = Path(state_dir) / "lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+b")
+    locked = False
+    try:
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        deadline = time.time() + max(float(timeout), 0.0)
+        while True:
+            try:
+                _lock_handle(handle)
+                locked = True
+                break
+            except OSError:
+                if time.time() >= deadline:
+                    raise WorkerError("等待 state_dir 跨进程锁超时，状态不可判") from None
+                time.sleep(LOCK_POLL_SECONDS)
+        yield
+    finally:
+        if locked:
+            try:
+                _unlock_handle(handle)
+            except OSError:
+                pass
+        handle.close()
+
+
+def cancel_marker_path(state_dir) -> Path:
+    return Path(state_dir) / "cancel.json"
+
+
+def _marker_status(state_dir, state) -> str | None:
+    """`None`=无标记；`valid`=与运行记录对得上；`invalid`=有标记但内容对不上。"""
+    path = cancel_marker_path(state_dir)
+    if not path.is_file():
+        return None
+    try:
+        document = _read_json(path)
+    except (OSError, ValueError):
+        return "invalid"
+    if not isinstance(document, dict):
+        return "invalid"
+    state = state if isinstance(state, dict) else {}
+    if document.get("request_hash") != state.get("request_hash"):
+        return "invalid"
+    token = document.get("token")
+    if not isinstance(token, str) or not token or token != state.get("token"):
+        return "invalid"
+    expected_attempt = state.get("attempt_id")
+    if expected_attempt is not None and document.get("attempt_id") != expected_attempt:
+        return "invalid"
+    return "valid"
+
+
+def _launch_block(state_dir, state) -> dict | None:
+    """启动前的取消闸。返回 `None` 才允许 spawn。
+
+    先看已核过的 `cancel_requested`（取消方已核 token），再看落盘的意向标记。标记对不上时
+    **两个方向都不许动**：既不启动，也不宣称已停，只记 `unknown`。
+    """
+    state = state if isinstance(state, dict) else {}
+    if state.get("cancel_requested") is True:
+        return {"state": STATE_CANCELLED, "reason": "cancel-before-launch",
+                "stop_verified": True,
+                "stop_evidence": {"method": "never-launched", "cancel_requested": True}}
+    status = _marker_status(state_dir, state)
+    if status == "valid":
+        return {"state": STATE_CANCELLED, "reason": "cancel-before-launch",
+                "stop_verified": True,
+                "stop_evidence": {"method": "never-launched", "cancel_marker": True}}
+    if status == "invalid":
+        return {"state": STATE_UNKNOWN,
+                "reason": "取消意向标记与运行记录不一致：拒绝启动，也不宣称已停",
+                "stop_verified": False,
+                "stop_evidence": {"method": "cancel-marker-mismatch"}}
+    return None
+
+
+def _blocked_state(state: dict, block: dict, *, at: float | None = None) -> dict:
+    merged = dict(state)
+    merged.update(state=block["state"],
+                  finished_at=time.time() if at is None else at,
+                  stop_verified=block.get("stop_verified") is True,
+                  stop_evidence=block.get("stop_evidence"),
+                  cancel_requested=True,
+                  reason=block.get("reason"))
+    return merged
+
+
+def binding_reason(request, state) -> str | None:
+    """运行记录是否就是这次请求：hash / token / attempt / spec / output_dir / argv / timeout。
+
+    不通过 ⇒ 上层只能报 `unknown`（query）或拒绝（collect），⛔ 不把别的请求的状态当成这一次的。
+    """
+    if not isinstance(request, dict) or not isinstance(state, dict):
+        return "request 或 state 不是对象"
+    if state.get("request_hash") != request.get("request_hash"):
+        return "state 的 request_hash 与 request.json 不符"
+    token = request.get("token")
+    if token is not None and state.get("token") != token:
+        return "state 的 token 与 request.json 不符"
+    attempt = request.get("attempt_id")
+    if attempt is not None and state.get("attempt_id") != attempt:
+        return "state 的 attempt_id 与 request.json 不符"
+    if canonical(state.get("spec")) != canonical(request.get("spec")):
+        return "state 的 spec 与 request.json 不符"
+    if state.get("output_dir") != request.get("output_dir"):
+        return "state 的 output_dir 与 request.json 不符"
+    try:
+        if float(state.get("timeout_s")) != float(request.get("timeout_s")):
+            return "state 的 timeout_s 与 request.json 不符"
+    except (TypeError, ValueError):
+        return "state 的 timeout_s 不可比"
+    environment = state.get("environment")
+    if not isinstance(environment, dict) or not isinstance(environment.get("python"), str):
+        return "state 缺已解析的 environment（不能重算 argv）"
+    if state.get("argv") != launch_argv(request, environment):
+        return "state 的 argv 与 request.json 不符"
+    return None
+
+
+# ---------------------------------------------------------------------------
 # 指纹：代码 / 题单 / 环境
 # ---------------------------------------------------------------------------
 
@@ -305,9 +489,11 @@ def task_fingerprint(input_root) -> str:
 
 
 def _probe_python(python: str) -> dict:
-    script = ("import json,sys;print(json.dumps({'version':sys.version.split()[0],"
+    script = ("import json,sys;from importlib import metadata;"
+              "print(json.dumps({'version':sys.version.split()[0],"
               "'prefix':sys.prefix,'base_prefix':getattr(sys,'base_prefix',sys.prefix),"
-              "'executable':sys.executable}))")
+              "'executable':sys.executable,'packages':sorted("
+              "str(d.metadata.get('Name',''))+'=='+str(d.version) for d in metadata.distributions())}))")
     try:
         result = subprocess.run([python, "-I", "-c", script], stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -329,7 +515,8 @@ def environment_fingerprint(python: str, packages, pyvenv_cfg) -> str:
     document = {
         "python_sha256": sha_file(python),
         "version": probe["version"],
-        "packages": sorted(str(item) for item in (packages or [])),
+        "packages": probe['packages'],
+        "requested_packages": sorted(str(item) for item in (packages or [])),
         "pyvenv_sha256": sha_file(pyvenv_cfg) if pyvenv_cfg else None,
     }
     return sha_bytes(canonical(document).encode("utf-8"))
@@ -517,19 +704,132 @@ def _kill_group(pid: int) -> None:
                        stderr=subprocess.DEVNULL)
 
 
-def _wait_gone(pid: int, birth, seconds: float) -> bool:
-    deadline = time.time() + max(seconds, 0)
-    while time.time() < deadline:
-        if not process_alive(pid):
-            return True
-        current = process_birth(pid)
-        if birth is not None and current is not None and current != birth:
-            return True
-        time.sleep(0.1)
-    if not process_alive(pid):
-        return True
+def _proc_group_members(pgid: int):
+    """读 `/proc/<pid>/stat` 的 pgrp（第 5 字段）列出组内**活**进程；/proc 不可用 ⇒ None。"""
+    root = Path("/proc")
+    try:
+        entries = os.listdir(root)
+    except OSError:
+        return None
+    members = set()
+    for name in entries:
+        if not name.isdigit():
+            continue
+        try:
+            data = (root / name / "stat").read_bytes().decode("utf-8", "replace")
+            rest = data.rsplit(")", 1)[1].split()
+            state = rest[0]
+            group = int(rest[2])
+        except (OSError, IndexError, ValueError):
+            continue
+        if group == pgid and state != "Z":  # 僵尸已死，不算「还在跑」
+            members.add(int(name))
+    return members
+
+
+def _ps_group_members(pgid: int):
+    """`/proc` 不可用时退回 `ps -eo pid=,pgid=,stat=`；失败 ⇒ None。"""
+    try:
+        result = subprocess.run(["ps", "-eo", "pid=,pgid=,stat="],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, timeout=10, shell=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    members = set()
+    for line in result.stdout.decode("utf-8", "replace").splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        try:
+            member_pid, group = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        if group == pgid and not parts[2].startswith("Z"):
+            members.add(member_pid)
+    return members
+
+
+def group_members(pgid: int):
+    """原进程组里仍活着的 pid 集合。
+
+    `None` = **本平台不能枚举**（Windows 没有等价内核接口），上层只能报 `unknown`：
+    ⛔ 不许把「主进程不在」当成「整个组已停」。
+    """
+    if not isinstance(pgid, int) or pgid <= 0:
+        return set()
+    if os.name != "posix":
+        return None
+    members = _proc_group_members(pgid)
+    if members is not None:
+        return members
+    return _ps_group_members(pgid)
+
+
+def group_gone(pgid: int):
+    """True=组里已无活进程；False=还有；None=不能证明。"""
+    members = group_members(pgid)
+    if members is None:
+        return None
+    return not members
+
+
+def _wait_group_gone(pid: int, seconds: float):
+    deadline = time.time() + max(float(seconds), 0.0)
+    while True:
+        gone = group_gone(pid)
+        if gone is not False:
+            return gone
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return gone
+        time.sleep(min(GROUP_POLL_SECONDS, remaining))
+
+
+def _stop_group(pid: int, birth, grace: float | None = None) -> dict:
+    """对一个进程组做 TERM → KILL，并**重新核**整组是否已停。
+
+    返回 `{"verified", "method", "evidence"}`。`verified=False` 表示不能证明已停，
+    调用方必须报 `unknown`，⛔ 不许写 failed/cancelled 终态。
+    """
+    grace = GRACE_SECONDS if grace is None else float(grace)
+    evidence = {"pid": pid, "birth": birth, "signals": [], "method": None,
+                "members_after": None}
     current = process_birth(pid)
-    return birth is not None and current is not None and current != birth
+    if birth is not None and current is not None and current != birth:
+        # PID 被复用：⛔ 绝不向新进程/新组发信号；只有组已空才能说原 job 的历史已经结束。
+        gone = group_gone(pid)
+        evidence.update(method="identity-changed", identity_changed=True,
+                        members_after=(None if gone is None else (0 if gone else "unknown")))
+        return {"verified": gone is True, "method": "identity-changed", "evidence": evidence}
+    initial = group_gone(pid)
+    if initial is True:
+        evidence.update(method="already-gone", members_after=0)
+        return {"verified": True, "method": "already-gone", "evidence": evidence}
+    _term_group(pid)
+    evidence["signals"].append("TERM")
+    gone = _wait_group_gone(pid, grace)
+    if gone is True:
+        evidence.update(method="term", members_after=0)
+        return {"verified": True, "method": "term", "evidence": evidence}
+    _kill_group(pid)
+    evidence["signals"].append("KILL")
+    gone = _wait_group_gone(pid, grace)
+    evidence["members_after"] = None if gone is None else (0 if gone else "alive")
+    if gone is True:
+        evidence.update(method="kill", members_after=0)
+        return {"verified": True, "method": "kill", "evidence": evidence}
+    evidence["method"] = "kill-unverified"
+    return {"verified": False, "method": "kill-unverified", "evidence": evidence}
+
+
+def _wait_gone(pid: int, birth, seconds: float) -> bool:
+    """兼容旧名：只等待 + 复核，**不发信号**；只有整组都停了才返回 True（不能证明 ⇒ False）。"""
+    current = process_birth(pid)
+    if birth is not None and current is not None and current != birth:
+        return group_gone(pid) is True
+    return _wait_group_gone(pid, seconds) is True
 
 
 def _child_env(environment: dict) -> dict:
@@ -558,6 +858,13 @@ def launch_argv(request: dict, environment: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _request_reply(request: dict, state_dir: Path, *, reused: bool) -> dict:
+    return {"ok": True, "state_dir": str(state_dir),
+            "request_hash": request["request_hash"],
+            "token": request.get("token"), "attempt_id": request.get("attempt_id"),
+            "protocol": WORKER_VERSION, "reused": reused}
+
+
 def cmd_request_write(args) -> dict:
     state_dir = Path(args.state_dir)
     raw = sys.stdin.buffer.read()
@@ -578,15 +885,13 @@ def cmd_request_write(args) -> dict:
         previous = _read_json(request_path)
         if previous.get("request_hash") != request["request_hash"]:
             raise WorkerError("同一 request_key 已登记过不同的请求内容，拒绝重发", definitive=True)
-        return {"ok": True, "state_dir": str(state_dir), "request_hash": request["request_hash"],
-                "reused": True}
+        return _request_reply(request, state_dir, reused=True)
     _write_json(request_path, request)
-    return {"ok": True, "state_dir": str(state_dir), "request_hash": request["request_hash"],
-            "reused": False}
+    return _request_reply(request, state_dir, reused=False)
 
 
 def _load_request(state_dir: Path) -> dict:
-    request_path = state_dir / "request.json"
+    request_path = Path(state_dir) / "request.json"
     if not request_path.is_file():
         raise WorkerError("没有 request.json：这个请求从未登记", definitive=True)
     request = validate_request(_read_json(request_path))
@@ -595,25 +900,60 @@ def _load_request(state_dir: Path) -> dict:
     return request
 
 
+def _read_request_optional(state_dir):
+    """取消用：request.json 损坏/缺失都**不能挡安全停**；⛔ 也不能因此多信一分。"""
+    try:
+        return _load_request(state_dir)
+    except (WorkerError, OSError, ValueError):
+        return None
+
+
+def _read_state_optional(state_path: Path):
+    if not Path(state_path).is_file():
+        return None, None
+    try:
+        state = _read_json(state_path)
+    except (OSError, ValueError) as exc:
+        return None, f"state.json 不可读：{exc}"
+    if not isinstance(state, dict):
+        return None, "state.json 不是对象"
+    return state, None
+
+
+def _argv_sha256(value):
+    """实际启动 argv 的摘要（sha256(canonical(argv))）；⛔ 不回显完整 argv，避免参数里的 secret。"""
+    if not isinstance(value, list) or not value \
+            or not all(isinstance(item, str) for item in value):
+        return None
+    return sha_bytes(canonical(value).encode("utf-8"))
+
+
 def _summarise(state: dict) -> dict:
     keys = ("request_hash", "attempt_id", "state", "pid", "birth", "started_at",
             "finished_at", "exitcode", "signal", "timed_out", "token", "reason",
-            "output_dir", "timeout_s", "argv")
-    return {key: state.get(key) for key in keys}
+            "output_dir", "timeout_s", "protocol", "cancel_requested",
+            "stop_verified", "stop_evidence")
+    summary = {key: state.get(key) for key in keys}
+    summary["argv_sha256"] = _argv_sha256(state.get("argv"))
+    return summary
+
+
+def _popen(argv, **kwargs):
+    """唯一 spawn 入口：测试可以替换它，⛔ 真实路径里不许别处直接 Popen。"""
+    return subprocess.Popen(argv, **kwargs)
 
 
 def cmd_start(args) -> dict:
     state_dir = Path(args.state_dir)
     request = _load_request(state_dir)
     state_path = state_dir / "state.json"
-    if state_path.is_file():
-        state = _read_json(state_path)
-        if state.get("request_hash") != request["request_hash"]:
-            raise WorkerError("state.json 与 request.json 不是同一次请求", definitive=True)
-        if request.get("token") and state.get("token") != request["token"]:
-            raise WorkerError("state.json 的 token 与本次请求不符", definitive=True)
-        if state.get("state") in KNOWN_STATES:
-            return {"ok": True, "state": _summarise(state), "reused": True}
+    existing, state_error = _read_state_optional(state_path)
+    if existing is not None:
+        reason = binding_reason(request, existing)
+        if reason:
+            raise WorkerError(f"state.json 与 request.json 不一致：{reason}", definitive=True)
+        if existing.get("state") in KNOWN_STATES or existing.get("state") == STATE_UNKNOWN:
+            return {"ok": True, "state": _summarise(existing), "reused": True}
     spec = request["spec"]
     verify_shared_inputs(spec)
     actual_code = code_fingerprint(spec["code_root"])
@@ -646,47 +986,90 @@ def cmd_start(args) -> dict:
         "signal": None,
         "timed_out": False,
         "reason": None,
+        "protocol": WORKER_VERSION,
+        "cancel_requested": False,
+        "stop_verified": False,
+        "stop_evidence": None,
     }
-    _write_json(state_path, state)
-    supervisor_log = state_dir / "supervisor.log"
-    with open(supervisor_log, "ab") as log:
-        popen_kwargs = {"stdin": subprocess.DEVNULL, "stdout": log, "stderr": log,
-                        "close_fds": True, "shell": False}
-        if os.name == "posix":
-            popen_kwargs["start_new_session"] = True
-        else:
-            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
-                          "supervise", "--state-dir", str(state_dir)], **popen_kwargs)
+    with state_lock(state_dir):
+        current, _ = _read_state_optional(state_path)
+        if current is not None:
+            reason = binding_reason(request, current)
+            if reason:
+                raise WorkerError(f"state.json 与 request.json 不一致：{reason}", definitive=True)
+            if current.get("state") in KNOWN_STATES or current.get("state") == STATE_UNKNOWN:
+                return {"ok": True, "state": _summarise(current), "reused": True}
+        block = _launch_block(state_dir, state if current is None else current)
+        if block is not None:
+            blocked = _blocked_state(state, block)
+            _write_json(state_path, blocked)
+            return {"ok": True, "state": _summarise(blocked), "reused": False,
+                    "cancelled": blocked.get("state") == STATE_CANCELLED,
+                    "reason": blocked.get("reason")}
+        _write_json(state_path, state)
+        supervisor_log = state_dir / "supervisor.log"
+        with open(supervisor_log, "ab") as log:
+            popen_kwargs = {"stdin": subprocess.DEVNULL, "stdout": log, "stderr": log,
+                            "close_fds": True, "shell": False}
+            if os.name == "posix":
+                popen_kwargs["start_new_session"] = True
+            else:
+                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            _popen([sys.executable, str(Path(__file__).resolve()),
+                    "supervise", "--state-dir", str(state_dir)], **popen_kwargs)
     deadline = time.time() + START_WAIT_SECONDS
     while time.time() < deadline:
-        current = _read_json(state_path) if state_path.is_file() else state
+        current, error = _read_state_optional(state_path)
+        if current is None:
+            if error:
+                break
+            time.sleep(0.1)
+            continue
         if current.get("state") in KNOWN_STATES and current.get("state") != STATE_STARTING:
             return {"ok": True, "state": _summarise(current), "reused": False}
         if current.get("state") == STATE_STARTING and current.get("pid"):
             return {"ok": True, "state": _summarise(current), "reused": False}
         time.sleep(0.1)
-    return {"ok": True, "state": _summarise(_read_json(state_path)), "reused": False,
+    current, error = _read_state_optional(state_path)
+    if current is None:
+        return {"ok": True, "state": {"state": STATE_UNKNOWN,
+                                      "reason": error or "启动后 state.json 不可读"},
+                "reused": False}
+    return {"ok": True, "state": _summarise(current), "reused": False,
             "warning": "supervisor 未在等待窗口内报告 pid；按不可判处理，后续用 query 复核"}
+
+
+def _unknown_view(state, reason: str) -> dict:
+    view = _summarise(state) if isinstance(state, dict) else {}
+    view["state"] = STATE_UNKNOWN
+    view["reason"] = reason
+    return view
 
 
 def cmd_query(args) -> dict:
     state_dir = Path(args.state_dir)
     state_path = state_dir / "state.json"
-    if not state_path.is_file():
-        return {"ok": True, "state": {"state": STATE_UNKNOWN, "reason": "还没有 state.json"}}
-    try:
-        state = _read_json(state_path)
-    except (OSError, ValueError) as exc:
+    state, state_error = _read_state_optional(state_path)
+    if state is None:
         return {"ok": True, "state": {"state": STATE_UNKNOWN,
-                                      "reason": f"state.json 不可读：{exc}"}}
+                                      "reason": state_error or "还没有 state.json"}}
+    try:
+        request = _load_request(state_dir)
+    except (WorkerError, OSError, ValueError) as exc:
+        return {"ok": True, "state": _unknown_view(state, f"request.json 不可核：{exc}")}
+    reason = binding_reason(request, state)
+    if reason:
+        return {"ok": True, "state": _unknown_view(state, f"运行记录与请求不一致：{reason}")}
     current = state.get("state")
     if current in FINAL_STATES:
+        if state.get("stop_verified") is not True:
+            return {"ok": True,
+                    "state": _unknown_view(state, "终态记录缺少「原进程及其进程组已停」的证据")}
         return {"ok": True, "state": _summarise(state)}
     pid, birth = state.get("pid"), state.get("birth")
     if not pid:
         return {"ok": True, "state": _summarise(state),
-                "reason": "还没有 pid（启动中或 supervisor 未登记）"}
+                "reason": "还没有 pid（启动中或取消已在启动前登记）⇒ 不能宣称已停"}
     if not process_alive(pid):
         return {"ok": True, "state": _summarise(state),
                 "reason": "进程已不在，但没有终态记录 ⇒ 不可判（可能 supervisor 被杀）"}
@@ -698,59 +1081,213 @@ def cmd_query(args) -> dict:
     return {"ok": True, "state": _summarise(state)}
 
 
+def _already_verified_terminal(state_path: Path):
+    """并发下 supervisor 可能先写了已核终态：此时取消不该把它改写成 cancelled。"""
+    current, _ = _read_state_optional(state_path)
+    if isinstance(current, dict) and current.get("state") in FINAL_STATES \
+            and current.get("stop_verified") is True:
+        return current
+    return None
+
+
+def _cancel_terminal_locked(state_path: Path, state: dict, *, reason: str, method: str,
+                            evidence: dict | None = None) -> dict:
+    """停止已核验后落终态。**报告写不进去不改变已发生的停止**：照样如实回报。"""
+    existing = _already_verified_terminal(state_path)
+    if existing is not None:
+        return {"ok": True, "state": _summarise(existing), "reason": "已经结束，无需再取消"}
+    stop_evidence = dict(evidence or {})
+    stop_evidence.setdefault("method", method)
+    state.update(state=STATE_CANCELLED, finished_at=time.time(), reason=reason,
+                 stop_verified=True, cancel_requested=True,
+                 stop_evidence=stop_evidence)
+    record_error = None
+    try:
+        _write_json(state_path, state)
+    except OSError as exc:
+        record_error = f"{type(exc).__name__}: {exc}"
+    result = {"ok": True, "state": _summarise(state)}
+    if record_error:
+        result.update(recorded=False,
+                      warning=f"停止已核验，但运行记录写入失败（报告不改变已发生的停止）：{record_error}")
+    return result
+
+
+def _cancel_unknown_locked(state_path: Path, state: dict | None, reason: str, *,
+                           binding: dict | None = None,
+                           stop_evidence: dict | None = None) -> dict:
+    """没能证明已停：只记 unknown + 取消意向，⛔ 不写 cancelled/failed，保留 pid/birth。
+
+    已有终态记录时**不覆盖**它（哪怕缺停止证据）：保留原记录，只回报 unknown。
+    """
+    current, _ = _read_state_optional(state_path)
+    if isinstance(current, dict) and current.get("state") in FINAL_STATES:
+        if current.get("stop_verified") is True:
+            return {"ok": True, "state": _summarise(current), "reason": "已经结束，无需再取消"}
+        view = _summarise(current)
+        view.update(state=STATE_UNKNOWN, reason=reason, stop_verified=False)
+        return {"ok": False, "state": view}
+    if isinstance(state, dict):
+        state.update(state=STATE_UNKNOWN, finished_at=time.time(), reason=reason,
+                     stop_verified=False, cancel_requested=True)
+        if stop_evidence is not None:
+            state["stop_evidence"] = stop_evidence
+        record_error = None
+        try:
+            _write_json(state_path, state)
+        except OSError as exc:
+            record_error = f"{type(exc).__name__}: {exc}"
+        view = _summarise(state)
+        view.update(state=STATE_UNKNOWN, reason=reason, stop_verified=False,
+                    cancel_requested=True)
+        if stop_evidence is not None:
+            view["stop_evidence"] = stop_evidence
+        result = {"ok": False, "state": view}
+        if record_error:
+            result["warning"] = f"运行记录写入失败：{record_error}"
+        return result
+    view = {"state": STATE_UNKNOWN, "reason": reason, "cancel_requested": True,
+            "stop_verified": False}
+    view.update(binding or {})
+    return {"ok": False, "state": view}
+
+
+def _cancel_refused(state, reason: str) -> dict:
+    """token 核不过/记录对不上：⛔ 不写任何状态、不落意向，避免用错 token 改写运行记录。"""
+    view = _summarise(state) if isinstance(state, dict) else {}
+    view.update(state=STATE_UNKNOWN, reason=reason, stop_verified=False)
+    if isinstance(state, dict) and "cancel_requested" in state:
+        view["cancel_requested"] = state.get("cancel_requested")
+    return {"ok": False, "state": view}
+
+
 def cmd_cancel(args) -> dict:
     state_dir = Path(args.state_dir)
     state_path = state_dir / "state.json"
-    if not state_path.is_file():
-        return {"ok": False, "state": {"state": STATE_UNKNOWN, "reason": "没有运行记录，不能确认取消"}}
-    state = _read_json(state_path)
-    if args.token != state.get("token"):
+    request_path = state_dir / "request.json"
+    if not state_dir.is_dir() or (not state_path.is_file() and not request_path.is_file()):
         return {"ok": False, "state": {"state": STATE_UNKNOWN,
-                                       "reason": "取消 token 与运行记录不符"}}
-    if state.get("state") in FINAL_STATES:
-        return {"ok": True, "state": _summarise(state), "reason": "已经结束，无需再取消"}
-    pid, birth = state.get("pid"), state.get("birth")
-    if not pid:
-        # 还没起进程：直接记 cancelled（没有可杀的完整进程组）。
-        state.update(state=STATE_CANCELLED, finished_at=time.time(),
-                     reason="cancel-before-pid")
-        _write_json(state_path, state)
-        return {"ok": True, "state": _summarise(state)}
-    if not process_alive(pid):
-        state.update(state=STATE_CANCELLED, finished_at=time.time(),
-                     reason="process-already-gone")
-        _write_json(state_path, state)
-        return {"ok": True, "state": _summarise(state)}
-    actual = process_birth(pid)
-    if birth is not None and actual is not None and actual != birth:
-        # PID 被复用：原进程已经死了，⛔ 绝不能向新进程发信号。
-        state.update(state=STATE_CANCELLED, finished_at=time.time(),
-                     reason="pid-reused-original-gone")
-        _write_json(state_path, state)
-        return {"ok": True, "state": _summarise(state)}
-    _term_group(pid)
-    if _wait_gone(pid, birth, GRACE_SECONDS):
-        state.update(state=STATE_CANCELLED, finished_at=time.time(), reason="term")
-        _write_json(state_path, state)
-        return {"ok": True, "state": _summarise(state)}
-    _kill_group(pid)
-    if _wait_gone(pid, birth, GRACE_SECONDS):
-        state.update(state=STATE_CANCELLED, finished_at=time.time(), reason="kill")
-        _write_json(state_path, state)
-        return {"ok": True, "state": _summarise(state)}
-    return {"ok": False, "state": {"state": STATE_UNKNOWN,
-                                   "reason": "TERM→KILL 后进程/进程组仍在，不能宣称已取消"}}
+                                       "reason": "没有运行记录，不能确认取消"}}
+    with state_lock(state_dir):
+        request = _read_request_optional(state_dir)
+        state, state_error = _read_state_optional(state_path)
+        expected = None
+        for source in (state, request):
+            if isinstance(source, dict) and isinstance(source.get("token"), str) \
+                    and source["token"]:
+                expected = source["token"]
+                break
+        if expected is None:
+            return _cancel_refused(state, "运行记录里没有可核的 token，拒绝猜取消")
+        if not isinstance(args.token, str) or args.token != expected:
+            return _cancel_refused(state, "取消 token 与运行记录不符")
+        if request is not None and state is not None:
+            reason = binding_reason(request, state)
+            if reason:
+                return _cancel_refused(state, f"运行记录与请求不一致：{reason}")
+        request_hash = (state or {}).get("request_hash")
+        if request_hash is None and request is not None:
+            request_hash = request.get("request_hash")
+        attempt_id = (state or {}).get("attempt_id")
+        if attempt_id is None and request is not None:
+            attempt_id = request.get("attempt_id")
+        binding = {"request_hash": request_hash, "token": expected,
+                   "attempt_id": attempt_id}
+        marker_error = None
+        try:
+            _write_json(cancel_marker_path(state_dir),
+                        {"kind": "cancel-requested", "request_hash": request_hash,
+                         "token": expected, "attempt_id": attempt_id,
+                         "at": time.time(), "protocol": WORKER_VERSION})
+        except OSError as exc:
+            marker_error = f"{type(exc).__name__}: {exc}"
+        if state is None:
+            if state_error:
+                return _cancel_unknown_locked(
+                    state_path, None,
+                    state_error + "：不能核对 pid，取消未确认",
+                    binding=binding)
+            return _cancel_unknown_locked(
+                state_path, None,
+                "取消意向已登记，但还没有运行记录可核 ⇒ 不宣称已停止",
+                binding=binding)
+        if state.get("state") in FINAL_STATES:
+            if state.get("stop_verified") is True:
+                return {"ok": True, "state": _summarise(state),
+                        "reason": "已经结束，无需再取消"}
+            return _cancel_unknown_locked(state_path, state,
+                                          "已有终态记录但缺少「原进程及其进程组已停」的证据")
+        state["cancel_requested"] = True
+        record_error = None
+        try:
+            _write_json(state_path, state)
+        except OSError as exc:
+            record_error = f"{type(exc).__name__}: {exc}"
+        pid, birth = state.get("pid"), state.get("birth")
+        if not pid:
+            result = _cancel_unknown_locked(state_path, state,
+                                            "cancel-requested-before-pid")
+            result["cancel_requested"] = True
+            if marker_error or record_error:
+                result["warning"] = (f"取消意向/运行记录写入失败："
+                                     f"{marker_error or record_error}")
+            return result
+        if birth is None:
+            # 没有出生时间就无法排除 PID 复用：⛔ 宁可 unknown 也不向可能不是原 job 的组发信号。
+            return _cancel_unknown_locked(
+                state_path, state,
+                "运行记录缺进程出生时间，不能安全排除 PID 复用：拒绝发信号",
+                stop_evidence={"pid": pid, "birth": None, "method": "identity-unknown"})
+        actual = process_birth(pid)
+        if birth is not None and actual is not None and actual != birth:
+            # PID 被复用：⛔ 绝不向新进程发信号；只有同组已空才敢说原 job 已经停了。
+            # 正在执行取消的这个进程不可能是「已死的原 leader 的子进程」，可以排除。
+            members = group_members(pid)
+            if members is not None:
+                members = members - {os.getpid()}
+                gone = not members
+            else:
+                gone = None
+            if gone is True:
+                return _cancel_terminal_locked(
+                    state_path, state, reason="pid-reused-original-gone",
+                    method="pid-reused-group-empty",
+                    evidence={"pid": pid, "birth": birth, "actual_birth": actual,
+                              "members_after": 0})
+            return _cancel_unknown_locked(
+                state_path, state,
+                "pid 已复用、原进程已不在，但同组仍有活进程或无法证明 ⇒ 不冒充已停",
+                stop_evidence={"pid": pid, "birth": birth, "actual_birth": actual,
+                               "members_after": None if gone is None else "alive"})
+        outcome = _stop_group(pid, birth)
+        if outcome["verified"]:
+            return _cancel_terminal_locked(state_path, state,
+                                           reason=outcome["method"],
+                                           method=outcome["method"],
+                                           evidence=outcome["evidence"])
+        return _cancel_unknown_locked(
+            state_path, state,
+            "TERM→KILL 后原进程组仍在或本平台不能证明已停，不能宣称已取消",
+            stop_evidence=outcome["evidence"])
 
 
 def cmd_collect(args) -> dict:
     state_dir = Path(args.state_dir)
     state_path = state_dir / "state.json"
-    if not state_path.is_file():
-        raise WorkerError("没有运行记录，不能取回", definitive=True)
-    state = _read_json(state_path)
+    state, state_error = _read_state_optional(state_path)
+    if state is None:
+        raise WorkerError(f"没有可读的运行记录，不能取回：{state_error or '缺 state.json'}",
+                          definitive=True)
+    request = _load_request(state_dir)
+    reason = binding_reason(request, state)
+    if reason:
+        raise WorkerError(f"运行记录与请求不一致：{reason}", definitive=True)
     if state.get("state") != STATE_COMPLETED:
         return {"ok": False, "state": state.get("state"),
                 "reason": "原 job 不是 completed；不能取回（缺件只能是 partial，不是完成）"}
+    if state.get("stop_verified") is not True:
+        raise WorkerError("completed 记录缺少「原进程及其进程组已停」的证据，拒绝取回",
+                          definitive=True)
     spec = state["spec"]
     output_dir = Path(state["output_dir"])
     artifacts, missing = [], []
@@ -768,86 +1305,173 @@ def cmd_collect(args) -> dict:
             continue
         data = target.read_bytes()
         artifacts.append({"path": rel, "sha256": sha_bytes(data), "size": len(data)})
-    return {"ok": True, "state": STATE_COMPLETED, "output_dir": state["output_dir"],
+    return {"ok": True, "state": STATE_COMPLETED,
+            "request_hash": state.get("request_hash"),
+            "token": state.get("token"),
+            "attempt_id": state.get("attempt_id"),
+            "stop_verified": True,
+            "output_dir": state["output_dir"],
             "artifacts": artifacts, "missing": missing}
 
 
-def _finalise(state_path: Path, updates: dict) -> None:
+def _apply_final(state_path: Path, updates: dict) -> bool:
+    """终态写入的唯一入口。取消已登记 / 已是终态 ⇒ 不覆盖。
+
+    不变量：`completed`/`failed`/`cancelled` 必须带 `stop_verified=true`；否则降级成 `unknown`
+    （⛔ 不许让没有停止证明的结果冒充终态）。返回是否真的写进去了。
+    """
     try:
         state = _read_json(state_path)
     except (OSError, ValueError):
-        return
-    if state.get("state") == STATE_CANCELLED:
-        return  # 取消已登记：⛔ 不覆盖成别的终态
+        return False
+    if not isinstance(state, dict):
+        return False
+    if state.get("state") in FINAL_STATES:
+        return False
+    updates = dict(updates)
+    if updates.get("state") in FINAL_STATES and updates.get("stop_verified") is not True:
+        updates.update(state=STATE_UNKNOWN, stop_verified=False)
     state.update(updates)
-    _write_json(state_path, state)
+    try:
+        _write_json(state_path, state)
+    except OSError:
+        return False
+    return True
+
+
+def _finalise(state_path: Path, updates: dict, *, locked: bool = False) -> bool:
+    if locked:
+        return _apply_final(state_path, updates)
+    try:
+        with state_lock(Path(state_path).parent):
+            return _apply_final(state_path, updates)
+    except WorkerError:
+        # 报告层拿不到锁不能改变已发生的停止：退回直接写（仍受终态不覆盖保护）。
+        return _apply_final(state_path, updates)
 
 
 def cmd_supervise(args) -> dict:
     state_dir = Path(args.state_dir)
     state_path = state_dir / "state.json"
-    state = _read_json(state_path)
     request = _load_request(state_dir)
+    state, state_error = _read_state_optional(state_path)
+    if state is None:
+        return {"ok": False, "reason": f"没有可读的运行记录：{state_error or '缺 state.json'}"}
+    reason = binding_reason(request, state)
+    if reason:
+        return {"ok": False, "reason": f"运行记录与请求不一致：{reason}"}
+    block = _launch_block(state_dir, state)
+    if block is not None:
+        blocked = _blocked_state(state, block)
+        recorded = _finalise(state_path, blocked)
+        return {"ok": True, "cancelled": blocked.get("state") == STATE_CANCELLED,
+                "recorded": recorded, "reason": blocked.get("reason")}
     spec = state["spec"]
     output_dir = Path(state["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     stdout = open(state_dir / "stdout.log", "ab")
     stderr = open(state_dir / "stderr.log", "ab")
-    env = _child_env(state["environment"])
-    argv = state["argv"]
-    popen_kwargs = {"cwd": spec["code_root"], "env": env, "stdin": subprocess.DEVNULL,
-                    "stdout": stdout, "stderr": stderr, "shell": False, "close_fds": True}
-    if os.name == "posix":
-        popen_kwargs["start_new_session"] = True
-    else:
-        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     try:
-        process = subprocess.Popen(argv, **popen_kwargs)
-    except (OSError, ValueError) as exc:
-        _finalise(state_path, {"state": STATE_FAILED, "finished_at": time.time(),
-                               "reason": f"launch_error: {exc}"})
-        return {"ok": False, "reason": "launch error"}
-    state.update(pid=process.pid, birth=process_birth(process.pid),
-                 state=STATE_RUNNING, started_at=time.time(),
-                 argv=argv, environment=state["environment"])
-    _write_json(state_path, state)
+        env = _child_env(state["environment"])
+        argv = state["argv"]
+        popen_kwargs = {"cwd": spec["code_root"], "env": env, "stdin": subprocess.DEVNULL,
+                        "stdout": stdout, "stderr": stderr, "shell": False, "close_fds": True}
+        if os.name == "posix":
+            popen_kwargs["start_new_session"] = True
+        else:
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        with state_lock(state_dir):
+            state, state_error = _read_state_optional(state_path)
+            if state is None:
+                return {"ok": False,
+                        "reason": f"拉起前运行记录不可读：{state_error or '缺 state.json'}"}
+            reason = binding_reason(request, state)
+            if reason:
+                return {"ok": False, "reason": f"运行记录与请求不一致：{reason}"}
+            if state.get("state") == STATE_RUNNING and state.get("pid"):
+                return {"ok": True, "skipped": True, "state": _summarise(state)}
+            if state.get("state") in FINAL_STATES:
+                return {"ok": True, "skipped": True, "state": _summarise(state)}
+            block = _launch_block(state_dir, state)
+            if block is not None:
+                blocked = _blocked_state(state, block)
+                _apply_final(state_path, blocked)
+                return {"ok": True, "cancelled": blocked.get("state") == STATE_CANCELLED,
+                        "recorded": True, "reason": blocked.get("reason")}
+            try:
+                process = _popen(argv, **popen_kwargs)
+            except (OSError, ValueError) as exc:
+                _apply_final(state_path,
+                             {"state": STATE_FAILED, "finished_at": time.time(),
+                              "reason": f"launch_error: {exc}", "stop_verified": True,
+                              "stop_evidence": {"method": "never-launched",
+                                                "detail": str(exc)}})
+                return {"ok": False, "reason": f"launch error: {exc}"}
+            state.update(pid=process.pid, birth=process_birth(process.pid),
+                         state=STATE_RUNNING, started_at=time.time(), argv=argv)
+            _write_json(state_path, state)
+    finally:
+        stdout.close()
+        stderr.close()
     timeout = float(state["timeout_s"])
     try:
         returncode = process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        _term_group(process.pid)
-        if not _wait_gone(process.pid, state.get("birth"), GRACE_SECONDS):
-            _kill_group(process.pid)
-            _wait_gone(process.pid, state.get("birth"), GRACE_SECONDS)
+        outcome = _stop_group(process.pid, state.get("birth"))
         try:
             returncode = process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             returncode = None
-        _finalise(state_path, {"state": STATE_FAILED, "finished_at": time.time(),
-                               "exitcode": returncode if returncode is not None and returncode >= 0 else None,
-                               "signal": "SIGTERM", "timed_out": True,
-                               "reason": "hard-timeout"})
-        return {"ok": True, "timed_out": True}
+        updates = {"finished_at": time.time(), "timed_out": True, "exitcode": None,
+                   "signal": None, "stop_evidence": outcome["evidence"]}
+        if outcome["verified"]:
+            updates.update(state=STATE_FAILED, stop_verified=True, reason="hard-timeout",
+                           signal=(None if returncode is None or returncode >= 0
+                                   else -returncode))
+        else:
+            # 超时确实发生了，但「远端已停」没被证明：⛔ 不许冒充 failed 终态。
+            updates.update(state=STATE_UNKNOWN, stop_verified=False,
+                           reason="hard-timeout-group-not-proven")
+        recorded = _finalise(state_path, updates)
+        return {"ok": outcome["verified"], "timed_out": True,
+                "stop_verified": outcome["verified"], "recorded": recorded}
     if returncode is None:
-        _finalise(state_path, {"state": STATE_UNKNOWN, "finished_at": time.time(),
-                               "reason": "no-returncode"})
-        return {"ok": False, "reason": "no returncode"}
+        recorded = _finalise(state_path, {"state": STATE_UNKNOWN, "finished_at": time.time(),
+                                          "stop_verified": False, "reason": "no-returncode"})
+        return {"ok": False, "reason": "no returncode", "recorded": recorded}
+    gone = group_gone(process.pid)
+    if gone is not True:
+        recorded = _finalise(state_path,
+                             {"state": STATE_UNKNOWN, "finished_at": time.time(),
+                              "exitcode": returncode if returncode >= 0 else None,
+                              "signal": None if returncode >= 0 else -returncode,
+                              "stop_verified": False,
+                              "stop_evidence": {"method": "wait-group-check",
+                                                "members_after": (None if gone is None
+                                                                  else "alive")},
+                              "reason": "main-exit-group-not-verified"})
+        return {"ok": False, "reason": "主进程已退出但同组仍有活进程/不能证明已停",
+                "stop_verified": False, "recorded": recorded}
+    common = {"finished_at": time.time(), "stop_verified": True,
+              "stop_evidence": {"method": "wait-group-empty", "pid": process.pid,
+                                "birth": state.get("birth"), "members_after": 0}}
     if returncode < 0:
-        _finalise(state_path, {"state": STATE_FAILED, "finished_at": time.time(),
-                               "exitcode": None, "signal": -returncode,
-                               "reason": f"signal {-returncode}"})
+        recorded = _finalise(state_path, {**common, "state": STATE_FAILED, "exitcode": None,
+                                          "signal": -returncode,
+                                          "reason": f"signal {-returncode}"})
     elif returncode == 0:
-        _finalise(state_path, {"state": STATE_COMPLETED, "finished_at": time.time(),
-                               "exitcode": 0, "signal": None, "reason": None})
+        recorded = _finalise(state_path, {**common, "state": STATE_COMPLETED, "exitcode": 0,
+                                          "signal": None, "reason": None})
     else:
-        _finalise(state_path, {"state": STATE_FAILED, "finished_at": time.time(),
-                               "exitcode": returncode, "signal": None,
-                               "reason": f"exit {returncode}"})
-    return {"ok": True}
+        recorded = _finalise(state_path, {**common, "state": STATE_FAILED,
+                                          "exitcode": returncode, "signal": None,
+                                          "reason": f"exit {returncode}"})
+    return {"ok": True, "recorded": recorded}
 
 
 def cmd_version(args) -> dict:
-    return {"ok": True, "version": WORKER_VERSION}
+    return {"ok": True, "version": WORKER_VERSION, "protocol": WORKER_VERSION,
+            "features": list(PROTOCOL_FEATURES)}
 
 
 def _parser() -> argparse.ArgumentParser:

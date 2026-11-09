@@ -3,7 +3,7 @@ GENERATED-BY: portable framework synchronization
 LAST-EDIT: portable framework synchronization, 2026-11-09
 PURPOSE: scribe 正文供料与交付指令。
 ORIGIN: SCRIBE_STATUS_PROMPT generic mechanisms
-CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
+CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则；现状页总计最多三轮，含当前轮。
 -->
 
 ---

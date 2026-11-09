@@ -1,8 +1,11 @@
 # GENERATED-BY: portable extraction, 2026-11-09 +08:00
-# LAST-EDIT: 2026-11-09 +08:00
+# LAST-EDIT: 2026-11-09 17:10（initialize=False / readonly：跳过 DDL；只读 Inbox 可省 Accounts）
 # PURPOSE: Reusable research mechanism or offline validation.
 # ORIGIN: research-runtime/inbox.py
 # CUMULATIVE-DELTA: Instance history removed; state roots and target contracts separated.
+#   本轮补：`Inbox(store, accounts=None, delivery, initialize=False/readonly=True)` 跳过建表；
+#   只读查询（get / pending_events / pending_questions / question_overview）不需要 Accounts；
+#   写入口（receive / classify / apply / drain / claim_question / answer）一律拒绝。
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -12,8 +15,10 @@ import math
 import time
 try:
     from kernel.autoresearch.runtime.store import canonical_json, require_text
+    from kernel.autoresearch.runtime.store import is_readonly_store
 except ImportError:
     from kernel.autoresearch.runtime.store import canonical_json, require_text
+    from kernel.autoresearch.runtime.store import is_readonly_store
 
 class InboxError(ValueError):
     pass
@@ -26,15 +31,41 @@ class QuestionLeaseLost(InboxError):
 
 class Inbox:
 
-    def __init__(self, store, accounts, delivery, authenticate=None, *, clock=time.time, authorize_command=None):
-        self.store, self.accounts, self.delivery = (store, accounts, delivery)
+    def __init__(self, store, accounts=None, delivery=None, authenticate=None, *, clock=time.time,
+                 authorize_command=None, initialize=None, readonly=None):
+        """入向事件台账。`initialize` / `readonly` 决定构造时要不要建表（默认照旧建）。
+
+        * `readonly=None`（默认）⇒ 按 `store` 自己声明的 `readonly` 判；
+        * `initialize=False` ⇒ **跳过 DDL**（表已由别的进程建好）；
+        * `readonly=True` ⇒ 跳过 DDL，所有写方法拒绝；**`Accounts` 可以不给**
+          （只读查询 `get` / `pending_events` / `pending_questions` / `question_overview` 不需要它）。
+
+        ⛔ 只读构造不建库、不建表、不迁移 schema；读到缺表时报错，不把未知表读成空。
+        """
+        self.store = store
+        self.accounts, self.delivery = (accounts, delivery)
         self.authenticate, self.clock = (authenticate, clock)
         self.authorize_command = authorize_command
-        if str(accounts.store.db_path) != str(store.db_path) or str(delivery.store.db_path) != str(store.db_path):
-            raise InboxError('Inbox、Accounts和Delivery必须共用数据库')
-        with store.transaction() as conn:
-            conn.execute('CREATE TABLE IF NOT EXISTS inbox_events(\n                source TEXT NOT NULL,event_id TEXT NOT NULL,exp_id TEXT NOT NULL REFERENCES experiments(id),\n                payload_json TEXT NOT NULL,payload_hash TEXT NOT NULL,status TEXT NOT NULL,\n                category TEXT,principal TEXT,consumed INTEGER NOT NULL DEFAULT 0,\n                result_json TEXT,error TEXT,event_time REAL,received_at REAL NOT NULL,classified_at REAL,applied_at REAL,\n                PRIMARY KEY(source,event_id))')
-            conn.execute('CREATE TABLE IF NOT EXISTS inbox_reply_tasks(\n                id INTEGER PRIMARY KEY,source TEXT NOT NULL,event_id TEXT NOT NULL,\n                exp_id TEXT NOT NULL REFERENCES experiments(id),recipient TEXT NOT NULL,\n                status TEXT NOT NULL,owner TEXT,fence INTEGER NOT NULL DEFAULT 0,lease_until REAL,\n                answer TEXT,delivery_id INTEGER REFERENCES delivery(id),\n                UNIQUE(source,event_id),FOREIGN KEY(source,event_id) REFERENCES inbox_events(source,event_id))')
+        self.readonly = is_readonly_store(store) if readonly is None else bool(readonly)
+        if initialize is None:
+            initialize = not self.readonly
+        if initialize and self.readonly:
+            raise InboxError('只读 Inbox 不能初始化建表（initialize 与 readonly 冲突）')
+        self.initialize = bool(initialize)
+        for label, owner in (('Accounts', accounts), ('Delivery', delivery)):
+            if owner is not None and str(owner.store.db_path) != str(store.db_path):
+                raise InboxError(f'Inbox、{label}必须共用数据库')
+        if not self.readonly and (accounts is None or delivery is None):
+            raise InboxError('可写 Inbox 需要 Accounts 与 Delivery；只读查询请用 readonly=True（可省 Accounts）')
+        if self.initialize:
+            with store.transaction() as conn:
+                conn.execute('CREATE TABLE IF NOT EXISTS inbox_events(\n                source TEXT NOT NULL,event_id TEXT NOT NULL,exp_id TEXT NOT NULL REFERENCES experiments(id),\n                payload_json TEXT NOT NULL,payload_hash TEXT NOT NULL,status TEXT NOT NULL,\n                category TEXT,principal TEXT,consumed INTEGER NOT NULL DEFAULT 0,\n                result_json TEXT,error TEXT,event_time REAL,received_at REAL NOT NULL,classified_at REAL,applied_at REAL,\n                PRIMARY KEY(source,event_id))')
+                conn.execute('CREATE TABLE IF NOT EXISTS inbox_reply_tasks(\n                id INTEGER PRIMARY KEY,source TEXT NOT NULL,event_id TEXT NOT NULL,\n                exp_id TEXT NOT NULL REFERENCES experiments(id),recipient TEXT NOT NULL,\n                status TEXT NOT NULL,owner TEXT,fence INTEGER NOT NULL DEFAULT 0,lease_until REAL,\n                answer TEXT,delivery_id INTEGER REFERENCES delivery(id),\n                UNIQUE(source,event_id),FOREIGN KEY(source,event_id) REFERENCES inbox_events(source,event_id))')
+
+    def _require_write(self, action):
+        """只读 Inbox 的写动作一律拒绝：⛔ 不降级、不静默跳过、不伪造事件状态。"""
+        if self.readonly:
+            raise InboxError(f'只读 Inbox 拒绝 {action}：只读入口只能查询；要写就用可写构造')
 
     @staticmethod
     def _key(source, event_id):
@@ -49,6 +80,7 @@ class Inbox:
             conn.close()
 
     def receive(self, source, event, sha256=None):
+        self._require_write('receive（落一条入向事件）')
         require_text(source, 'source')
         if not isinstance(event, dict):
             raise InboxError('event必须为JSON对象')
@@ -96,6 +128,7 @@ class Inbox:
         return self.get(source, event_id)
 
     def classify(self, source, event_id):
+        self._require_write('classify（改事件分类）')
         row = self.get(source, event_id)
         if row is None:
             raise InboxError('事件不存在')
@@ -127,6 +160,7 @@ class Inbox:
         return self._mark(source, event_id, 'classified', category=category, principal=principal)
 
     def apply(self, source, event_id, *, command_handler=None):
+        self._require_write('apply（应用入向事件）')
         row = self.get(source, event_id)
         if row is None:
             raise InboxError('事件不存在')
@@ -186,6 +220,7 @@ class Inbox:
             conn.close()
 
     def drain(self, *, exp_id=None, command_handler=None, limit=100):
+        self._require_write('drain（批量应用入向事件）')
         if type(limit) is not int or limit <= 0:
             raise InboxError('limit必须为正整数')
         results = []
@@ -211,6 +246,7 @@ class Inbox:
             conn.close()
 
     def claim_question(self, worker, *, exp_id=None, lease_seconds=300):
+        self._require_write('claim_question（领取回复任务）')
         require_text(worker, 'worker')
         if type(lease_seconds) not in (int, float) or not math.isfinite(lease_seconds) or lease_seconds <= 0:
             raise InboxError('lease_seconds必须为正有限数')
@@ -234,6 +270,7 @@ class Inbox:
         return row['exp_id'] == payload['exp_id'] == binding.get('exp_id') and event.get('recipient') == payload['recipient'] == binding.get('recipient')
 
     def answer(self, claim, body):
+        self._require_write('answer（排一条文字回复）')
         require_text(body, 'answer body')
         if body.strip() in ('已收到', '收到', '已收到。', '收到。'):
             raise InboxError('收到不是问题答案')

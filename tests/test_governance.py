@@ -191,6 +191,23 @@ class PlanValidationTests(unittest.TestCase):
             self.assertNotEqual(gov.plan_fingerprint(changed), base, key)
         self.assertEqual(gov.plan_fingerprint(dict(auth, notes="换个说法")), base)
 
+    def test_execution_is_optional_but_changes_are_substantive(self):
+        from kernel.autoresearch.audit_support import hard_path
+        self.assertIn('execution', gov.KEY_FIELDS)
+        self.assertNotIn('execution', gov.REQUIRED_KEY_FIELDS)
+        old = make_plan()
+        self.assertEqual(gov.validate_plan(old), [])
+        execution = {'scope': 'remote', 'unit_root': '/research/unit-a',
+                     'code_fingerprint': 'a' * 64, 'environment_fingerprint': 'b' * 64,
+                     'task_fingerprint': 'c' * 64}
+        plan = make_plan(execution=execution)
+        self.assertNotEqual(gov.plan_fingerprint(old), gov.plan_fingerprint(plan))
+        for key in execution:
+            changed = make_plan(execution=dict(execution, **{key: 'changed'}))
+            self.assertNotEqual(gov.plan_fingerprint(plan), gov.plan_fingerprint(changed), key)
+            self.assertTrue(hard_path('execution.' + key), key)
+        self.assertTrue(hard_path('execution.locator'))
+
     def test_not_a_dict(self):
         self.assertEqual(len(gov.validate_plan([1, 2])), 1)
 
@@ -335,6 +352,14 @@ class FreezeAndAuditTests(GovCase):
         )
         self.assertTrue(second["reaudit_required"])
         self.assertNotEqual(second["key_fingerprint"], gov.plan_fingerprint(make_plan()))
+
+    def test_changed_execution_unit_invalidates_previous_audit(self):
+        self.gov.freeze_plan(make_plan(execution={'scope': 'remote', 'unit_root': '/unit-a'}), actor='main')
+        self.audit_once()
+        self.assertTrue(self.gov.audit_state('P1')['ok'])
+        changed = self.gov.freeze_plan(make_plan(execution={'scope': 'remote', 'unit_root': '/unit-b'}), actor='main')
+        self.assertTrue(changed['reaudit_required'])
+        self.assertFalse(self.gov.audit_state('P1')['ok'])
 
     def test_prepare_requires_frozen_plan(self):
         with self.assertRaises(gov.GovernanceError):

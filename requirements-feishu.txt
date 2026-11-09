@@ -1,0 +1,15 @@
+# GENERATED-BY: 飞书通道的加密事件支持, 2026-11-10 +08:00
+# LAST-EDIT: 2026-11-10 +08:00
+# PURPOSE: 只列飞书通道处理「加密事件」所需的可选依赖；核心与其余功能仍只用 Python 标准库
+# ORIGIN: open.feishu.cn 加密策略文档（配置 Encrypt Key ⇒ 事件推送加密，AES-256-CBC）
+# CUMULATIVE-DELTA: 首版。只有一项。
+#
+# 装法（部署机执行；仓库本身不带依赖锁）：
+#     python -m pip install -r requirements-feishu.txt
+#
+# 不装也能运行核心功能和发送路径。生产 webhook 要求验签；配置 Encrypt Key 后平台会加密推送，
+# 收件监听因此需要此依赖，缺失时在启动前拒绝。
+# 装了才能解密事件 —— 而飞书在配置 Encrypt Key 后会加密推送（challenge 也加密），
+# 所以「要验签」的部署实际上必须装它。缺它时入向一律 501 decryption_unavailable，
+# 不会降级成明文解析，也不会静默丢事件而不报原因。
+cryptography>=41

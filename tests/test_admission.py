@@ -1,8 +1,8 @@
 # GENERATED-BY: portable functional migration
-# LAST-EDIT: 2026-11-09
-# PURPOSE: Validate actual shared reservations at workflow launch and the public budget CLI boundaries.
+# LAST-EDIT: 2026-11-09 16:05 +08:00
+# PURPOSE: Validate actual shared reservations at workflow launch, trusted ordering fencing and the public budget CLI boundaries.
 # ORIGIN: none
-# CUMULATIVE-DELTA: 2026-11-09 合成 DSHHost 日志 + CLI patch 注入覆盖 grant/status/reserve/release/settle 全分支；wf_runs 未终态挡结算；事件/proof 重复键与异常库 exit 2 无 traceback。
+# CUMULATIVE-DELTA: 2026-11-09 补可信时序 fencing 正反例：迟到旧 renew 不得在较新 revoke 后复活预算；真实更晚的 renew 可用；同 timestamp 同会话按 seq 判、跨会话不可判即拒；旧事件重放只回历史且 Admission.check 不被误导；无时序接口/时序不可判 fail-closed；传统 HMAC 来源仍按到达顺序。补实验登记事务化：时序拒绝且新 exp_id 不存在时 DB 行与文件都不新增；有效 grant 在事务内真实初始化实验；默认 API 仍要求实验存在；实验登记后续失败整体回滚。此前：合成 DSHHost 日志 + CLI patch 注入覆盖 grant/status/reserve/release/settle 全分支；wf_runs 未终态挡结算；事件/proof 重复键与异常库 exit 2 无 traceback。
 import contextlib
 import copy
 import hashlib
@@ -19,8 +19,8 @@ from unittest.mock import patch
 from kernel.autoresearch import budget_cli
 from kernel.autoresearch.admission import Admission, HostBudgetSource
 from kernel.autoresearch.host_evidence import DSHHost
-from kernel.autoresearch.runtime.accounts import (Accounts, ApprovalEvidence, BudgetError,
-                                                  HMACSource, SourcePolicy)
+from kernel.autoresearch.runtime.accounts import (Accounts, ApprovalError, ApprovalEvidence,
+                                                  BudgetError, HMACSource, SourcePolicy)
 from kernel.autoresearch.runtime.store import Store, canonical_json
 
 
@@ -249,6 +249,20 @@ class HostBudgetSourceTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     HostBudgetSource(host, {'session-owner'})(self.event())
 
+    def test_trusted_ordering_comes_only_from_verified_host_evidence(self):
+        source = self.source()
+        self.assertEqual(source(self.event()), 'session-owner')
+        self.assertEqual(source.trusted_ordering(self.event()),
+                         {'session': 'session-owner', 'seq': 1, 'host_time': self.now - 5,
+                          'rpc_id': 'client-1', 'source': 'injected'})
+        # 调用方往事件里塞自报时间或序号：字段集合被拒，不能当年时序。
+        for extra in ({'host_time': self.now - 1}, {'created_at': self.now - 1}, {'seq': 2}):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                source(self.event(**extra))
+        # 换一条事件：不能复用上一事件的时序，必须重新核宿主证据。
+        with self.assertRaises(ValueError):
+            source.trusted_ordering(self.event(total_units=9))
+
 
 class BudgetCliCase(unittest.TestCase):
     """grant/status/reserve/release/settle 的 CLI 分支；真实 `DSHHost` 只用合成日志。"""
@@ -280,6 +294,7 @@ class BudgetCliCase(unittest.TestCase):
 
         self.host_factory = factory
         self.proof = json.dumps({'session_id': 'owner', 'seq': 1})
+        self.next_seq = 1
         self.write_event(self.command)
 
     # -- 合成宿主 / CLI 执行 -------------------------------------------------
@@ -290,7 +305,13 @@ class BudgetCliCase(unittest.TestCase):
 
     def set_message(self, value):
         content = value if isinstance(value, str) else json.dumps(value)
-        self.rows['owner'][1]['data']['content'] = content
+        message = self.rows['owner'][1]
+        if content != message['data']['content']:
+            # 真实宿主日志里一条新消息就是一个新序号；同一条消息重放才复用旧序号。
+            self.next_seq += 1
+            message['seq'] = self.next_seq
+            message['data']['content'] = content
+            self.proof = json.dumps({'session_id': 'owner', 'seq': self.next_seq})
 
     def cli(self, argv):
         out = io.StringIO()
@@ -812,6 +833,419 @@ class AccountsFinalizationTests(unittest.TestCase):
         self.assertEqual(result['status'], 'settled')
         self.assertEqual(result['actual_units'], 1)
         self.assertEqual(self.accounts.get_account('series-small')['spent_units'], 1)
+
+
+class BudgetOrderingTests(unittest.TestCase):
+    """生产证明来源的可信时序 fencing：旧事件不得覆盖新状态，跨会话不拿 seq 当全局序。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.ws = self.base / 'workspace'
+        self.ws.mkdir()
+        (self.ws / '.autoresearch').mkdir()
+        self.db = self.ws / '.autoresearch/runtime.sqlite3'
+        self.store = Store(self.db)
+        self.store.ensure_experiment('P1')
+        self.now = time.time()
+        self.rows = {'owner': [], 'worker': []}
+        self.host = make_host(self.base / 'dsh', self.ws, self.rows)
+
+        def factory(**kwargs):
+            return self.host
+
+        self.host_factory = factory
+
+    # -- 合成宿主 / CLI -------------------------------------------------------
+    def messages(self, session, items):
+        rows = [{'type': 'session', 'id': 'session-' + session,
+                 'createdAt': self.now - 1000, 'delegationDepth': 0}]
+        for seq, when, command in items:
+            rows.append({'type': 'user/message', 'seq': seq, 'time': when,
+                         'data': {'source': {'kind': 'user',
+                                             'rpcId': 'client-' + session + '-' + str(seq)},
+                                  'content': json.dumps(command)}})
+        self.rows[session] = rows
+
+    def command(self, action, event_id, total_units=10):
+        return {'action': action, 'event_id': event_id, 'series_id': 'series-small',
+                'scope': 'small', 'exp_id': 'P1', 'expires_at': self.now + 3600,
+                'total_units': total_units}
+
+    def grant(self, event, seq, request_key, session='owner'):
+        (self.ws / 'event.json').write_text(json.dumps(event), encoding='utf-8')
+        argv = ['grant', '--workspace', str(self.ws), '--event-file', 'event.json',
+                '--proof-json', json.dumps({'session_id': session, 'seq': seq}),
+                '--request-key', request_key]
+        out = io.StringIO()
+        with patch.object(budget_cli, 'DSHHost', self.host_factory):
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                code = budget_cli.main(argv)
+        return code, json.loads(out.getvalue())
+
+    def reserve(self, units=3, request_key='reservation-small'):
+        out = io.StringIO()
+        argv = ['reserve', '--workspace', str(self.ws), '--series-id', 'series-small',
+                '--exp-id', 'P1', '--scope', 'small', '--units', str(units),
+                '--request-key', request_key]
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = budget_cli.main(argv)
+        return code, json.loads(out.getvalue())
+
+    def account(self):
+        rows = table_rows(self.db, 'budget_accounts')
+        return rows[0] if rows else None
+
+    def state(self):
+        names = table_names(self.db)
+        return {name: table_rows(self.db, name) for name in
+                ('experiments', 'events', 'budget_accounts', 'budget_reservations',
+                 'approval_events', 'approval_fences', 'approval_fence_marks',
+                 'account_requests')
+                if name in names}
+
+    def workspace_files(self):
+        """工作区里除事件文件以外的文件快照：被拒绝的授权不得新增或改动任何文件。"""
+        return {(path.relative_to(self.ws).as_posix(), path.stat().st_size,
+                 path.stat().st_mtime_ns)
+                for path in self.ws.rglob('*') if path.is_file() and path.name != 'event.json'}
+
+    def hmac_grant(self, series='series-small', total_units=10, event_id='legacy-grant'):
+        key = b'explicit-synthetic-fixture-key-000000000'
+        event = {'event_id': event_id, 'series_id': series, 'exp_id': 'P1',
+                 'scope': 'small', 'action': 'grant', 'expires_at': self.now + 3600,
+                 'total_units': total_units, 'principal': 'fixture-user'}
+        event['signature'] = hmac.new(key, canonical_json(event).encode(), hashlib.sha256).hexdigest()
+        accounts = Accounts(self.store, ApprovalEvidence(
+            {'fixture': SourcePolicy(HMACSource(key), frozenset({'fixture-user'}))}))
+        return accounts.authorize('fixture', event, event_id + '-rk')
+
+    # -- 反例：迟到旧事件不能覆盖新状态 -------------------------------------
+    def test_late_old_renew_after_revoke_is_refused_without_side_effects(self):
+        grant = self.command('grant', 'grant-1')
+        # 自报的 expires_at 给到很远：它是调用方字段，不参与排序，也不能让旧事件通过。
+        renew = dict(self.command('renew', 'renew-1', total_units=20),
+                     expires_at=self.now + 10 ** 9)
+        revoke = self.command('revoke', 'revoke-1')
+        # 旧 renew 的宿主时间反而比 revoke 更晚：同会话内只认 seq，时钟偏移不能让它越过 revoke。
+        self.messages('owner', [(1, self.now - 300, grant), (2, self.now - 50, renew),
+                                (3, self.now - 100, revoke)])
+        self.assertEqual(self.grant(grant, 1, 'g')[0], 0)
+        code, out = self.grant(revoke, 3, 'v')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.account()['active'], 0)
+        before = self.state()
+        code, out = self.grant(renew, 2, 'r-late')
+        self.assertEqual(code, 2, out)
+        self.assertIn('旧事件不能覆盖', out['error'])
+        self.assertEqual(self.state(), before, '被拒的旧事件不得有任何副作用')
+        self.assertEqual(self.account()['active'], 0)
+        self.assertEqual(self.account()['total_units'], 10)
+
+    def test_unknown_baseline_order_fails_closed(self):
+        # 升级前的授权事件没有 proof：新的证明来源无法判定先后，必须拒绝而不是按到达顺序复活。
+        self.hmac_grant()
+        renew = self.command('renew', 'renew-1', total_units=20)
+        self.messages('owner', [(1, self.now - 100, renew)])
+        before = self.state()
+        code, out = self.grant(renew, 1, 'r')
+        self.assertEqual(code, 2, out)
+        self.assertIn('时序', out['error'])
+        self.assertEqual(self.state(), before)
+        self.assertEqual(self.account()['active'], 1)
+        self.assertEqual(self.account()['total_units'], 10)
+
+    def test_stale_reject_with_new_experiment_leaves_no_rows_or_files(self):
+        # 迟到旧事件还指向一个从未登记的新实验：既不能生效，也不能先把它登记下来。
+        grant = self.command('grant', 'grant-1')
+        revoke = self.command('revoke', 'revoke-1')
+        late = dict(self.command('renew', 'renew-late', total_units=20), exp_id='P2')
+        self.messages('owner', [(1, self.now - 300, grant), (2, self.now - 50, late),
+                                (3, self.now - 100, revoke)])
+        self.assertEqual(self.grant(grant, 1, 'g')[0], 0)
+        self.assertEqual(self.grant(revoke, 3, 'v')[0], 0)
+        self.assertIsNone(self.store.get_experiment('P2'))
+        before_rows, before_files = self.state(), self.workspace_files()
+        code, out = self.grant(late, 2, 'late')
+        self.assertEqual(code, 2, out)
+        self.assertIn('旧事件不能覆盖', out['error'])
+        self.assertIsNone(self.store.get_experiment('P2'), '时序拒绝不得顺手登记新实验')
+        self.assertEqual(self.state(), before_rows, '被拒的旧事件不得新增任何数据库行')
+        self.assertEqual(self.workspace_files(), before_files, '被拒的旧事件不得新增或改动任何文件')
+        self.assertEqual(self.account()['active'], 0)
+        self.assertEqual(self.account()['total_units'], 10)
+
+    # -- 正例：真实更晚的事件必须可用 ---------------------------------------
+    def test_valid_grant_registers_a_new_experiment_inside_the_transaction(self):
+        grant = dict(self.command('grant', 'grant-p2'), exp_id='P2')
+        self.messages('owner', [(1, self.now - 100, grant)])
+        self.assertIsNone(self.store.get_experiment('P2'))
+        code, out = self.grant(grant, 1, 'g')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.store.get_experiment('P2')['id'], 'P2')
+        kinds = [row['kind'] for row in table_rows(self.db, 'events')]
+        self.assertIn('experiment_created', kinds)
+        self.assertIn('approval_grant', kinds)
+        # 同一请求键重放：仍然成功，不会因为“本请求建了实验”被误判成 payload 冲突。
+        code, replay = self.grant(grant, 1, 'g')
+        self.assertEqual(code, 0, replay)
+        self.assertEqual(replay['series_id'], 'series-small')
+        self.assertEqual(len(table_rows(self.db, 'approval_events')), 1)
+
+    def test_renew_genuinely_later_than_revoke_is_applied(self):
+        grant = self.command('grant', 'grant-1')
+        revoke = self.command('revoke', 'revoke-1')
+        renew = self.command('renew', 'renew-1', total_units=30)
+        self.messages('owner', [(1, self.now - 300, grant), (2, self.now - 200, revoke),
+                                (3, self.now - 100, renew)])
+        self.assertEqual(self.grant(grant, 1, 'g')[0], 0)
+        self.assertEqual(self.grant(revoke, 2, 'v')[0], 0)
+        code, out = self.grant(renew, 3, 'r')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out['active'], 1)
+        self.assertEqual(out['total_units'], 30)
+        self.assertEqual(len(table_rows(self.db, 'approval_events')), 3)
+
+    def test_cross_session_order_uses_verified_host_time_not_seq(self):
+        grant = self.command('grant', 'grant-a')
+        equal = self.command('renew', 'renew-equal', total_units=20)
+        later = self.command('renew', 'renew-later', total_units=30)
+        # 会话 owner 的 seq 是 9；会话 worker 的 seq 只有 1/2。seq 没有全局含义。
+        self.messages('owner', [(9, self.now - 300, grant)])
+        self.messages('worker', [(1, self.now - 300, equal), (2, self.now - 100, later)])
+        self.assertEqual(self.grant(grant, 9, 'g', session='owner')[0], 0)
+        # 同一 timestamp、跨会话：先后不可判，必须拒绝且无副作用。
+        before = self.state()
+        code, out = self.grant(equal, 1, 'equal', session='worker')
+        self.assertEqual(code, 2, out)
+        self.assertIn('先后不可判', out['error'])
+        self.assertEqual(self.state(), before)
+        # 可信宿主时间真实更晚：不能用 seq 更小来否掉它。
+        code, out = self.grant(later, 2, 'later', session='worker')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out['active'], 1)
+        self.assertEqual(out['total_units'], 30)
+
+    def test_same_timestamp_within_one_session_is_ordered_by_seq(self):
+        grant = self.command('grant', 'grant-1')
+        revoke = self.command('revoke', 'revoke-1')
+        renew = self.command('renew', 'renew-1', total_units=25)
+        self.messages('owner', [(1, self.now - 100, grant), (2, self.now - 100, revoke),
+                                (3, self.now - 100, renew)])
+        self.assertEqual(self.grant(grant, 1, 'g')[0], 0)
+        self.assertEqual(self.grant(revoke, 2, 'v')[0], 0)
+        code, out = self.grant(renew, 3, 'r')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out['active'], 1)
+        self.assertEqual(out['total_units'], 25)
+
+    # -- 幂等重放：回历史结果，但不复活，也不误导 check ---------------------
+    def test_old_event_replay_returns_history_but_never_revives(self):
+        grant = self.command('grant', 'grant-1')
+        renew = self.command('renew', 'renew-1', total_units=20)
+        revoke = self.command('revoke', 'revoke-1')
+        self.messages('owner', [(1, self.now - 300, grant), (2, self.now - 200, renew),
+                                (3, self.now - 100, revoke)])
+        self.assertEqual(self.grant(grant, 1, 'g')[0], 0)
+        self.assertEqual(self.grant(renew, 2, 'r')[0], 0)
+        self.assertEqual(self.reserve()[0], 0)
+        self.assertEqual(self.grant(revoke, 3, 'v')[0], 0)
+        approvals = len(table_rows(self.db, 'approval_events'))
+        fences = table_rows(self.db, 'approval_fences')
+        marks = table_rows(self.db, 'approval_fence_marks')
+        # 旧 renew 重放：幂等返回历史结果，并标注已被后续事件取代。
+        code, out = self.grant(renew, 2, 'r-replay')
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.get('replayed'))
+        self.assertTrue(out.get('superseded'))
+        self.assertEqual(out['current']['active'], 0)
+        self.assertEqual(len(table_rows(self.db, 'approval_events')), approvals)
+        self.assertEqual(table_rows(self.db, 'approval_fences'), fences)
+        self.assertEqual(table_rows(self.db, 'approval_fence_marks'), marks)
+        self.assertEqual(self.account()['active'], 0)
+        self.assertEqual(self.account()['total_units'], 20)
+        # 旧 grant 重放同样只回历史。
+        code, out = self.grant(grant, 1, 'g-replay')
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.get('superseded'))
+        self.assertEqual(self.account()['active'], 0)
+        # 同一 request_key 再回放：走缓存也只回历史快照，不复活。
+        code, out = self.grant(renew, 2, 'r-replay')
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.get('superseded'))
+        self.assertEqual(out['current']['active'], 0)
+        self.assertEqual(self.account()['active'], 0)
+        # Admission.check 只看活库，不被历史结果误导。
+        plan = {'id': 'P1', 'budget': {'max_cost_units': 3},
+                'authorization': {'scope': 'small', 'series_id': 'series-small',
+                                  'reservation_id': 'reservation-small'}}
+        result = Admission(self.ws).check(plan, 'owner', 'P1')
+        self.assertFalse(result['ok'])
+        self.assertIn('撤回', ' '.join(result['problems']))
+
+    # -- 升级路径：旧库没有 fence 行，但事件带 proof 时可恢复同会话基线 -------
+    def test_upgrade_without_fence_recovers_same_session_baseline(self):
+        grant = self.command('grant', 'grant-1')
+        renew = self.command('renew', 'renew-1', total_units=20)
+        stale = self.command('renew', 'renew-stale', total_units=15)
+        self.messages('owner', [(4, self.now - 300, stale), (5, self.now - 200, grant),
+                                (6, self.now - 100, renew)])
+        self.assertEqual(self.grant(grant, 5, 'g')[0], 0)
+        # 模拟升级前的库：已落账事件带 proof，但没有高水位行。
+        with closing(sqlite3.connect(str(self.db))) as conn:
+            conn.execute('DELETE FROM approval_fences')
+            conn.execute('DELETE FROM approval_fence_marks')
+            conn.commit()
+        before = self.state()
+        code, out = self.grant(stale, 4, 'stale')
+        self.assertEqual(code, 2, out)
+        self.assertIn('旧事件不能覆盖', out['error'])
+        self.assertEqual(self.state(), before)
+        code, out = self.grant(renew, 6, 'r')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out['total_units'], 20)
+        self.assertEqual(table_rows(self.db, 'approval_fences')[0]['seq'], 6)
+
+
+class OrderingContractTests(unittest.TestCase):
+    """Accounts 只信来源时序：来源声明要时序却不给、或给出不可判值，一律拒绝且无副作用。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / '.autoresearch').mkdir()
+        self.db = self.root / '.autoresearch/runtime.sqlite3'
+        self.store = Store(self.db)
+        self.store.ensure_experiment('P1')
+        self.now = time.time()
+        self.event = {'action': 'grant', 'event_id': 'E', 'series_id': 'S', 'scope': 'small',
+                      'exp_id': 'P1', 'expires_at': self.now + 3600, 'total_units': 3}
+
+    def accounts(self, source):
+        return Accounts(self.store, ApprovalEvidence(
+            {'fixture': SourcePolicy(source, frozenset({'fixture-user'}))}))
+
+    def test_missing_or_unusable_ordering_fails_closed(self):
+        class Required:
+            requires_trusted_ordering = True
+
+            def __init__(inner, value):
+                inner.value = value
+
+            def __call__(inner, event):
+                return 'fixture-user'
+
+            def trusted_ordering(inner, event):
+                if isinstance(inner.value, Exception):
+                    raise inner.value
+                return inner.value
+
+        for value in (None, 'x', {'session': 'fixture-user'},
+                      {'session': 'other', 'seq': 1, 'host_time': self.now},
+                      {'session': 'fixture-user', 'seq': True, 'host_time': self.now},
+                      {'session': 'fixture-user', 'seq': -1, 'host_time': self.now},
+                      {'session': 'fixture-user', 'seq': 1, 'host_time': float('nan')},
+                      RuntimeError('host log unavailable')):
+            with self.subTest(value=value), self.assertRaises(ApprovalError):
+                self.accounts(Required(value)).authorize('fixture', self.event, 'k')
+            self.assertEqual(table_rows(self.db, 'budget_accounts'), [])
+            self.assertEqual(table_rows(self.db, 'approval_events'), [])
+            self.assertEqual(table_rows(self.db, 'approval_fences'), [])
+            self.assertEqual(table_rows(self.db, 'account_requests'), [])
+
+        # 声明“必须有时序”却根本没有接口：同样拒绝。
+        class Missing:
+            requires_trusted_ordering = True
+
+            def __call__(inner, event):
+                return 'fixture-user'
+
+        with self.assertRaises(ApprovalError):
+            self.accounts(Missing()).authorize('fixture', self.event, 'k')
+        self.assertEqual(table_rows(self.db, 'budget_accounts'), [])
+
+        # 合法时序才生效，并留下高水位。
+        class Good:
+            def __call__(inner, event):
+                return 'fixture-user'
+
+            def trusted_ordering(inner, event):
+                return {'session': 'fixture-user', 'seq': 4, 'host_time': self.now - 10}
+
+        account = self.accounts(Good()).authorize('fixture', self.event, 'k')
+        self.assertEqual(account['active'], 1)
+        self.assertEqual(table_rows(self.db, 'approval_fences')[0]['seq'], 4)
+
+    def test_legacy_hmac_source_keeps_arrival_order(self):
+        key = b'explicit-synthetic-fixture-key-000000000'
+
+        def signed(action, event_id, total_units=10):
+            event = dict(self.event, action=action, event_id=event_id,
+                         total_units=total_units, principal='fixture-user')
+            event['signature'] = hmac.new(key, canonical_json(event).encode(),
+                                          hashlib.sha256).hexdigest()
+            return event
+
+        accounts = Accounts(self.store, ApprovalEvidence(
+            {'fixture': SourcePolicy(HMACSource(key), frozenset({'fixture-user'}))}))
+        self.assertEqual(accounts.authorize('fixture', signed('grant', 'g'), 'g')['active'], 1)
+        self.assertEqual(accounts.authorize('fixture', signed('revoke', 'v'), 'v')['active'], 0)
+        # 传统来源没有可信时序，仍按到达顺序：后到的 renew 重新激活。
+        self.assertEqual(accounts.authorize('fixture', signed('renew', 'r', 5), 'r')['active'], 1)
+        self.assertEqual(table_rows(self.db, 'approval_fences'), [])
+        self.assertEqual(table_rows(self.db, 'approval_fence_marks'), [])
+
+    def signed_fixture(self, **changes):
+        key = b'explicit-synthetic-fixture-key-000000000'
+        event = dict(self.event, **changes)
+        event['principal'] = 'fixture-user'
+        event['signature'] = hmac.new(key, canonical_json(event).encode(),
+                                      hashlib.sha256).hexdigest()
+        return event, Accounts(self.store, ApprovalEvidence(
+            {'fixture': SourcePolicy(HMACSource(key), frozenset({'fixture-user'}))}))
+
+    def test_default_api_still_requires_the_experiment(self):
+        event, accounts = self.signed_fixture(exp_id='missing')
+        with self.assertRaises(ApprovalError):
+            accounts.authorize('fixture', event, 'g')
+        self.assertIsNone(self.store.get_experiment('missing'))
+        self.assertEqual(table_rows(self.db, 'budget_accounts'), [])
+        self.assertEqual(table_rows(self.db, 'approval_events'), [])
+        self.assertEqual(table_rows(self.db, 'account_requests'), [])
+
+    def test_create_experiment_flag_registers_the_experiment(self):
+        event, accounts = self.signed_fixture(exp_id='P9')
+        account = accounts.authorize('fixture', event, 'g', create_experiment=True)
+        self.assertEqual(account['active'], 1)
+        self.assertIsNotNone(self.store.get_experiment('P9'))
+        kinds = [row['kind'] for row in table_rows(self.db, 'events')]
+        self.assertIn('experiment_created', kinds)
+        self.assertIn('approval_grant', kinds)
+        # 同一请求键重放：缓存里记了“建过实验”，不会误判 payload 冲突。
+        self.assertEqual(accounts.authorize('fixture', event, 'g', create_experiment=True)['active'], 1)
+        self.assertEqual(len(table_rows(self.db, 'approval_events')), 1)
+
+    def test_create_experiment_rolls_back_when_a_later_step_fails(self):
+        event, accounts = self.signed_fixture(exp_id='P9')
+        real, calls = self.store.emit, []
+
+        def emit(conn, exp_id, kind, actor, payload):
+            calls.append(kind)
+            if len(calls) > 1:
+                raise RuntimeError('event failure')
+            return real(conn, exp_id, kind, actor, payload)
+
+        with patch.object(self.store, 'emit', side_effect=emit):
+            with self.assertRaises(RuntimeError):
+                accounts.authorize('fixture', event, 'g', create_experiment=True)
+        self.assertEqual(calls[:2], ['experiment_created', 'approval_grant'])
+        self.assertIsNone(self.store.get_experiment('P9'), '后续失败必须整体回滚实验登记')
+        self.assertEqual([row['id'] for row in table_rows(self.db, 'experiments')], ['P1'])
+        self.assertEqual(table_rows(self.db, 'budget_accounts'), [])
+        self.assertEqual(table_rows(self.db, 'approval_events'), [])
+        self.assertEqual(table_rows(self.db, 'account_requests'), [])
 
 
 if __name__ == '__main__':

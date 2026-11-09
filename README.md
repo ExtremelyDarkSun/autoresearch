@@ -1,21 +1,23 @@
 <!--
 GENERATED-BY: repository creation, 2026-11-09 +08:00
-LAST-EDIT: 2026-11-09 主入口落位：把「没有模块」的旧表述改成「有实际入口 / 尚缺接线 / 真实部署未验」，并指向 RUNNING.md
+LAST-EDIT: 2026-11-09 最终依赖与状态统一：Python 标准库 + 可选 cryptography、插件 Node 20+、DSH 压缩日志 Node 24+；状态只写已验与待现场验收，不写编辑过程
 PURPOSE: 给首次查看项目的人说明用途、边界和可执行检查。
 ORIGIN: reusable research mechanisms and target-specific evaluation adapters
-CUMULATIVE-DELTA: 2026-11-09 新增 [怎么跑](<docs/RUNNING.md>)（工作区 / 专题隔离 / 预算 / 执行主链 / 人读页 / 监控 / 审批 / 进度 / 问题台账的实际命令）；
-改写迁移状态段：主链入口已存在，但真实通道、真实云机与完整冷启动未验，若干接线仍在进行中；
+CUMULATIVE-DELTA: 2026-11-09 新增 [怎么跑](<docs/RUNNING.md>)（工作区 / 专题隔离 / 预算 / 执行主链 / 人读页 / 监控 / 审批 / 通道 / 远端 / 进度 / 问题台账的实际命令）；
+改写迁移状态段：本地独立环境、完整服务链冷启动（含第二轮共享预算与未复盘阻断）及可信宿主探针已验；真实通道租户、真实 SSH/POSIX 停止/机器空闲、远端上传和平台仍待现场验收；
 把只登记 Topics 的首次隔离改成真实 worktree + 独立环境命令（claim 保留）；明确 demo 只是底层事务合成、不代科研主链；109 编号验收表继续保留。
+依赖口径：Python 内核只用标准库，飞书加密收件另需可选 cryptography（requirements-feishu.txt）；插件 Node 20+，可信 DSH 压缩日志 Node 24+。
 -->
 # AutoResearch：可复用研究内核与 agent 比赛配置
 
 这套项目的目标是让 AI 围绕一个研究目标持续工作：先写假设和判断标准，再安排实验，保存原始证据，核查结果，决定下一步。人负责目标、方向和需要批准的动作。
 
-**迁移状态：主链入口已经在仓库里，但不是「全部完成」。** 现在可以按 [怎么跑](<docs/RUNNING.md>) 依次调用工作区初始化、专题隔离、共享预算、研究执行主链（事前材料 → 起跑闸 → 真子进程 → 结束 → 复盘）、人读页供料与验收、意图与过程监控、审批与入向、进度采集与受管推进器、问题台账。以下三类**仍未完成**，逐项写在[迁移功能验收](<docs/EXPECTATIONS_ACCEPTANCE.md>)（109 个编号全部保留）：
+**迁移状态：主链入口已经在仓库里，但不是「全部完成」。** 现在可以按 [怎么跑](<docs/RUNNING.md>) 依次调用工作区初始化、专题隔离、共享预算、研究执行主链（事前材料 → 起跑闸 → 真子进程 → 结束 → 复盘）、人读页供料与验收、意图与过程监控、审批与入向、通道配置与收件、受管远端执行、进度采集与受管推进器、问题台账。以下四类**仍未完成**，逐项写在[迁移功能验收](<docs/EXPECTATIONS_ACCEPTANCE.md>)（109 个编号全部保留）：
 
-- **真实部署未验**：真实消息通道送达与回复、真实云机与平台提交、从 clone 到完整冷启动的全流程。
-- **接线进行中**：监控侧旧双账统一与起跑事务内复核、审批侧绑定实际 execution_plan、宿主侧 goal 持久事件与超期实读。
-- **本就是语义纪律**：结论是否成立、页面是否易读、审计是否有质量，机械检查证明不了。
+- **通用功能待补**：跨实验的证据与检查汇总、复盘中的成本和审批信息、普通主动提问记录，以及继续下一轮前的统一检查和跨专题排序。逐项已有缺口记录，不能当成填配置即可完成。
+- **真实部署未验**：真实消息通道租户送达与回复、真实 SSH / POSIX 停止与机器空闲、远端代码 / 题单上传步骤、真实云机与平台提交。空工作区的本地冷启动（含第二轮共享预算与未复盘阻断）已用合成证据跑通，详见[验收记录](<docs/VERIFICATION.md>)。
+- **部分验收**：V1–V3 意图监控语义核只有 3 个合成案例的一次独立核（V1 修订后通过）；真实宿主探针只证明单次绑定，不外推。
+- **需要独立判断的事项**：结论是否成立、页面是否易读、审查是否找对了问题，仍需 agent 或人阅读原始证据。
 
 现有离线测试通过只证明被覆盖的机制，不证明整套框架已复原。验收依据见[完整行为预期](<kernel/contracts/framework_expectations.md>)。
 
@@ -29,13 +31,13 @@ CUMULATIVE-DELTA: 2026-11-09 新增 [怎么跑](<docs/RUNNING.md>)（工作区 /
 
 > 请完整读取 docs/RUNNING.md，按里面的主入口命令带我走一轮：先 `doctor`，再问我目标、平台访问与预算这些**只有我能定**的事，然后依次建工作区、建专题隔离、做预算授权与预留、写事前计划并跑起跑闸。凡是要真实通道、云机或我本人授权的动作，先停下来问我；凡是文档标「尚未接线 / 待验」的，直接告诉我缺什么，不要自己编一个入口。
 
-**操作命令以 [怎么跑](<docs/RUNNING.md>) 为准。** 旧的[首次启动 prompt](docs/FIRST_RUN_PROMPT.md) 是更早的 onboarding 脚本：它会把「补齐真实执行接口」交给 AI 自己写。现在研究主链、人读页、监控、审批、进度与问题台账都已有实际入口，**缺的是部署配置与真实验收**；仓库里没有的接线，本文档与验收表直接写成缺口，⛔ 不靠「让 AI 补一段代码」来把首次可用性补圆。
+操作命令以 [怎么跑](<docs/RUNNING.md>) 为准。[首次启动提示词](<docs/FIRST_RUN_PROMPT.md>)已按当前实现更新，可交给新会话使用。遇到尚待接线或未验项目，应说明具体缺口。
 
-**这不是一键部署脚本。** 当前仓库不自带通用 Kaggle 客户端、完整远端评测启动器或消息通道客户端。真实首轮需要比赛允许的数据、模型与评测器，以及你自己的通道与凭据引用；尚未在全新机器完成真实平台验收。
+当前仓库有默认关闭的飞书 HTTP 适配层（`channels doctor/listen/poll` 与 `decisions --channel-config`）和默认关闭的受管远端 CLI（`remote doctor/check/provision/start/query/cancel/collect/release`）。真实首轮仍需比赛允许的数据、模型、评测器与凭据引用；通用 Kaggle 客户端、真实云机和租户消息往返尚未在全新机器验收。
 
 ## 第一次检查：三条命令
 
-需要 Python 3.11 或更新版本。完整离线验证还需要 Node.js 20 或更新版本。Python 内核只用标准库，不需要安装第三方包。
+需要 Python 3.11 或更新版本。Python 内核与通用工具只用标准库；飞书**加密事件收件**另需可选 `cryptography`（`python -m pip install -r requirements-feishu.txt`）。三个插件的离线测试需要 Node.js 20 或更新版本；读取真实 DSH 压缩会话日志的可信核验需要支持 Zstandard 的 Node.js 24 或更新版本。
 
 在本仓库根目录运行：
 
@@ -65,7 +67,9 @@ python -X utf8 -B research.py selftest --plugins     # 需要 Node.js
 | [kernel/autoresearch/progress.py](kernel/autoresearch/progress.py) | 进度采集与推进器 | 声明式 spec、采集比较、租约、静默窗口、一次唤醒即退出、显式重挂 |
 | [kernel/autoresearch/progress_host.py](kernel/autoresearch/progress_host.py) | 宿主侧联动 | DSH goal 重放、超期只读、受管 job 登记台账（只读宿主） |
 | [kernel/autoresearch/issues.py](kernel/autoresearch/issues.py) | 问题台账（§9） | 首错登记、查重、负责人、修复、复验（argv + 退出码）、冷件索引 |
-| [kernel/autoresearch/{workflow,reporting,monitoring,decisions,progress,progress_host,budget,workspace,issues}_cli.py](kernel/autoresearch/) | 上面各层的命令行入口 | 由 `research.py <名称>` 转发 |
+| [kernel/autoresearch/{workflow,reporting,monitoring,decisions,channels,progress,progress_host,remote,budget,workspace,issues}_cli.py](kernel/autoresearch/) | 上面各层的命令行入口 | 由 `research.py <名称>` 转发 |
+| [kernel/autoresearch/channels](kernel/autoresearch/channels/) | 真实通道适配层 | 飞书发送 / 回执复核 / 验签 / AES-256-CBC 解密（`cryptography` 可选） |
+| [kernel/autoresearch/remote_workflow.py](kernel/autoresearch/remote_workflow.py) · [remote_cli.py](kernel/autoresearch/remote_cli.py) | 受管远端执行 | Workflow 闸 → Runtime 预算/租约 → SSHAdapter；默认关闭 |
 | [kernel/contracts](kernel/contracts/) · [kernel/instructions](kernel/instructions/) | 内核现行契约与读取要求 | 原则、可执行条件、证据边界 |
 | [kernel/roles](kernel/roles/) · [kernel/templates](kernel/templates/) | 角色委派与空模板 | 角色材料、事前设计、人读现状页与交接 |
 | [kernel/hosts/dsh](kernel/hosts/dsh/) | 首个宿主适配 | 三套项目插件、配置生成和加载检查工具 |
@@ -125,7 +129,9 @@ python -X utf8 -B research.py workspace snapshot --workspace ../my-research --to
 | 研究执行主链 | `research.py workflow prepare/check/launch/finish/review/status` | `wf_preparations` / `wf_runs` / `wf_finishes` / `wf_reviews` / `wf_events` |
 | 人读页供料与验收 | `research.py reporting prepare/check/ack/round-check/diagnose` | `topics/<专题>/STATUS.md` + `.autoresearch/state/reporting/<专题>/` |
 | 意图与过程监控 | `research.py monitoring register/sync/event/prepare/record/check` | `<工作区>/.autoresearch/monitoring.sqlite3` |
-| 审批与入向 | `research.py decisions prepare/send/status/inbox/overdue/reply/hook` | 决策台账 + 自包含审批页 + 通道回执 |
+| 审批与入向 | `research.py decisions prepare/send/status/inbox/overdue/reply/hook/authorize-check` | 决策台账 + 自包含审批页 + 通道回执 |
+| 通道配置与收件 | `research.py channels doctor/listen/poll` + `decisions --channel-config` | 通道台账 + 决策库；`doctor` 只读 |
+| 受管远端执行 | `research.py remote doctor/check/provision/start/query/cancel/collect/release` | Runtime 预算/租约 + 远端 worker 状态；默认关闭 |
 | 进度采集与推进器 | `research.py progress probe/tick/watch/rearm/outcome/status` | 事件库 + 租约 + `needs_rearm` |
 | 宿主侧联动 | `research.py progress-host doctor/goal/overdue/plan/register/status` | 固定 deployment 配置 + append-only job 台账 |
 | 问题台账（§9） | `research.py issues record/status/assign/fix/verify/reopen/archive/index` | `<工作区>/.autoresearch/issues.sqlite3` |
@@ -171,17 +177,17 @@ python research.py instructions --captured path/to/captured-host-request.txt
 
 ## 现在能用什么，部署还要补什么
 
-**本地可直接用（有实际入口 + 专项测试）**：事务状态与追加事件、课题接手与世代、专题真实隔离（worktree + 独立环境 + 主文档快照）、共享预算的授权/预留/释放/结算台账、幂等执行与对账、研究执行主链（事前四锚点 → 起跑闸 → 真子进程 → 结束 → 复盘）、人读页完整供料与回收回执、意图与过程监控（四态/三触发/两水位/独立报告核验/意见处置）、审批页与双回执状态机、入向文字回复窗口、通用进度采集与受管推进器（一次唤醒即退出 + 显式重挂）、宿主侧 goal/超期/job 只读联动、问题台账（查重/负责人/修复/复验/冷件索引）、配置与指令测量、插件自检。
+**本地可直接用（有实际入口 + 专项测试）**：事务状态与追加事件、课题接手与世代、专题真实隔离（worktree + 独立环境 + 主文档快照）、共享预算的授权/预留/释放/结算台账（含可信时序 / fence）、幂等执行与对账、研究执行主链（事前四锚点 → 起跑闸 → 真子进程 → 结束 → 复盘 → 自动快照 / 报告投影）、人读页完整供料与回收回执、意图与过程监控（四态/三触发/两水位/独立报告核验/意见处置）、**自然语言 close（旧 proof 与 `--user-quote` 两路）**、审批页与双回执状态机、入向文字回复窗口、**通道 `doctor/listen/poll` 与 `decisions --channel-config`（含可选 AES 解密）**、**受管远端 CLI（默认关闭，预算用计划授权那笔同一预留）**、只读服务（`DecisionService.readonly`，不建表/目录/通道台账）、通用进度采集与受管推进器（一次唤醒即退出 + 显式重挂）、宿主侧 goal/超期/job 只读联动、问题台账（查重/负责人/修复/复验/冷件索引）、配置与指令测量、插件自检。
 
-**需要部署适配器（缺配置不等于缺功能，但也不等于已验）**：真实消息通道（页 + 卡 + 回执送达）、真实模型与正式评分环境、远端提交与云机、真实授权来源（宿主用户消息）。
+**需要部署适配器（缺配置不等于缺功能，但也不等于已验）**：真实租户的消息送达与收件、真实模型与正式评分环境、真实远端机器与 POSIX 停止 / 机器空闲、真实授权来源（宿主用户消息）。
 
-**已知未完成**（逐项见[迁移功能验收](<docs/EXPECTATIONS_ACCEPTANCE.md>)）：监控侧旧双账统一与起跑事务内复核、审批侧绑定实际 execution_plan、宿主侧 goal 持久事件与超期实读、从 clone 到完整冷启动的端到端验收。**这些写成缺口，不当已完成。**
+**已知未完成**（逐项见[迁移功能验收](<docs/EXPECTATIONS_ACCEPTANCE.md>)）：真实通道租户验收；真实 SSH / POSIX 停止与机器空闲；真实云机 / 平台提交；V1–V3 只有合成语义核。⚠️ 远端停止只覆盖本 job 的进程组，不覆盖子进程 `setsid` 逃逸，更强隔离要部署 cgroup / namespace；group-stop 不等于整台机器停止。**这些写成缺口，不当已完成。**
 
 需要可信证据的授权、审查豁免、交付确认，在没有可信验证器时**默认拒绝**；普通资料可登记为本地声明（`declared`），但那不等于宿主已验证。离线演示与测试里的签名、审查、通道都是临时夹具，不能拿去给真实动作授权。
 
 本项目**没有**安装一个会自动在生产环境开实验的常驻服务。持续研究靠受管推进器 + 显式重挂：一次唤醒处理完就退出并写 `needs_rearm`，由负责人挂回；通知送达、进程退出、租约到期都不证明实验成功或机器空闲。
 
-- 操作命令与未接线清单：[怎么跑](docs/RUNNING.md)。
+- 操作命令与待验清单：[怎么跑](docs/RUNNING.md)。
 - 研究流程与制度边界：[研究说明](docs/research.md)。
 - 实际拆分与未搬迁内容：[迁移说明](docs/migration.md)。
 - 本次执行过的检查与结果：[验收记录](docs/VERIFICATION.md)。

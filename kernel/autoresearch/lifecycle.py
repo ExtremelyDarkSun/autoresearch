@@ -1,5 +1,5 @@
 # GENERATED-BY: research lifecycle projection migration, 2026-11-09
-# LAST-EDIT: 2026-11-09 首版：把权威 wf_* 记录投影到人读/AI 材料与 reporting 事件，并接管 before/after 主文档快照。
+# LAST-EDIT: 2026-11-09 18:40 `_read` 只读连接委托 runtime.store.ReadonlyStore（WAL 读不建 sidecar）
 # PURPOSE: 研究执行（workflow）与人读交付（reporting）之间的接线层：
 #          只读 wf_preparations/wf_runs/wf_finishes/wf_reviews + gov_plans，投影出
 #          topics/<topic>/plans/<plan>/{plan.json,AI_WORK.md,receipts/*.json}，
@@ -7,6 +7,8 @@
 #          并提供 before/after 主文档快照（原始字节 + sha，只生成一次）。
 # ORIGIN: 上游 ai_work.py 的「AI 工作材料是投影」与报告交付纪律；只保留机制，无比赛/机器/读数。
 # CUMULATIVE-DELTA: 首版。不启进程、不核宿主、不判科学；缺 before 不补造；hook 失败只记 diagnostic。
+#   2026-11-09 只读零副作用：`_read` 不再拼裸 `?mode=ro`，委托 `ReadonlyStore`（WAL 库按 sidecar 实况选
+#   mode=ro / immutable=1，读不创建 -shm/-wal）；缺库仍是原来的 LifecycleError，WAL 歧义态 StoreError 交上层。
 
 """研究执行 ↔ 人读交付的接线层。
 
@@ -63,6 +65,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from kernel.autoresearch import reporting  # noqa: E402  (复用页面/事件/来源指纹的规则)
+from kernel.autoresearch.runtime.store import ReadonlyStore  # noqa: E402
 
 SCHEMA = 1
 
@@ -251,10 +254,10 @@ class Lifecycle:
             raise LifecycleError(
                 f"runtime 库不存在：{_rel(self.root, self.db) if self.db.is_relative_to(self.root) else self.db}"
                 "（先 workflow prepare；本模块不建库）")
-        connection = sqlite3.connect(self.db.resolve().as_uri() + "?mode=ro", uri=True)
+        # 连接方式委托 runtime.store.ReadonlyStore：WAL 库按 sidecar 实况选
+        # mode=ro / immutable=1，读不创建 -shm / -wal；WAL 歧义态 StoreError 交给上层。
+        connection = ReadonlyStore(self.db).connect()
         try:
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA query_only=ON")
             connection.execute("BEGIN")
             yield connection
         finally:
@@ -322,8 +325,12 @@ class Lifecycle:
             plan = json.loads(frozen["plan_json"])
         except (KeyError, TypeError, ValueError) as exc:
             raise LifecycleError(f"gov_plans.plan_json 读不出：{exc}") from None
+        data = _pretty(plan).encode('utf-8')
+        version = frozen['version']
+        immutable = self.plan_dir(topic, plan_id) / f'plan-v{version}.json'
+        _write_once(immutable, data, label=f'计划版本 {plan_id} v{version}')
         target = self.plan_projection(topic, plan_id)
-        state = _write_once(target, _pretty(plan).encode("utf-8"), label=f"计划投影 {plan_id}")
+        state = _write_projection(target, data, label=f'计划投影 {plan_id}')
         return target, state
 
     def _receipt_payloads(self, topic, plan_id, record):

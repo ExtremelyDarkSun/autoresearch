@@ -1,8 +1,10 @@
 # GENERATED-BY: feishu 真实通道适配层（标准库实现）, 2026-11-10 +08:00
-# LAST-EDIT: 2026-11-10 +08:00
+# LAST-EDIT: 2026-11-10 +08:00（加密事件改为默认内核解密器：可选 cryptography，缺依赖 501 fail-closed）
 # PURPOSE: 补齐通用决策链「只有 FakeChannel」的缺口 —— 可运行的飞书发送/回执核验/入向验签与规范化
 # ORIGIN: kernel/autoresearch/decisions.py 的 ApprovalChannel 协议 + 飞书开放平台服务端 API 文档
 # CUMULATIVE-DELTA: 首版。token、上传、file/interactive/text 三种消息、GET 核验、webhook 验签与规范化。
+#   2026-11-10 补：接入 channels/crypto.py 解密飞书加密事件（先验签、再解密、再 token/identity/replay）；
+#   缺 cryptography ⇒ reason=decryption_unavailable(501)，密文不合法 ⇒ decryption_failed(400)，不降级明文。
 """飞书（Feishu / Lark）通道适配层 —— 真实 HTTP 实现，默认不发、可离线验收。
 
 ## 它接到哪儿
@@ -68,16 +70,38 @@
 
 本模块的**平台行为未实测**：没有真实凭据、没有往真实租户发过任何消息、没有加过真实 webhook。
 已验的是「离线注入 transport / credential_source 时适配层自身的行为」：状态机、回执形状、
-GET 复核、验签顺序、重放拒绝、允许列表。真实租户上的送达、权限、群 @ 条件、加密事件
-（见下）都需部署后实测。
+GET 复核、验签顺序、重放拒绝、允许列表，以及用可选 `cryptography` 解密**加密事件**
+（官方固定向量 + 本地生成的加密 challenge / 文字 / 卡片点击走完整 handle_webhook → 认证 →
+ingest）。真实租户上的送达、权限、群 @ 条件、加密推送仍需部署后实测。
 
-## 加密事件：明确不支持，不假装支持
+## 加密事件：默认内核解密器（可选 `cryptography` 依赖）
 
-飞书用 `Encrypt Key` 加密事件体（AES-256-CBC，见下方文档）。**Python 标准库没有 AES**，
-本适配层不实现、也不降级成「当作明文解析」：收到 `{"encrypt": ...}` 一律
-`reason='encryption_unsupported'` + HTTP 501 + `requirement='deployment_decryptor'`
-（部署方自己装解密适配层，或把 `pycryptodome` 之类带进部署环境后替换该方法）。
-⚠️ 注意：`encrypt_key` 本身仍参与**签名校验**（见下），所以没配解密器也能拒绝伪造请求。
+飞书官方文档写明：**应用里配置 Encrypt Key ⇒ 平台加密推送所有事件**（请求网址校验的
+`challenge` 也加密），没配才明文；而签名校验的算式 `SHA256(timestamp+nonce+encrypt_key+body)`
+本身就要求 Encrypt Key。所以「要验签」和「会收到密文」是同一件事 —— 不解密就等于收不到任何
+审批。处理顺序（与安全要求一致）：
+
+1. **先对原始（密文）body 验签**（`compute_signature` + `hmac.compare_digest`）；
+2. 再做重放去重（`seen` 表，按 `timestamp|nonce|signature`）；
+3. 只有验签与去重都通过，才调 `kernel/autoresearch/channels/crypto.py` 解密；
+4. 解密后的明文重新过 `header.token`、发送人允许列表、绑定、卡片台账等全部检查 ——
+   **不因为「已经解密」而降低任何判据**。
+
+失败语义（fail-closed，⛔ 不降级成明文解析）：
+
+- 缺依赖 / 版本不可用 ⇒ `reason='decryption_unavailable'` + HTTP **501**，detail 指向
+  `python -m pip install -r requirements-feishu.txt`；
+- 密文不合法（base64 / 长度 / PKCS7 填充 / UTF-8 / 非 JSON 对象 / 重复键 / 非有限字面量）⇒
+  `reason='decryption_failed'` + HTTP **400**；
+- 两种都**不 ingest、不认证**；同一 `event_id` 也不会因为解密失败被当作已处理。
+
+安装（核心其余功能仍只用标准库）：
+
+    python -m pip install -r requirements-feishu.txt
+
+`FeishuChannel.health()` 不把「解密后端缺失」列为不可用理由（发送路径仍可跑），
+但 `channels doctor` 会把它算成 blocking（`channels_cli` 的 `encryption_backend` 检查），
+且 `channels listen` 会在**起服务之前**就拒绝（不建库、不监听）。
 
 ## 引用来源（open.feishu.cn 官方文档，2026-11-10 核对）
 
@@ -122,6 +146,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import socket
@@ -141,9 +166,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 try:
     from kernel.autoresearch.runtime.delivery import NotSent
     from kernel.autoresearch.runtime.store import canonical_json
+    from kernel.autoresearch.channels import crypto as channel_crypto
 except ImportError:  # pragma: no cover - 直接以脚本路径导入时的兜底
     from kernel.autoresearch.runtime.delivery import NotSent
     from kernel.autoresearch.runtime.store import canonical_json
+    from kernel.autoresearch.channels import crypto as channel_crypto
 
 
 # ────────────────────────────── 常量 ──────────────────────────────
@@ -262,7 +289,7 @@ def _millis(value, *, unit: str = 'ms'):
         number = float(str(value).strip())
     except (TypeError, ValueError):
         return None
-    if number <= 0:
+    if not math.isfinite(number) or number <= 0:
         return None
     if unit == 'unknown':
         # 卡片回调文档写的是微秒级，消息事件是毫秒级；用数量级区分。
@@ -851,7 +878,8 @@ class FeishuChannel:
                 'card_wire': 'short_code+card_options（显式；缺则 fail-closed）',
                 'card_click': 'card.action.trigger',
                 'reply_quote': 'POST /im/v1/messages/:message_id/reply',
-                'encrypted_webhook': 'unsupported-stdlib-requires-deployment-decryptor',
+                'encrypted_webhook': ('aes-256-cbc:' + ('available' if channel_crypto.backend_available()
+                                                        else 'missing-backend')),
                 'send_enabled': bool(config.send_enabled),
             },
             'version': config.version,
@@ -900,6 +928,7 @@ class FeishuChannel:
                               'verification_token_ref': config.verification_token_ref or '',
                               'max_skew_seconds': config.max_skew_seconds,
                               'replay_guard': 'seen 表按 timestamp|nonce|signature 去重'},
+                  'decryption': channel_crypto.backend_detail(),
                   'reasons': reasons}
         return {'ok': not reasons, 'detail': detail, 'adapter': ADAPTER,
                 'mention_required': bool(config.mention_required)}
@@ -1343,12 +1372,13 @@ class FeishuChannel:
         拒绝理由（`reason`）一览：
         `signature_unconfigured` / `signature_missing` / `signature_bad_timestamp` /
         `timestamp_skew`（>5 分钟时差）/ `signature_mismatch` / `replay`（同一签名二次）/
-        `malformed_body` / `encryption_unsupported`（标准库无 AES ⇒ 需部署解密适配层）/
+        `malformed_body` / `decryption_unavailable`（没装可选的 `cryptography` ⇒ 501）/
+        `decryption_failed`（密文/填充/UTF-8/JSON 不合法 ⇒ 400）/
         `token_unconfigured` / `token_mismatch` / `sender_not_allowed` / `unbound_chat` /
         `bot_echo` / `card_not_sent_by_adapter` / `event_conflict` …
         """
         verification = {'signature': 'not_checked', 'token': 'not_checked',
-                        'encrypted': False, 'skew_seconds': None,
+                        'encrypted': False, 'decrypted': False, 'skew_seconds': None,
                         'event_type': '', 'event_id': '', 'source': SOURCE}
         if not isinstance(raw_body, (bytes, bytearray)):
             raise FeishuError('raw_body 必须是原始字节（验签要对原始字节算 SHA256）')
@@ -1371,9 +1401,13 @@ class FeishuChannel:
             stamp = float(timestamp)
         except ValueError:
             return _reject('signature_bad_timestamp', verification, status=401)
+        if not math.isfinite(stamp) or stamp <= 0:
+            # NaN / inf / 0 / 负数：`abs(clock - nan) > limit` 恒为 False，不先挡住就能绕过时差闸。
+            return _reject('signature_bad_timestamp', verification, status=401,
+                           detail='timestamp 必须是有限正数（NaN / Infinity / 0 一律拒）')
         skew = abs(float(self.clock()) - stamp)
         verification['skew_seconds'] = round(skew, 3)
-        if skew > float(self.config.max_skew_seconds):
+        if not math.isfinite(skew) or skew > float(self.config.max_skew_seconds):
             return _reject('timestamp_skew', verification, status=401,
                            detail=f'与本地时钟相差 {verification["skew_seconds"]}s '
                                   f'> {self.config.max_skew_seconds}s')
@@ -1398,12 +1432,15 @@ class FeishuChannel:
         if not isinstance(body, dict):
             return _reject('malformed_body', verification, status=400)
         if 'encrypt' in body:
+            # ⚠️ 只有验签 + 重放去重都过了才会走到这里；解密失败一律 fail-closed，⛔ 不降级成明文。
             verification['encrypted'] = True
-            return _reject(
-                'encryption_unsupported', verification, status=501,
-                detail='事件被 Encrypt Key 加密，Python 标准库没有 AES ⇒ 本适配层不解密、'
-                       '不假装支持；requirement=deployment_decryptor：'
-                       '请部署带解密能力的适配层，或关闭加密策略')
+            try:
+                body = channel_crypto.decrypt_event_payload(encrypt_key, body.get('encrypt'))
+            except channel_crypto.DecryptUnavailable as exc:
+                return _reject('decryption_unavailable', verification, status=501, detail=str(exc))
+            except channel_crypto.DecryptError as exc:
+                return _reject('decryption_failed', verification, status=400, detail=str(exc))
+            verification['decrypted'] = True
 
         token, why = self._resolve(self.config.verification_token_ref)
         if why:

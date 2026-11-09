@@ -1,11 +1,15 @@
 # GENERATED-BY: 完整功能迁移（意图与过程监控 L1–L14 / V1–V3）
-# LAST-EDIT: 2026-11-09（首版；补 sqlite 追加账 + sha 链、宿主注入协议、两水位、完整报告、意见三态与跨报告阻断）
+# LAST-EDIT: 2026-11-09（补自然语言撤回 / 替换路径：真实用户原话 + 独立报告 closure.user_command 逐键绑定；
+#            原有 JSON 用户命令路径保持原样）
 # PURPOSE: 专项意图与过程监控的通用机制 —— 四态、三触发、两个水位、固定截止快照、独立子会话报告核验、
 #          意见处置与跨报告阻断、四理由闭合、进下一轮前的只读检查。不调用模型、不自动派工、不伪造授权。
 # ORIGIN: 上游单文件工具（2552 行）的机制；契约 kernel/contracts/intent_monitor.md；角色 kernel/roles/intent-monitor.md；
 #         行为预期 L1–L14 与 V1–V3 见 kernel/contracts/framework_expectations.md
 # CUMULATIVE-DELTA: 首版。旧治理层只核 covers/verdict/basis 四字段；本版按契约实现完整报告九键 + direction_sha256、
 #         宿主证据核验（spawn / fork 拒绝）、intent.quote 逐字比对、trajectory 不读未来、意见跨报告继承。
+#         2026-11-09 补：`close(withdrawn/replaced)` 除原有 JSON 用户命令外，接受真实用户原话
+#         （`quote={session,seq,text}`）+ 当前独立报告 `closure.user_command` 的逐键绑定；
+#         报告侧在 record 时校验绑定形状、原话逐字、closure.sources 含同一原话。
 """专项意图与过程监控（跨轮方向与分析监督）。
 
 这一层解决的问题**不是**「方案写全了没有」，而是：
@@ -120,15 +124,27 @@ V1（固定水位回放）· V2（主分析诱导冲突时仍指回原始来源�
 `verify("user_command", {"proof": {session_id, seq}, "expected": command})` 逐键核过。
 「另一条无关用户消息里恰好有同样的字眼」不算豁免。
 
-⛔ **`close(withdrawn/replaced)` 同理**：内部 expected 是
-`{"action": "close_intent", "intent_id": <当前活跃意图 id>, "reason": "withdrawn"|"replaced",
-"replacement_intent_id": <新 id 或 null>, "target": "closed"|"none"}`，由同一条宿主核验逐键比对；
-命令 seq 还必须晚于意图引到的用户原话。`achieved` / `unsatisfiable` **不需要**用户命令：
-必须有仍有效的独立报告（`verdict="achieved"` / `"unachievable"`）。
+⛔ **`close(withdrawn/replaced)` 有两条证明路径，两条都不接受「一段像撤回的话」自己关意图**：
+
+1. **JSON 用户命令路径（原有路径，不变）**：内部 expected 是
+   `{"action": "close_intent", "intent_id": <当前活跃意图 id>, "reason": "withdrawn"|"replaced",
+   "replacement_intent_id": <新 id 或 null>, "target": "closed"|"none"}`，由宿主
+   `verify("user_command", …)` 逐键比对；命令 seq 还必须晚于意图引到的用户原话。
+2. **自然语言原话路径（本版新增）**：`close(..., quote={"session", "seq", "text"})` 给一条
+   **真实用户原话**，由宿主会话逐字核验；同时必须有**当前、宿主核验为 spawn 的独立报告**在
+   `closure.user_command` 里把**同一条原话**绑定成本次动作（`expected` 与动作逐键相等 +
+   `user_quote` 同 seq 同文本），该报告的 `closure.sources` 也必须含这条原话。原话 seq 必须
+   晚于当前意图来源，且不超过报告的 `covers.user_seq` / `snapshot_max_seq`。语义判断（这句话
+   算不算撤回 / 替换）由那份独立报告做，本层只核「同一原话 + 同一动作」的逐键绑定；主会话自己
+   传原话、模糊话、旧话、错意图、过期报告、未评估新原话、未处置阻断一律拒。
+
+`achieved` / `unsatisfiable` **不需要**用户命令：必须有仍有效的独立报告
+（`verdict="achieved"` / `"unachievable"`）。
 
 ⚠️ **意图建立与 `assess(none)` 仍按自然语言**（用户回答）判断：本层只机械要求「回答 seq 晚于被评估原话」
-与「评估必须显式」，**不声称机器核过用户说的『不要』** —— 那句话的语义由独立会话判断。同理，
-`close` 命令里 `reason="withdrawn"` 是用户自己填的机器命令，不是本层对自然语言的解释。
+与「评估必须显式」，**不声称机器核过用户说的『不要』** —— 那句话的语义由独立会话判断。
+`close` 的 JSON 路径里 `reason="withdrawn"` 是用户自己填的机器命令；自然语言路径的语义由
+仍有效的独立报告解释，本层只核绑定（L8 / L9）。
 
 文字改写不作废（L7）：方向源（计划/专题页这类人读文档）**改文字**只做诊断 `direction_changed`，
 不作废报告；真正让报告过期的是**新用户原话、结果/材料版本变化、材料包或快照被改写、独立子会话证据复核失败**。
@@ -140,6 +156,7 @@ import functools
 import hashlib
 import json
 import re
+import secrets
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -164,6 +181,9 @@ TRAJECTORY_VERDICTS = ("on_track", "drifted", "stalled", "unclear")
 REPORT_VERDICTS = ("on_track", "drifting", "blocked", "achieved", "unachievable")
 CLOSURE_TARGETS = ("keep", "closed", "none")
 CLOSURE_REASONS = ("achieved", "withdrawn", "replaced", "unsatisfiable")
+#: `close_intent` 命令的固定字段：JSON 用户命令与报告 `closure.user_command.expected` 都必须给全，
+#: 且与本次 close 动作**逐键相等**（多一个键就拒）。
+CLOSE_COMMAND_KEYS = ("action", "intent_id", "reason", "replacement_intent_id", "target")
 DISPOSITIONS = ("accepted", "declined", "needs_user")
 EVIDENCE_KINDS = ("raw_session", "snapshot", "file")
 
@@ -282,6 +302,32 @@ HOST_PROTOCOL = {
         ),
         "note": "父 agent 的 kernel/autoresearch/host_evidence.py 已实现 monitor_independence 与 user_command；本模块不挑选证据路径",
     },
+    "close_withdrawn_replaced": {
+        "paths": {
+            "1_json_user_command": {
+                "call": "monitor.close(owner, reason=..., target=..., report_id=..., proof={session_id, seq})",
+                "host": "verify('user_command', {proof, expected}) 逐键核命令；seq 须晚于意图引到的用户原话",
+                "note": "原有路径，语义是用户自己发的机器命令（正文含唯一 action=close_intent 的 JSON 对象）",
+            },
+            "2_natural_user_quote": {
+                "call": ("monitor.close(owner, reason=..., target=..., report_id=..., "
+                         "quote={session, seq, text})"),
+                "host": ("不需要新的 verify kind：原话由本模块用 host.session(owner) 逐字核；"
+                         "报告独立性仍由 verify('monitor_independence') 在 record 与过期复核时核"),
+                "binding": {
+                    "where": "报告的 closure.user_command",
+                    "shape": {
+                        "expected": "close_intent 的固定五键（action/intent_id/reason/replacement_intent_id/target）",
+                        "user_quote": {"session": "str", "seq": "int", "text": "str"},
+                    },
+                    "rules": ("expected 与本次动作逐键相等；user_quote 与 close.quote 同一 seq 同一文本；"
+                              "closure.sources 也含 {session, seq}；quote.seq 晚于意图来源且不超过 "
+                              "covers.user_seq / snapshot_max_seq"),
+                },
+                "note": "语义（算不算撤回 / 替换）由独立报告解释；本层只核「同一原话 + 同一动作」",
+            },
+        },
+    },
     "cli_adapter": {
         "flags": "--adapter <file.py|module:attr> --log-root <dir>",
         "factory": (
@@ -329,6 +375,21 @@ def _digest(value) -> str:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def _material_id(*, owner, exp, covers, direction_sha256, events_sha256,
+                 next_event_id, nonce) -> str:
+    """材料标识 `PREP-…` 的生成规则：**唯一标识**，不是内容哈希。
+
+    墙钟一律不参与（秒 / 微秒都不进），所以同一毫秒、同一微秒内连续两次 `prepare`
+    不会因为时间相同而撞 id；同一状态的两次 `prepare` 靠 `next_event_id`（账本追加序号）
+    区分，跨进程 / 偶发撞车再由 64 位 `nonce` 兜底。撞到账上已有 id 时调用方必须拒绝
+    覆盖旧材料包（旧报告要能回放，不能被同名版本改写）。
+    """
+    return "PREP-" + _digest({
+        "owner": owner, "exp": exp, "covers": covers, "direction": direction_sha256,
+        "events": events_sha256, "next_event_id": next_event_id, "nonce": nonce,
+    })[7:23]
 
 
 def _text(value) -> bool:
@@ -1208,6 +1269,97 @@ class Monitor:
                 "引文必须原样照抄，不许改写、缩写、拼接或引用别人的转述")
         return {"seq": seq, "chars": len(text), "sha256": _digest(text)}
 
+    def _closure_binding(self, owner, closure, closure_sessions, user_cutoff, cutoff):
+        """校验 / 归一 `closure.user_command`：报告把**哪一条原话**解释成本次 close 动作。
+
+        形状（多一个键就拒）：
+
+            {"expected": {"action": "close_intent", "intent_id": "INT-1",
+                          "reason": "withdrawn"|"replaced",
+                          "replacement_intent_id": "INT-2"|null, "target": "closed"|"none"},
+             "user_quote": {"session": "<负责人会话>", "seq": 12, "text": "逐字原话"}}
+
+        `user_quote` 必须是**真实用户原话**（宿主会话逐字比对），并同时出现在 `closure.sources`
+        里；`seq` 不得超过报告的 `covers.user_seq` 与固定截止。语义判断不在这里做 —— 这里只核
+        「报告确实把同一条原话解释成一个明确的 close 动作」。返回 `None` 表示报告没写绑定。
+        """
+        binding = closure.get("user_command")
+        if binding is None:
+            return None
+        if not isinstance(binding, dict):
+            raise MonitoringError("closure.user_command 须为对象（不给绑定就省略这个键，不要写 null）")
+        extra = set(binding) - {"expected", "user_quote"}
+        if extra:
+            raise MonitoringError(
+                "closure.user_command 含不允许的字段：" + ",".join(sorted(extra))
+                + "；只允许 expected 与 user_quote 两键")
+        expected = binding.get("expected")
+        if not isinstance(expected, dict):
+            raise MonitoringError(
+                "closure.user_command.expected 缺失：必须写本次 close_intent 动作的完整命令")
+        missing = [key for key in CLOSE_COMMAND_KEYS if key not in expected]
+        if missing:
+            raise MonitoringError(
+                "closure.user_command.expected 缺字段：" + ",".join(missing)
+                + "；必须与 close_intent 命令逐键给全")
+        extra = set(expected) - set(CLOSE_COMMAND_KEYS)
+        if extra:
+            raise MonitoringError(
+                "closure.user_command.expected 含不允许的字段：" + ",".join(sorted(extra))
+                + "；动作必须与本次 close 逐键相等，不接受更宽的命令")
+        if expected.get("action") != "close_intent":
+            raise MonitoringError("closure.user_command.expected.action 只能是 close_intent")
+        reason = expected.get("reason")
+        if reason not in ("withdrawn", "replaced"):
+            raise MonitoringError(
+                "closure.user_command 只用于 withdrawn / replaced；"
+                "达成 / 不可满足必须由 verdict 支撑，不许用原话绑定")
+        _need_text(expected.get("intent_id"), "closure.user_command.expected.intent_id")
+        target = expected.get("target")
+        if target not in ("closed", "none"):
+            raise MonitoringError(
+                "closure.user_command.expected.target 须为 closed | none（与报告 closure.target 相等）")
+        if target != closure.get("target"):
+            raise MonitoringError(
+                f"closure.user_command.expected.target({target}) 与报告 closure.target"
+                f"({closure.get('target')!r}) 不一致：绑定动作和闭合建议必须指向同一个目标")
+        replacement = expected.get("replacement_intent_id")
+        if reason == "withdrawn":
+            if replacement not in (None, ""):
+                raise MonitoringError(
+                    "withdrawn 的绑定不允许 replacement_intent_id（撤回就是撤回，不带替换）")
+        else:
+            if not _text(replacement):
+                raise MonitoringError(
+                    "replaced 的绑定必须写 replacement_intent_id（新意图标识；"
+                    "负责人派工时没给新 id 就写成 issue，不要用替换闭合）")
+            if target != "closed":
+                raise MonitoringError("replaced 的绑定 target 只能是 closed")
+        quote = binding.get("user_quote")
+        if not isinstance(quote, dict):
+            raise MonitoringError(
+                "closure.user_command.user_quote 缺失：必须写完整 {session, seq, text}，不许只给 seq")
+        if "session" not in quote:
+            raise MonitoringError(
+                "closure.user_command.user_quote 缺 session：必须指名该负责人顶层会话")
+        row = self._user_quote(owner, quote, "closure.user_command.user_quote")
+        if row["seq"] > user_cutoff:
+            raise MonitoringError(
+                f"closure.user_command.user_quote.seq={row['seq']} 超过本次用户高水位 "
+                f"{user_cutoff}：绑定原话必须在报告已评估的用户消息之内")
+        if row["seq"] > cutoff:
+            raise MonitoringError(
+                f"closure.user_command.user_quote.seq={row['seq']} 超过固定截止 seq={cutoff}："
+                "绑定原话不在本次证据内")
+        if not any(item["session"] == owner and item["seq"] == row["seq"] and item["is_user"]
+                   for item in closure_sessions):
+            raise MonitoringError(
+                "报告 closure.sources 必须包含同一条用户原话（{session, seq}）："
+                "绑定原话与闭合依据必须指到同一条消息")
+        return {"expected": dict(expected),
+                "user_quote": {"session": owner, "seq": row["seq"], "text": row["text"],
+                               "sha256": row["sha256"]}}
+
     def _validate_report(self, owner, report, prep, report_text) -> dict:
         if not isinstance(report, dict):
             raise MonitoringError("监控报告必须是对象")
@@ -1358,7 +1510,10 @@ class Monitor:
         if closure.get("target") not in CLOSURE_TARGETS:
             raise MonitoringError("closure.target 须为 " + "|".join(CLOSURE_TARGETS))
         _need_text(closure.get("basis"), "closure.basis")
-        section_sources(closure.get("sources"), "closure.sources")
+        _, closure_sessions = section_sources(closure.get("sources"), "closure.sources")
+        # 可选：把一条真实用户原话绑定成 withdrawn / replaced（自然语言闭合路径）。
+        # 这里就把形状、逐字原话、closure.sources 同源核掉，close 时只核「同一动作 + 同一原话」。
+        self._closure_binding(owner, closure, closure_sessions, user_cutoff, cutoff)
 
         reads = report.get("evidence_reads")
         if not isinstance(reads, list) or not reads:
@@ -2234,10 +2389,20 @@ class Monitor:
             "user_seq": watermark,
             "snapshot_max_seq": max_seq,
         }
-        prepared_id = "PREP-" + _digest({
-            "owner": owner, "exp": exp, "covers": covers, "direction": dsha,
-            "events": _events_digest(record, max_seq), "at": _now(),
-        })[7:23]
+        # 材料标识是**唯一标识**，不是内容哈希：墙钟一律不进 id（见 _material_id）。
+        # 追加序号 = 读到的行数 + 本次 sync 新增的行数 + 1（就是 prepared 这一行将拿到的 id）。
+        next_event_id = len(events) + len(sync["ids"]) + 1
+        known = {str(event["payload"].get("prepared_id")) for event in events
+                 if event["kind"] == "prepared"}
+        prepared_id = _material_id(
+            owner=owner, exp=exp, covers=covers, direction_sha256=dsha,
+            events_sha256=_events_digest(record, max_seq),
+            next_event_id=next_event_id, nonce=secrets.token_hex(8))
+        if prepared_id in known:
+            # 宁可拒绝也不覆盖：材料包按 prepared_id 落盘，覆盖会让仍有效的旧报告变成
+            # 「材料包已被改写」，等于抹掉旧版本的证据。重试会拿到新的 nonce。
+            raise MonitoringError(
+                "prepared_id 与账上已有的材料版本撞车：拒绝覆盖旧材料包（请重试 prepare）")
         snapshot = _fit_snapshot(build_snapshot(record, max_seq))
         pack_rel, snapshot_rel = self._pack_paths(owner, prepared_id)
         snapshot_sha = self._write_json(snapshot_rel, snapshot)
@@ -2276,6 +2441,8 @@ class Monitor:
                 "（至少一条 evidence_reads.kind=raw_session，写会话号与 seq）。"
                 "报告正文必须整段就是一个 JSON 文档，字段照材料包 §9；"
                 "covers 与 direction_sha256 原样照抄；intent.quote 必须逐字抄用户原话。"
+                "若你判断最新用户原话是在撤回 / 替换当前意图，按 §9 写 closure.user_command 绑定"
+                "（expected 与 user_quote 都要写全）；不判就省略这个键，不要写空壳。"
                 f"报告另存一份到 {report_path}。禁止 fork（不要用 subagent_fork / workflow）。"
             ),
         }
@@ -2463,17 +2630,84 @@ class Monitor:
 
     # -- 闭合 ---------------------------------------------------------------
 
+    def _bound_quote_close(self, *, owner, quote, command, binding, report_id, prep,
+                           report_row, base_seq):
+        """路径②：把一条真实用户原话绑到「当前独立报告的解释」上。
+
+        调用前 `close` 已经核过：报告是最后一份仍有效的、`closure.target` 与本次 `target` 相等、
+        没有未评估的新原话、没有未处置意见 / 阻断。这里只核绑定本身：
+
+        * `quote` 是负责人顶层会话里的**真实用户原话**（宿主会话逐字比对，不许转述）；
+        * 报告的 `closure.user_command` 把**同一条**原话解释成本次动作：`expected` 与本次动作
+          逐键相等，`user_quote` 同 seq 同文本；
+        * `quote.seq` 晚于当前意图来源，且不超过报告的 `covers.user_seq` / `snapshot_max_seq`。
+        """
+        if not isinstance(binding, dict):
+            raise MonitoringError(
+                "该报告没有把这条用户原话解释成撤回 / 替换：closure.user_command 缺失。"
+                "自然语言闭合必须有仍有效独立报告的逐键绑定；没有绑定就只能走 JSON 用户命令路径")
+        if not isinstance(quote, dict):
+            raise MonitoringError("close.quote 须为 {session, seq, text} 对象")
+        if "session" not in quote:
+            raise MonitoringError("close.quote 必须写明 session（该负责人顶层会话）")
+        row = self._user_quote(owner, quote, "close.quote")
+        if row["seq"] <= base_seq:
+            raise MonitoringError(
+                f"close.quote.seq={row['seq']} 必须晚于意图引到的用户原话（{base_seq}）："
+                "用旧话不能撤回 / 替换")
+        covers = report_row["payload"]["report"].get("covers") or {}
+        user_cap = covers.get("user_seq")
+        if type(user_cap) is not int or row["seq"] > user_cap:
+            raise MonitoringError(
+                f"close.quote.seq={row['seq']} 超过报告的用户高水位 {user_cap!r}："
+                "报告没有评估过这条原话，不能拿它闭合")
+        cutoff = prep.get("snapshot_max_seq")
+        if type(cutoff) is not int or row["seq"] > cutoff:
+            raise MonitoringError(
+                f"close.quote.seq={row['seq']} 超过固定截止 seq={cutoff!r}：原话不在报告的证据范围内")
+        if binding.get("expected") != command:
+            raise MonitoringError(
+                "报告 closure.user_command.expected 与本次 close 不一致（逐键比对）：报告="
+                + _canonical(binding.get("expected")) + "；本次=" + _canonical(command)
+                + "。意图 id / 理由 / 替换 id / 目标必须完全相等，错意图不算")
+        bound = self._user_quote(owner, binding.get("user_quote"),
+                                 "报告 closure.user_command.user_quote")
+        if bound["seq"] != row["seq"] or bound["text"] != row["text"]:
+            raise MonitoringError(
+                "报告绑定的原话与本次 close 给的不是同一条（必须同 seq 同一段文本）："
+                f"报告 seq={bound['seq']}，本次 seq={row['seq']}")
+        return row, {
+            "report_id": report_id,
+            "prepared_id": report_row["payload"].get("prepared_id"),
+            "monitor_session": (report_row["payload"].get("host_proof") or {}).get("monitor_session"),
+            "proof_seq": (report_row["payload"].get("host_proof") or {}).get("proof_seq"),
+            "expected": command,
+            "user_quote": bound,
+        }
+
     def close(self, owner, *, reason, target, report_id, quote=None, replacement_intent_id=None,
               sources=None, proof=None, expected=None) -> dict:
         """闭合意图：四条理由 + **最后一份仍有效报告** + 全部意见已处置。
 
-        `withdrawn` / `replaced` **必须**由负责人会话里一条真实用户命令消息证明，内部 expected：
+        `withdrawn` / `replaced` 有两条证明路径（都不接受「一段像撤回的话」自己关意图）：
+
+        ① **JSON 用户命令**（原有路径）：负责人会话里一条真实用户消息，正文含唯一命令
 
             {"action": "close_intent", "intent_id": <当前活跃意图 id>,
              "reason": "withdrawn"|"replaced",
              "replacement_intent_id": <新 id 或 null>, "target": "closed"|"none"}
 
-        由宿主 `verify("user_command", {"proof": {session_id, seq}, "expected": command})` 逐键核过。
+           由宿主 `verify("user_command", {"proof": {session_id, seq}, "expected": command})`
+           逐键核过；`proof.seq` 还必须晚于意图引到的用户原话。
+
+        ② **自然语言原话 + 独立报告绑定**（本版新增）：`quote={"session","seq","text"}` 是一条
+           真实用户原话，由宿主会话逐字核验；**当前仍有效的独立报告**必须在其
+           `closure.user_command` 里把**同一条**原话绑定成本次动作（`expected` 逐键相等 +
+           `user_quote` 同 seq 同文本），且报告的 `closure.sources` 也含这条原话。原话 seq 必须
+           晚于当前意图来源、且不超过报告的 `covers.user_seq` / `snapshot_max_seq`。
+           语义（这句话算不算撤回 / 替换）由那份报告判断，本层只核「同一原话 + 同一动作」；
+           主会话自己传原话、模糊话、旧话、错意图、过期报告、未评估新原话、未处置阻断一律拒。
+
         `achieved` / `unsatisfiable` 不需要用户命令：必须有仍有效独立报告（verdict 对得上）。
         """
         owner = _safe_name(owner)
@@ -2525,6 +2759,7 @@ class Monitor:
         verified = None
         proof_seq = None
         replacement = None
+        binding_row = None
         if reason in ("achieved", "unsatisfiable"):
             if proof is not None or expected is not None:
                 raise MonitoringError(
@@ -2561,36 +2796,46 @@ class Monitor:
                 raise MonitoringError(
                     "close.expected 必须与本次动作逐键相等：" + _canonical(command)
                     + "；不接受更宽或换字段的命令")
-            if proof is None:
-                raise MonitoringError(
-                    f"{reason} 必须给 proof：负责人会话里一条真实用户消息，正文含命令 "
-                    + _canonical(command) + "（仅一段像撤回的原话不算）")
-            sid, seq = self._proof(proof)
-            if not _same_session(sid, owner):
-                raise MonitoringError("close 的用户命令必须来自该负责人会话本身")
             base_seq = self._intent_source_seq(events)
-            if seq <= base_seq:
-                raise MonitoringError(
-                    f"close 的用户命令 seq={seq} 必须晚于意图引到的用户原话（{base_seq}）："
-                    "用旧话不能撤回 / 替换")
-            verified = self._host_verify("user_command", {
-                "proof": {"session_id": sid, "seq": seq},
-                "expected": command,
-            })
-            if not _same_session(verified.get("session_id"), owner):
-                raise MonitoringError("宿主核验返回的会话不是该负责人会话")
-            if type(verified.get("seq")) is int and verified["seq"] != seq:
-                raise MonitoringError("宿主核验返回的 seq 与 proof 不一致")
-            if isinstance(verified.get("command"), dict) and verified["command"] != command:
-                raise MonitoringError("宿主核验返回的命令与本次动作不一致")
-            proof_seq = seq
-            if quote is not None:
-                quote_row = self._user_quote(owner, quote, "close.quote")
-                if quote_row["seq"] != seq:
+            if proof is not None:
+                # 路径①：负责人会话里一条真实用户消息，正文含完整 JSON 命令（原有路径，行为不变）
+                sid, seq = self._proof(proof)
+                if not _same_session(sid, owner):
+                    raise MonitoringError("close 的用户命令必须来自该负责人会话本身")
+                if seq <= base_seq:
                     raise MonitoringError(
-                        "close.quote.seq 必须与 proof.seq 相同：引文必须就是那条命令")
+                        f"close 的用户命令 seq={seq} 必须晚于意图引到的用户原话（{base_seq}）："
+                        "用旧话不能撤回 / 替换")
+                verified = self._host_verify("user_command", {
+                    "proof": {"session_id": sid, "seq": seq},
+                    "expected": command,
+                })
+                if not _same_session(verified.get("session_id"), owner):
+                    raise MonitoringError("宿主核验返回的会话不是该负责人会话")
+                if type(verified.get("seq")) is int and verified["seq"] != seq:
+                    raise MonitoringError("宿主核验返回的 seq 与 proof 不一致")
+                if isinstance(verified.get("command"), dict) and verified["command"] != command:
+                    raise MonitoringError("宿主核验返回的命令与本次动作不一致")
+                proof_seq = seq
+                if quote is not None:
+                    quote_row = self._user_quote(owner, quote, "close.quote")
+                    if quote_row["seq"] != seq:
+                        raise MonitoringError(
+                            "close.quote.seq 必须与 proof.seq 相同：引文必须就是那条命令")
+            elif quote is not None:
+                # 路径②：真实用户原话 + 当前独立报告 closure.user_command 的逐键绑定（本版新增）
+                quote_row, binding_row = self._bound_quote_close(
+                    owner=owner, quote=quote, command=command,
+                    binding=closure.get("user_command"), report_id=report_id,
+                    prep=prep, report_row=row, base_seq=base_seq)
+            else:
+                raise MonitoringError(
+                    f"{reason} 必须给 proof 或 quote：proof=负责人会话里一条真实用户消息，正文含命令 "
+                    + _canonical(command) + "；quote=一条真实用户原话 {session, seq, text}，"
+                    "且必须有仍有效独立报告在 closure.user_command 里把**同一条原话**绑定成本次动作"
+                    "（主会话自己传一段像撤回的话不算）")
         refs = self._file_refs(sources, "close.sources")
-        state_row = self._append(owner, "state", {
+        payload = {
             "to": target, "why": "close", "reason": reason,
             "text": closure.get("basis"), "report_id": report_id,
             "exp": row["payload"].get("exp", ""), "evidence": quote_row,
@@ -2598,10 +2843,14 @@ class Monitor:
             "replacement_intent_id": replacement,
             "command": command, "verified": verified, "proof_seq": proof_seq,
             "sources": _source_map(self.root, refs) if refs else {"files": {}, "locators": {}},
-        })
+        }
+        if binding_row is not None:
+            payload["binding"] = binding_row
+        state_row = self._append(owner, "state", payload)
         return {"ok": True, "state": target, "reason": reason, "report_id": report_id,
                 "event_id": state_row["id"], "evidence": quote_row,
-                "command": command, "proof_seq": proof_seq}
+                "command": command, "verified": verified, "proof_seq": proof_seq,
+                "binding": binding_row}
 
     # -- 只读检查 -----------------------------------------------------------
 
@@ -2857,7 +3106,7 @@ def build_snapshot(record, max_seq: int) -> dict:
     """固定截止 `max_seq` 的**可见**会话快照：排除隐藏 reasoning，保留可检索原文。"""
     names = {}
     for event in record["events"]:
-        if event["type"] == "tool/call":
+        if event['seq'] <= max_seq and event["type"] == "tool/call":
             data = event.get("data") or {}
             call_id = data.get("call_id", data.get("callId"))
             if isinstance(call_id, str):
@@ -2977,6 +3226,9 @@ def render_pack(*, prepared_id, owner, exp, analysis, covers, snapshot, snapshot
     add("")
     add("## 4. 意图与方向源")
     add("- 意图（负责人登记的原文）：" + (analysis["intent"] or "（none：无专项意图，只评估方向是否仍成立）"))
+    add("- 当前意图标识 `intent_id`："
+        + (f"`{analysis['intent_id']}`（报告要绑定撤回 / 替换时原样写进 expected）"
+           if analysis.get("intent_id") else "（无：none / closed 没有可闭合的意图）"))
     add("- 方向源（内容 sha 已绑定；**文字改写只作提示**，不作废报告，但要说明当前预期是否已变）：")
     for ref in direction_refs:
         add(f"  - `{ref['path']}` @ `{ref['locator']}`")
@@ -3106,6 +3358,24 @@ def render_pack(*, prepared_id, owner, exp, analysis, covers, snapshot, snapshot
     add("```json")
     add(json.dumps(skeleton, ensure_ascii=False, indent=2))
     add("```")
+    add("")
+    add("**（可选）自然语言闭合绑定**：如果你判断最新一条用户原话是对**当前意图**的撤回 / 替换，")
+    add("在 `closure` 里再加一个 `user_command`（只允许 `expected` 与 `user_quote` 两键）：")
+    add("```json")
+    add(json.dumps({"expected": {"action": "close_intent",
+                                "intent_id": analysis.get("intent_id") or "<§4 的 intent_id>",
+                                "reason": "withdrawn", "replacement_intent_id": None,
+                                "target": "closed"},
+                    "user_quote": {"session": owner, "seq": quote_seq, "text": quote_text[:120]}},
+                   ensure_ascii=False, indent=2))
+    add("```")
+    add("- `expected` 必须与负责人要执行的动作**逐键相等**：`intent_id`＝§4 的当前意图、`reason`、")
+    add("  `replacement_intent_id`（`replaced` 必须写负责人派工时给的新 id；没给就写成 issue）、")
+    add("  `target`＝本报告 `closure.target`。")
+    add("- `user_quote` 必须是**真实用户原话**的逐字片段（与 §5 / §8 一致），`closure.sources` 里也要有")
+    add("  `{\"session\": …, \"seq\": 同一条}`；对不上、非用户消息、超过 `user_seq` 都会被拒。")
+    add("- 没有这条绑定，撤回 / 替换只能由用户在会话里发完整 JSON 命令（`action=close_intent`）才能闭合；")
+    add("  主会话自己说「用户不想做了」不算。")
     add("")
     add("**想闭合旧意见**：`resolves` 一条一条写（`report_id` 旧报告、`issue_id` 旧问题；必须带理由与依据）：")
     add("```json")

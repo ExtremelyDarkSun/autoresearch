@@ -24,6 +24,7 @@ import time
 import unittest
 import urllib.parse
 from pathlib import Path
+from unittest import mock
 
 from kernel.autoresearch.channels import feishu
 from kernel.autoresearch.channels.feishu import (AmbiguousSend, FeishuChannel, FeishuConfig,
@@ -600,15 +601,32 @@ class WebhookTests(unittest.TestCase):
         self.assertEqual(second['reason'], 'replay')
         self.assertEqual(len(channel.poll(None)['events']), 1)
 
-    def test_encrypted_body_fails_closed_with_explicit_reason(self):
+    def test_encrypted_body_without_decrypt_backend_fails_closed(self):
+        """缺可选解密依赖时：501 明说缺什么，⛔ 不降级成明文解析。"""
         channel, _ = self.channel()
         headers, raw = signed({'encrypt': 'base64-ciphertext'}, clock=self.clock)
-        result = channel.handle_webhook(headers, raw)
+        unavailable = feishu.channel_crypto.DecryptUnavailable(
+            '没有可用的 AES 解密后端（python -m pip install cryptography）')
+        with mock.patch.object(feishu.channel_crypto, 'decrypt_event_payload',
+                               side_effect=unavailable):
+            result = channel.handle_webhook(headers, raw)
         self.assertFalse(result['ok'])
-        self.assertEqual(result['reason'], 'encryption_unsupported')
+        self.assertEqual(result['reason'], 'decryption_unavailable')
         self.assertEqual(result['status'], 501)
-        self.assertIn('deployment_decryptor', result['detail'])
+        self.assertIn('cryptography', result['detail'])
         self.assertTrue(result['verification']['encrypted'])
+        self.assertFalse(result['verification']['decrypted'])
+        self.assertEqual(channel.poll(None)['events'], [])
+
+    def test_non_finite_request_timestamp_is_refused(self):
+        """NaN / Infinity 会让「时差 > 上限」恒为 False ⇒ 必须在算签名前就拒。"""
+        channel, _ = self.channel()
+        for stamp in ('nan', 'inf', '-inf', '0'):
+            headers, raw = signed(message_event(), clock=self.clock, timestamp=stamp,
+                                  nonce=f'nonce-{stamp}')
+            result = channel.handle_webhook(headers, raw)
+            self.assertEqual(result['status'], 401, (stamp, result))
+            self.assertEqual(result['reason'], 'signature_bad_timestamp', (stamp, result))
         self.assertEqual(channel.poll(None)['events'], [])
 
     def test_url_verification_returns_challenge(self):

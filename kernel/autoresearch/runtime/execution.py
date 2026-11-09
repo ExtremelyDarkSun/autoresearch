@@ -161,12 +161,16 @@ class DefinitiveFailure(RuntimeError):
 class Execution:
     spec_type = RunSpec
 
-    def __init__(self, store, adapter: Adapter, *, validate_reservation=None, validate_lease=None, validate_absence=None, validate_queue=None, policy=None, actor='runner'):
+    def __init__(self, store, adapter: Adapter, *, validate_reservation=None, validate_lease=None, validate_absence=None, validate_queue=None, validate_send=None, policy=None, actor='runner'):
         self.store, self.adapter, self.actor = (store, adapter, actor)
         self.validate_reservation = validate_reservation
         self.validate_lease = validate_lease
         self.validate_absence = validate_absence
         self.validate_queue = validate_queue
+        #: 紧邻真正发送前的**最后一次**事务内只读复核（`(conn, spec) -> True`）。
+        #: ⛔ 必须在同一个写事务里、在 `adapter.submit` 之前调用：这是「claim/排队之后 → 真正发送」
+        #: 之间唯一还能挡住「批准被撤回 / 来源被改 / 监控新增待审 / 审计被新阻断」的位置。
+        self.validate_send = validate_send
         self.policy = policy or ActionPolicy(store)
         with store.transaction() as conn:
             conn.execute('CREATE TABLE IF NOT EXISTS exec_attempts (\n                id TEXT PRIMARY KEY, exp_id TEXT NOT NULL REFERENCES experiments(id),\n                request_key TEXT NOT NULL UNIQUE, payload_hash TEXT NOT NULL, spec_json TEXT NOT NULL,\n                state TEXT NOT NULL, previous_attempt TEXT REFERENCES exec_attempts(id),\n                output_dir TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)')
@@ -254,6 +258,10 @@ class Execution:
             for callback in (self.validate_reservation, self.validate_lease):
                 if callback is None or callback(conn, spec, 'submit') is not True:
                     raise PermissionError('启动必须通过事务内reservation和lease验证')
+            # 紧邻发送前的最后一道：同一个写事务里再复核一次上游（来源 / 审计 / 监控 / 批准）。
+            # ⛔ 放在 `_state('submitting')` 之前：没过就等于这次 send 从未发生。
+            if self.validate_send is not None and self.validate_send(conn, spec) is not True:
+                raise PermissionError('发送前复核未通过：这次 send 没有发生')
             self._state(conn, attempt_id, 'submitting')
             self._observe(conn, attempt_id, 'submit', 'intent', {'request_key': spec.request_key})
         try:

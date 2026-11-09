@@ -3,7 +3,7 @@ GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
 LAST-EDIT: latest framework synchronization, 2026-11-09
 PURPOSE: 一次实验的「事前设计」正文 —— 假设、一次一组同假设改动、判据与出处、三类对照与历史已通过项、结果分支、预算，以及冻结与指纹
 ORIGIN: none（新文件）。抽取自上游 EXPERIMENT_RULES.md §1.1/§1.2/§1.3/§1.5/§1.9 与 plan_audit.md §4/§6，去掉了题单规模阈值与个人渠道
-CUMULATIVE-DELTA: 2026-11-09 补齐探索性停止条件及来源、方向证据边界、工具变更与上下文纪律。
+CUMULATIVE-DELTA: 2026-11-09 补齐探索性停止条件及来源、方向证据边界、工具变更与上下文纪律；生产主链加入四锚点、实现五项与文件定位、实际argv和共享预算授权绑定。
 -->
 
 # 方案契约（一次一轮）

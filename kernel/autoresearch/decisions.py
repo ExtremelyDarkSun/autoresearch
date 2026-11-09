@@ -1,5 +1,5 @@
 # GENERATED-BY: portable extraction / neutral decision layer, 2026-11-09 +08:00
-# LAST-EDIT: 2026-11-09 +08:00（执行规范双绑定 + 准入纯只读 + 通道协议面 + 卡片 wire metadata）
+# LAST-EDIT: 2026-11-09 17:10 +08:00（只读构造：DecisionService.readonly(db) / readonly=True）
 # PURPOSE: 中性决策审批链 —— 先页后卡、同决策双回执、两小时未批准自动取消、入向文字回复窗口与阻断
 # ORIGIN: none（新文件）。机制取自上游「审批页 / 决策登记 / 入向回复诊断」三处通用实现，去掉具体平台与个人配置
 # CUMULATIVE-DELTA: 首版把 B1–B10 / D1–D5 / E7–E8 的通用部分落成可调用机制；本轮补 ① authorization_check 默认
@@ -9,7 +9,10 @@
 #   ⑤ 探索性判据不强制数字门槛、不强制重复；单元素 options 合法、部分否决不消费短码。
 #   本轮再补 ⑥ 审批页方案集与**实际执行规范**双绑定（execution_core 全对象保留 argv/实现/预算/
 #   题集；large/submission 准入只认它）⑦ 页里渲染实际命令/预算/题集摘要与执行指纹 ⑧ verify_remote
-#   用通道 GET 复核已发回执。
+#   用通道 GET 复核已发回执。⑨ 只读构造：`DecisionService.readonly(db)` / `readonly=True` 用同路径
+#   `ReadonlyStore`（mode=ro）而不复制库，跳过建表与 Accounts，Delivery/Inbox 以 readonly 构造；
+#   写入口（prepare/send/tick/ingest/reply/record）抛 ReadonlyServiceError；缺库/缺表/旧 schema
+#   的读方法返回「不可判」（ok=False + undecidable=True），⛔ 不建库、不迁移、不把未知表读成空。
 """中性决策审批链。
 
 这个模块把「要不要人拍板」做成一条可核对的数据链，不假设任何具体通道：
@@ -45,18 +48,21 @@ import json
 import math
 import os
 import re
+import sqlite3
 import tempfile
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Callable, Protocol, runtime_checkable
 try:
-    from kernel.autoresearch.runtime.store import canonical_json, require_text
+    from kernel.autoresearch.runtime.store import (ReadonlyStore, StoreError, canonical_json,
+                                                   is_readonly_store, require_text)
     from kernel.autoresearch.runtime.delivery import Delivery, Receipt, NotSent, LeaseLost
     from kernel.autoresearch.runtime.inbox import Inbox
     from kernel.autoresearch.runtime.accounts import Accounts
 except ImportError:  # pragma: no cover - 兼容包内相对导入
-    from kernel.autoresearch.runtime.store import canonical_json, require_text
+    from kernel.autoresearch.runtime.store import (ReadonlyStore, StoreError, canonical_json,
+                                                   is_readonly_store, require_text)
     from kernel.autoresearch.runtime.delivery import Delivery, Receipt, NotSent, LeaseLost
     from kernel.autoresearch.runtime.inbox import Inbox
     from kernel.autoresearch.runtime.accounts import Accounts
@@ -68,7 +74,8 @@ __all__ = [
     'RECEIPT_KEYS', 'EVENT_KEYS',
     'DecisionError', 'ReadinessError', 'DecisionConflict', 'OrderingViolated',
     'ChannelUnavailable', 'ReceiptRejected', 'IdentityRefused', 'QuarantineBlocked',
-    'OverdueInbound', 'NotAuthorized', 'ChannelReceipt', 'DecisionService', 'readiness',
+    'OverdueInbound', 'NotAuthorized', 'ReadonlyServiceError', 'ChannelReceipt',
+    'DecisionService', 'readiness',
     'build_page_html', 'page_problems', 'derive_short_code', 'plan_fingerprint',
     'research_core', 'research_fingerprint', 'make_authorization_check',
 ]
@@ -216,6 +223,10 @@ class NotAuthorized(DecisionError):
         self.result = dict(result or {})
         problems = self.result.get('problems') or ['没有可核的批准']
         super().__init__('未获授权：\n  - ' + '\n  - '.join(problems))
+
+
+class ReadonlyServiceError(DecisionError):
+    """只读 DecisionService 被要求写：⛔ 不降级、不静默跳过、不伪造回执。"""
 
 
 class _CardRejected(DecisionError):
@@ -1348,18 +1359,46 @@ class DecisionService:
     """决策链的可调用入口。所有写操作都在 store 的事务里，读操作只读。
 
     构造参数：
-        store      `runtime.store.Store`（同一份 sqlite）
+        store      `runtime.store.Store`（同一份 sqlite）；也可以是 `ReadonlyStore`
         delivery   可选的 `runtime.delivery.Delivery`（不给就新建，共用同一时钟）
         inbox      可选的 `runtime.inbox.Inbox`（不给就按同一库新建；身份校验器由 authenticate 注入）
         channel    **可选的注入通道**。不配 ⇒ 发送类动作一律 fail-closed；离线建页 / 诊断照常可用。
         clock      时间源（测试注入假时钟）
         authenticate  身份校验器 `(source, event) -> principal`；用来判审批与回复的归属
+        readonly   `True` ⇒ **只读构造**：不建表、不建 `Accounts`、写方法一律拒绝。
+                   也可以直接用工厂 `DecisionService.readonly(db)`。
+
+    ## 只读构造（诊断入口专用）
+
+    `status` / `authorization_check`（`authorize-check`）是**明确只读**的入口，但写构造会在
+    构造期 `CREATE TABLE IF NOT EXISTS` ⇒ 「只读看一眼」会把库建出来、把旧 schema 迁移掉。
+    只读构造修的就是这件事：
+
+    * store 换成本地同一路径的 `ReadonlyStore`（`mode=ro` + `query_only`），⛔ 不复制数据库；
+    * 跳过 `_create_tables()`、跳过 `Accounts`（只读查询用不到预算台账）；
+    * `Delivery` / `Inbox` 用 `readonly=True` 构造（跳过 DDL，Inbox 允许 `accounts=None`）；
+    * 任何写方法（prepare / send / tick / ingest / reply…）抛 `ReadonlyServiceError`；
+    * 缺库 / 缺表 / 旧 schema ⇒ 读方法返回「不可判」（`ok=False` + `problems`），
+      ⛔ 不建库、不迁移、不把未知表读成空。
     """
 
     def __init__(self, store, delivery=None, inbox=None, channel=None, *,
-                 clock=None, authenticate=None):
+                 clock=None, authenticate=None, readonly=False):
+        # 路径直接传进来是误用：只读路径走 `DecisionService.readonly(db)`，写路径先造 Store。
+        if store is None or isinstance(store, (str, bytes, Path)):
+            raise DecisionError(
+                'DecisionService 需要一个 store 实例（runtime.store.Store 或 ReadonlyStore）；'
+                '给路径时只读请用 DecisionService.readonly(db)，要写请先 Store(db)')
+        # 只读判据只认对象声明的标志 / 缺少写事务；⛔ 不从路径或文件权限猜。
+        self.readonly = bool(readonly) or is_readonly_store(store) \
+            or not hasattr(store, 'transaction')
+        if self.readonly and not isinstance(store, ReadonlyStore):
+            # 同一路径的只读句柄：不复制数据库，也不迁移 schema。
+            store = ReadonlyStore(getattr(store, 'db_path', store))
         self.store = store
         self.clock = clock or time.time
+        if self.readonly and delivery is not None and not is_readonly_store(delivery.store):
+            raise DecisionError('只读 DecisionService 需要只读 Delivery')
         self.delivery = delivery or Delivery(store, clock=self.clock)
         # 身份校验器：显式注入优先；否则用通道自带的那一个（适配层最清楚自己平台的事件
         # 该怎么核）。两者都没有 ⇒ 审批与回复一律 fail-closed，⛔ 核心不自己判身份。
@@ -1367,8 +1406,15 @@ class DecisionService:
             candidate = getattr(channel, 'authenticate', None)
             if callable(candidate):
                 authenticate = candidate
+        if inbox is not None and bool(getattr(inbox, 'readonly', False)) != self.readonly:
+            raise DecisionError('DecisionService 与 Inbox 的读写模式必须一致')
+        if self.readonly and inbox is not None and inbox.accounts is not None:
+            raise DecisionError('只读 DecisionService 的 Inbox 不应构造 Accounts')
         if inbox is None:
-            inbox = Inbox(store, Accounts(store), self.delivery, authenticate=authenticate)
+            # 只读：不建 Accounts（只读查询不需要预算台账），Inbox 也不建表。
+            accounts = None if self.readonly else Accounts(store)
+            inbox = Inbox(store, accounts, self.delivery, authenticate=authenticate,
+                          readonly=self.readonly)
         elif authenticate is not None and inbox.authenticate is None:
             inbox.authenticate = authenticate
         self.inbox = inbox
@@ -1381,7 +1427,86 @@ class DecisionService:
         self.delivery.receipt_verifier = self._verify_receipt
         # 回复只认本服务认定的**文字**事件：卡片点击不是文本回复对象（D4）。
         self.delivery.event_verifier = self.verify_reply_event
-        self._create_tables()
+        if not self.readonly:
+            self._create_tables()
+
+    @classmethod
+    def readonly(cls, db, *, clock=None, authenticate=None):
+        """只读工厂：`DecisionService.readonly(db)`。
+
+        `db` 可以是路径字符串 / `Path` / 现有的 `Store` / `ReadonlyStore`；
+        一律换成同一路径的 `ReadonlyStore`。⛔ 不建库、不建表、不建 `Accounts`。
+        """
+        store = db if isinstance(db, ReadonlyStore) else ReadonlyStore(
+            getattr(db, 'db_path', db))
+        return cls(store, clock=clock, authenticate=authenticate, readonly=True)
+
+    # ── 只读保护 ──
+    def _require_write(self, action):
+        """只读服务上的写动作一律拒绝：⛔ 不降级成「只读事务」、不静默成功。"""
+        if self.readonly:
+            raise ReadonlyServiceError(
+                f'只读 DecisionService 拒绝 {action}：只读入口只做 status / authorize-check 查询；'
+                '写操作请用可写构造（DecisionService(store)）')
+
+    #: 只读查询至少要有的表（缺任何一个都判「不可判」，⛔ 不当作「没有记录」）。
+    READONLY_REQUIRED_TABLES = ('decisions', 'decision_options', 'decision_codes',
+                                'decision_deliveries', 'decision_events',
+                                'delivery', 'delivery_receipts', 'inbox_events')
+
+    #: 只读查询会读到的列。旧 schema **缺列**也判不可判：⛔ 不迁移、不按新结构补。
+    READONLY_REQUIRED_COLUMNS = (
+        ('decisions', ('decision_id', 'exp_id', 'requested_at', 'expires_at', 'status',
+                       'resolution', 'short_code', 'recipient', 'recommended', 'needs_user',
+                       'scope', 'owner_session', 'judgment_reason', 'payload_json',
+                       'payload_hash', 'page_path', 'page_sha256', 'page_bytes', 'version',
+                       'decided_at', 'decided_source', 'decided_event_id', 'created_at',
+                       'updated_at')),
+        ('decision_options', ('decision_id', 'option_id', 'state', 'position')),
+        ('decision_codes', ('code', 'decision_id', 'exp_id', 'state', 'consumed_by',
+                            'consumed_at')),
+        ('decision_deliveries', ('decision_id', 'kind', 'request_key', 'delivery_id')),
+        ('decision_events', ('id', 'decision_id', 'kind', 'actor', 'from_state', 'to_state',
+                             'payload_json', 'at')),
+        ('delivery', ('id', 'exp_id', 'kind', 'request_key', 'wire_key', 'payload_json',
+                      'payload_hash', 'status', 'owner', 'fence', 'lease_until', 'attempts',
+                      'message_id', 'error', 'created_at', 'updated_at')),
+        ('delivery_receipts', ('delivery_id', 'exp_id', 'receipt_json', 'acked_at')),
+        ('inbox_events', ('source', 'event_id', 'exp_id', 'payload_json', 'payload_hash',
+                          'status', 'category', 'principal', 'consumed', 'result_json',
+                          'error', 'event_time', 'received_at', 'classified_at', 'applied_at')),
+    )
+
+    def _readonly_problem(self):
+        """只读模式下「为什么读不了」的统一原因；可读时返回 None。
+
+        ⛔ 缺库不替你建库、缺表不替你迁移、旧 schema 不补列：一律报不可判。
+        ⛔ 也包括 WAL 边界（`-wal` 有、`-shm` 缺）、不是 SQLite 文件、主库在打开期间被写：
+        这些由 `ReadonlyStore.connect()` 抛 `StoreError`，这里统一转成不可判，⛔ 不建文件。
+        """
+        if not self.readonly:
+            return None
+        if not Path(self.store.db_path).is_file():
+            return (f'状态库不存在：{self.store.db_path}（只读模式不建库）⇒ 不可判；'
+                    '先运行 init / prepare 建库')
+        try:
+            schema = self.store.schema()
+        except (StoreError, sqlite3.Error) as exc:
+            return f'状态库不可读（{type(exc).__name__}: {exc}）⇒ 不可判'
+        missing = [name for name in self.READONLY_REQUIRED_TABLES if name not in schema]
+        if missing:
+            return ('状态库缺少决策台账表：' + '、'.join(missing)
+                    + '（只读模式不迁移 schema）⇒ 不可判；这条库不是当前版本，先迁移再查')
+        stale = []
+        for table, columns in self.READONLY_REQUIRED_COLUMNS:
+            present = schema.get(table, frozenset())
+            absent = [column for column in columns if column not in present]
+            if absent:
+                stale.append(f'{table} 缺列 {", ".join(absent)}')
+        if stale:
+            return ('状态库是旧 schema：' + '；'.join(stale)
+                    + '（只读模式不迁移）⇒ 不可判；先迁移到当前版本再查')
+        return None
 
     # ── 建表 ──
     def _create_tables(self):
@@ -1505,6 +1630,7 @@ class DecisionService:
           `case_sets` / `research`）⇒ 就用它当执行规范（一份完整 plan 直接传进来即可）；
         - 都没有 ⇒ 只生成页，**不能**用于 Workflow 起跑（准入会明说缺 execution binding）。
         """
+        self._require_write('prepare（建决策与审批页）')
         require_text(exp_id, 'exp_id')
         if not EXP_RE.fullmatch(exp_id):
             raise DecisionError('实验号形态错误（应当形如 exp-01）')
@@ -1951,6 +2077,7 @@ class DecisionService:
 
     # ── 发送 ──
     def send_page(self, decision_id, *, worker='decisions', lease_seconds=60):
+        self._require_write('send_page（发审批页）')
         self._require_channel()
         self._assert_healthy()
         row = self._require(decision_id)
@@ -1972,6 +2099,7 @@ class DecisionService:
         return result
 
     def send_card(self, decision_id, *, worker='decisions', lease_seconds=60):
+        self._require_write('send_card（发选择卡）')
         self._require_channel()
         self._assert_healthy()
         row = self._require(decision_id)
@@ -2005,6 +2133,7 @@ class DecisionService:
 
     def send(self, decision_id, *, worker='decisions', lease_seconds=60):
         """先页后卡：页没有成功回执就绝不发卡；任一步失败都不放行。"""
+        self._require_write('send（先页后卡）')
         self._require_channel()
         self._assert_healthy()
         row = self._require(decision_id)
@@ -2033,6 +2162,12 @@ class DecisionService:
 
     # ── 双回执 ──
     def chain(self, decision_id):
+        problem = self._readonly_problem()
+        if problem:
+            slot = {'ok': False, 'problems': [problem], 'receipt': None, 'delivery_id': None}
+            return {'decision_id': decision_id, 'exp_id': None, 'complete': False,
+                    'undecidable': True, 'problems': [problem],
+                    'page': dict(slot), 'card': dict(slot)}
         row = self._require(decision_id)
         conn = self.store.connect()
         try:
@@ -2165,6 +2300,7 @@ class DecisionService:
     # ── 超时取消 ──
     def tick(self, *, now=None):
         """两小时到点：取消审批。⛔ 不消费短码、不采纳推荐项。"""
+        self._require_write('tick（把过期决策转 expired）')
         now = float(now if now is not None else self.clock())
         conn = self.store.connect()
         try:
@@ -2208,6 +2344,7 @@ class DecisionService:
     # ── 入向 ──
     def ingest(self, source, event, sha256=None):
         """落一条真实入向事件（持久化 + 哈希 + 幂等），随后按类型应用。"""
+        self._require_write('ingest（落一条入向事件）')
         require_text(source, 'source')
         if not isinstance(event, dict):
             raise DecisionError('事件必须是 JSON 对象')
@@ -2218,6 +2355,7 @@ class DecisionService:
         return self.apply_event(source, row['event_id'])
 
     def apply_event(self, source, event_id, *, command_handler=None):
+        self._require_write('apply_event（应用入向事件）')
         row = self.inbox.get(source, event_id)
         if row is None:
             raise DecisionError(f'事件不存在：{source}/{event_id}')
@@ -2237,6 +2375,7 @@ class DecisionService:
         `cursor` 原样透传，由适配层决定它的含义（时间戳 / 序列号 / 游标串）。
         ⚠️ 单条事件失败不中断整批：错误逐条记下，不假装成功。
         """
+        self._require_write('poll_channel（拉取并落盘入向事件）')
         channel = self._require_channel()
         poll = getattr(channel, 'poll', None)
         if not callable(poll):
@@ -2273,6 +2412,7 @@ class DecisionService:
 
         ⚠️ 句柄必须由调用方在停机时 close()（核心不替你决定监听活多久）。
         """
+        self._require_write('open_subscription（订阅推送入向事件）')
         channel = self._require_channel()
         subscribe = getattr(channel, 'subscribe', None)
         if not callable(subscribe):
@@ -2449,7 +2589,18 @@ class DecisionService:
 
     # ── 文字回复窗口 ──
     def reply_status(self, exp_id=None, *, now=None, grace=TEXT_REPLY_GRACE_SECONDS):
-        """入向文字消息的回复窗口。逐条点名超期的，并给出阻断判词。"""
+        """入向文字消息的回复窗口。逐条点名超期的，并给出阻断判词。
+
+        只读构造下缺库 / 缺表 ⇒ 返回「不可判」（`ok=False` + `exit_code=2`），
+        ⛔ 不建库、不迁移，也不把「读不到」读成「没有超期」。
+        """
+        problem = self._readonly_problem()
+        if problem:
+            out = {'ok': False, 'undecidable': True, 'problems': [problem], 'exp_id': exp_id,
+                   'blocked': True, 'phase': 'undecidable', 'next': 'fix_state_database',
+                   'exit_code': 2, 'overdue': [], 'unanswerable': [], 'replied_events': [],
+                   'text_events': 0, 'card_events': 0, 'replied': 0, 'pending': 0}
+            return out
         now = float(now if now is not None else self.clock())
         grace = float(grace)
         conn = self.store.connect()
@@ -2520,12 +2671,20 @@ class DecisionService:
     def assert_can_advance(self, exp_id=None, *, now=None, grace=TEXT_REPLY_GRACE_SECONDS):
         """持续推进前的硬判据：有超期未回的文字就**不许**报绿（D2）。"""
         status = self.reply_status(exp_id, now=now, grace=grace)
+        if status.get('undecidable'):
+            raise DecisionError('回复窗口不可判（只读查不到台账）⇒ 不放行推进：'
+                                + '；'.join(status.get('problems') or ['不可判']))
         if status['overdue']:
             raise OverdueInbound(status['overdue'], grace)
         return status
 
     def progress_verdict(self, exp_id=None, *, now=None, grace=TEXT_REPLY_GRACE_SECONDS):
-        """给推进器 / hook 用的单一判词：能不能继续。"""
+        """给推进器 / hook 用的单一判词：能不能继续。
+
+        ⚠️ 它会 `tick()` 收口过期决策（写盘）⇒ 只读服务拒绝；只读诊断请用 `reply_status()`
+        / `status()`（`expired` 字段来自台账现值，不改状态）。
+        """
+        self._require_write('progress_verdict（tick 会改决策状态）')
         status = self.reply_status(exp_id, now=now, grace=grace)
         expired = self.tick()
         quarantined = []
@@ -2553,14 +2712,17 @@ class DecisionService:
                 'undelivered': undelivered}
 
     def claim_reply(self, worker, *, exp_id=None, lease_seconds=300):
+        self._require_write('claim_reply（领取回复任务）')
         return self.inbox.claim_question(worker, exp_id=exp_id, lease_seconds=lease_seconds)
 
     def deliver_reply(self, delivery_id, *, worker='decisions', lease_seconds=60):
         """送一条已排队的文字回复（`answer()` 之后调用；回复不属于某份决策）。"""
+        self._require_write('deliver_reply（发送文字回复）')
         return self._deliver(None, delivery_id, 'reply', worker, lease_seconds, decision_id='')
 
     def answer(self, claim, body):
         """回一条文字：原始事件、实验号、收件人三者一致才允许。"""
+        self._require_write('answer（排一条文字回复）')
         require_text(body, 'answer body')
         if not isinstance(claim, dict) or claim.get('source') is None:
             raise DecisionError('回复必须绑定一条待回任务')
@@ -2582,6 +2744,10 @@ class DecisionService:
 
     # ── 汇总 ──
     def status(self, decision_id=None, *, exp_id=None):
+        """按台账重算状态。只读构造下缺库 / 缺表 ⇒ 返回一条「不可判」，⛔ 不建库不迁移。"""
+        problem = self._readonly_problem()
+        if problem:
+            return self._undecidable_row(decision_id, exp_id, problem)
         if decision_id is not None:
             row = self._require(decision_id)
             return self._status_one(row)
@@ -2594,6 +2760,17 @@ class DecisionService:
             conn.close()
         return {'exp_id': exp_id, 'decisions': [self._status_one(row) for row in rows],
                 'count': len(rows)}
+
+    @staticmethod
+    def _undecidable_row(decision_id, exp_id, problem):
+        """「读不到」的统一形状：`ok=False` + `undecidable=True` + 原因。
+
+        ⛔ 不是「没有记录」：没有 `decisions: []` 这种看起来正常的空列表，
+        所以按 `decisions` 键分派的调用方会走单行分支并拿到 `exit_code=2`。
+        """
+        return {'ok': False, 'undecidable': True,
+                'decision_id': decision_id, 'exp_id': exp_id, 'state': None,
+                'problems': [problem], 'exit_code': 2}
 
     def _status_one(self, row):
         chain = self.chain(row['decision_id'])
@@ -2688,6 +2865,15 @@ class DecisionService:
                   'approved': [], 'execution_sha256': None, 'research_sha256': None,
                   'plan_sha256': None, 'problems': [], 'evidence': {},
                   'checked_at': _iso(now), 'exit_code': 3}
+        if record and self.readonly:
+            raise ReadonlyServiceError(
+                '只读 DecisionService 不能 record=True：准入检查不写事件流；留痕请用可写构造')
+        problem = self._readonly_problem()
+        if problem:
+            result['undecidable'] = True
+            result['problems'] = [problem]
+            result['exit_code'] = 2
+            return result
         declared = plan.get('authorization') if isinstance(plan, dict) else None
         declared = declared if isinstance(declared, dict) else {}
         try:

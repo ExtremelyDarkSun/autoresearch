@@ -22,6 +22,13 @@ except ImportError:
 class RuntimeErrorBase(ValueError):
     pass
 
+#: 执行层接受的预算预留作用域。默认只有 `run`（旧行为，完全兼容）。
+#: ⚠️ 真实部署里用户批准的是 `plan.authorization.scope ∈ {small, large, submission}`
+#: （见 `admission.Admission`），如果执行层只认 `run`，同一笔真实预留永远过不了执行层，
+#: 只能伪造第二笔 `run` 预留（= 重复计账）。需要复用同一份授权时，构造
+#: `Runtime(..., budget_scopes=('small',))` 之类的显式映射；⛔ 没有任何默认放宽。
+BUDGET_SCOPES = ('run', 'small', 'large', 'submission')
+
 class NoAdapter:
 
     def _deny(self, *args, **kwargs):
@@ -30,8 +37,14 @@ class NoAdapter:
 
 class Runtime:
 
-    def __init__(self, store, adapter=None, evidence=None, clock=time.time, ownership_verifier=None, audit_verifier=None, idle_verifier=None, execution_class=Execution):
+    def __init__(self, store, adapter=None, evidence=None, clock=time.time, ownership_verifier=None, audit_verifier=None, idle_verifier=None, execution_class=Execution, budget_scopes=('run',), validate_send=None):
         self.store, self.clock = (store, clock)
+        scopes = tuple(budget_scopes)
+        if not scopes or len(set(scopes)) != len(scopes) or any((scope not in BUDGET_SCOPES for scope in scopes)):
+            raise RuntimeErrorBase('budget_scopes 必须是 BUDGET_SCOPES 的非空、不重复子集')
+        self.budget_scopes = scopes
+        #: 紧邻真正发送前的事务内只读复核（`(conn, spec) -> True`）；`None` = 不额外复核（旧行为）。
+        self.validate_send = validate_send
         self.ownership_verifier = ownership_verifier
         self.audit_verifier = audit_verifier
         self.adapter = adapter
@@ -41,7 +54,13 @@ class Runtime:
             conn.execute('CREATE TABLE IF NOT EXISTS reservation_bindings(\n                reservation_id TEXT PRIMARY KEY REFERENCES budget_reservations(id),\n                request_key TEXT NOT NULL UNIQUE, exp_id TEXT NOT NULL REFERENCES experiments(id),\n                lease_token TEXT NOT NULL UNIQUE, created_at REAL NOT NULL)')
             for op in ('UPDATE', 'DELETE'):
                 conn.execute(f"CREATE TRIGGER IF NOT EXISTS reservation_bindings_no_{op.lower()}\n                    BEFORE {op} ON reservation_bindings BEGIN\n                    SELECT RAISE(ABORT,'reservation binding is immutable'); END")
-        self.execution = execution_class(store, adapter or NoAdapter(), validate_reservation=self._reservation, validate_lease=self._lease, validate_queue=self._queue_guard)
+        self.execution = execution_class(store, adapter or NoAdapter(), validate_reservation=self._reservation, validate_lease=self._lease, validate_queue=self._queue_guard, validate_send=self._send_guard)
+
+    def _send_guard(self, conn, spec):
+        """执行层在 `adapter.submit` 之前的最后一道事务内复核。"""
+        if self.validate_send is None:
+            return True
+        return self.validate_send(conn, spec) is True
 
     def _external(self):
         if self.adapter is None:
@@ -67,17 +86,25 @@ class Runtime:
 
     def prepare(self, exp_id, expected_version, actor='runtime'):
         with self.store.transaction() as conn:
-            valid = conn.execute("SELECT 1 FROM budget_reservations r\n                JOIN budget_accounts a ON a.series_id=r.series_id\n                WHERE r.exp_id=? AND r.status='reserved' AND r.scope='run'\n                AND a.scope='run' AND a.active=1 AND a.expires_at>? AND r.units>0", (exp_id, self.clock())).fetchone()
+            marks = ','.join('?' for _ in self.budget_scopes)
+            sql = ("SELECT 1 FROM budget_reservations r JOIN budget_accounts a"
+                   " ON a.series_id=r.series_id WHERE r.exp_id=? AND r.status='reserved'"
+                   f" AND r.scope IN ({marks}) AND a.scope IN ({marks})"
+                   " AND a.active=1 AND a.expires_at>? AND r.units>0")
+            args = (exp_id, *self.budget_scopes, *self.budget_scopes, self.clock())
+            valid = conn.execute(sql, args).fetchone()
             if not valid:
-                raise ApprovalError('prepare requires a live run budget reservation')
+                raise ApprovalError('prepare requires a live budget reservation whose scope is one of '
+                                    + ','.join(self.budget_scopes))
             return self._transition(conn, exp_id, 'ready', actor, expected_version)
 
     def _reservation(self, conn, spec, action):
         if action != 'submit':
             raise PermissionError('unsupported reservation action')
         row = conn.execute('SELECT r.*,a.active,a.expires_at,a.scope AS account_scope\n            FROM budget_reservations r JOIN budget_accounts a ON a.series_id=r.series_id\n            WHERE r.id=?', (spec.reservation_id,)).fetchone()
-        if row is None or row['exp_id'] != spec.exp_id or row['scope'] != 'run' or (row['account_scope'] != 'run') or (row['status'] != 'reserved') or (not row['active']) or (row['expires_at'] <= self.clock()) or (row['units'] <= 0):
-            raise ApprovalError('execution requires its own live run reservation')
+        if row is None or row['exp_id'] != spec.exp_id or row['scope'] not in self.budget_scopes or (row['account_scope'] not in self.budget_scopes) or (row['status'] != 'reserved') or (not row['active']) or (row['expires_at'] <= self.clock()) or (row['units'] <= 0):
+            raise ApprovalError('execution requires its own live reservation in accepted scopes: '
+                                + ','.join(self.budget_scopes))
         bound = conn.execute('SELECT * FROM reservation_bindings WHERE reservation_id=? OR request_key=?', (spec.reservation_id, spec.request_key)).fetchall()
         if bound:
             if len(bound) != 1 or any((bound[0][k] != v for k, v in (('reservation_id', spec.reservation_id), ('request_key', spec.request_key), ('exp_id', spec.exp_id), ('lease_token', spec.lease_id)))):

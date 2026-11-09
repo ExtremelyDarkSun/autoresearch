@@ -94,7 +94,7 @@ class ColdStartTests(lifecycle_fixtures.ProvisionedDeliveryTests):
         self.assertEqual(result['independence'], 'verified')
         return prepared
 
-    def test_actual_chain_and_verified_scribe(self):
+    def _complete_first_round(self):
         flow, built = self.budget_round()
         self.assertTrue(built['prepared']['lifecycle_complete'])
         checked = flow.check(topic=TOPIC, plan=built['plan'], owner_session=SESSION,
@@ -129,6 +129,38 @@ class ColdStartTests(lifecycle_fixtures.ProvisionedDeliveryTests):
         self.assertTrue(receipt['session_verified'])
         self.assertFalse(receipt['delivery_verified'])
         self.assertTrue(reporting.check_round(self.ws, TOPIC, 'P1')['ok'])
+
+    def test_actual_chain_and_verified_scribe(self):
+        self._complete_first_round()
+
+    def test_next_round_uses_same_shared_account_without_settling_unknown_cost(self):
+        self._complete_first_round()
+        flow = self.budget_flow()
+        self.store.ensure_experiment('P2')
+        reservation = self.accounts.reserve('series-small', 'P2', 'small', 3,
+                                            'reservation-small-P2')
+        self.assertEqual(reservation['series_id'], 'series-small')
+        with self.doc.open('a', encoding='utf-8') as stream:
+            stream.write('\n- H2：在上一轮条件下验证第二组参数，先观察机制。\n')
+        argv = self.argv[:-2] + ['B', '0']
+        built = self.prepare('P2', flow=flow, argv=argv, hypothesis_id='H2',
+            hypothesis_text='第二组入口参数在相同装置下能保持通过结果',
+            budget={'max_cost_units': 3, 'max_seconds': 60},
+            authorization={'scope': 'small', 'series_id': 'series-small',
+                           'reservation_id': 'reservation-small-P2'})
+        self.audit('P2', flow=flow)
+        run = self.launch(built['plan'], flow=flow, argv=argv)
+        self.assertEqual(run['exitcode'], 0)
+        self.assertEqual(self.marker_lines(), ['A', 'B'])
+        with contextlib.closing(self.store.connect()) as conn:
+            account = conn.execute("SELECT * FROM budget_accounts WHERE series_id='series-small'").fetchone()
+            self.assertEqual(account['reserved_units'], 6)
+            self.assertEqual(account['spent_units'], 0)
+            reservations = conn.execute("SELECT status FROM budget_reservations WHERE series_id='series-small'").fetchall()
+            self.assertEqual([row['status'] for row in reservations], ['reserved', 'reserved'])
+        # The subprocess has ended, but the second research round still requires its own review.
+        with self.assertRaises(WorkflowError):
+            flow.prepare(topic=TOPIC, plan=self.plan('P3'), owner_session=SESSION)
 
     def test_wrong_argv_and_changed_source_launch_no_process(self):
         flow, built = self.budget_round()

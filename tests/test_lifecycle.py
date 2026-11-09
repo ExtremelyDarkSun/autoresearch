@@ -194,6 +194,21 @@ class ProjectionTests(LifecycleCase):
             client.sync(TOPIC, plan_id="P1")
         self.assertIn("同名源内容不符", str(caught.exception))
 
+    def test_reprepare_new_plan_preserves_version_and_updates_projection(self):
+        built = self.prepare()
+        client = self.lifecycle()
+        initial = client.plan_projection(TOPIC, 'P1').read_bytes()
+        payload = self.plan()
+        payload['goal'] = '同一专题的新问题，须重新审查'
+        rel = self.write_plan('P1', payload)
+        renewed = self.flow.prepare(topic=TOPIC, plan=rel, owner_session=SESSION)
+        self.assertTrue(renewed['lifecycle_sync']['ok'], renewed)
+        self.assertEqual((client.plan_dir(TOPIC, 'P1') / 'plan-v1.json').read_bytes(), initial)
+        latest = client.plan_projection(TOPIC, 'P1').read_bytes()
+        self.assertNotEqual(latest, initial)
+        self.assertIn('新问题', latest.decode('utf-8'))
+        self.assertEqual(len(list((self.ws / 'topics' / TOPIC / 'snapshots/P1').glob('*/before.*'))), 4)
+
     def test_before_only_prestart_and_after_binds_before(self):
         built = self.ready()
         raw = self.doc.read_bytes()

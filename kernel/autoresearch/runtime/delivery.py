@@ -1,8 +1,10 @@
 # GENERATED-BY: portable extraction, 2026-11-09 +08:00
-# LAST-EDIT: 2026-11-09 +08:00
+# LAST-EDIT: 2026-11-09 17:10（initialize=False / readonly：跳过 DDL，只读写入口拒绝）
 # PURPOSE: Reusable research mechanism or offline validation.
 # ORIGIN: research-runtime/delivery.py
 # CUMULATIVE-DELTA: Instance history removed; state roots and target contracts separated.
+#   本轮补：`Delivery(store, initialize=False)` 跳过建表；`readonly`（默认按 store 自报）跳过 DDL 并拒绝
+#   enqueue / claim / send / ack / reconcile；⛔ 只读构造不建库、不把缺表读成空。
 from __future__ import annotations
 import sys
 from pathlib import Path
@@ -17,8 +19,10 @@ from pathlib import Path
 from typing import Protocol
 try:
     from kernel.autoresearch.runtime.store import canonical_json, require_text
+    from kernel.autoresearch.runtime.store import is_readonly_store
 except ImportError:
     from kernel.autoresearch.runtime.store import canonical_json, require_text
+    from kernel.autoresearch.runtime.store import is_readonly_store
 KINDS = frozenset(('receipt', 'notice', 'summary', 'reply', 'approval_page', 'report', 'card', 'file'))
 
 class DeliveryError(ValueError):
@@ -61,19 +65,42 @@ def _duration(value):
 
 class Delivery:
 
-    def __init__(self, store, *, clock=time.time, ack_hook=None, receipt_verifier=None, event_verifier=None):
+    def __init__(self, store, *, clock=time.time, ack_hook=None, receipt_verifier=None,
+                 event_verifier=None, initialize=None, readonly=None):
+        """交付台账。`initialize` / `readonly` 决定构造时要不要建表（默认照旧建）。
+
+        * `readonly=None`（默认）⇒ 按 `store` 自己声明的 `readonly` 判；`ReadonlyStore` 即只读；
+        * `initialize=False` ⇒ **跳过 DDL**（表已由别的进程建好，或这是只读诊断）；
+        * `readonly=True` ⇒ 跳过 DDL，并且所有写方法直接拒绝（fail-closed）。
+
+        ⛔ 只读构造不建库、不建表、不迁移 schema；读到缺表时报错，不把未知表读成空。
+        """
         self.store = store
         self.clock = clock
         self.ack_hook = ack_hook
         self.receipt_verifier = receipt_verifier
         self.event_verifier = event_verifier
-        with store.transaction() as conn:
-            conn.execute('CREATE TABLE IF NOT EXISTS delivery(\n                id INTEGER PRIMARY KEY, exp_id TEXT NOT NULL REFERENCES experiments(id),\n                kind TEXT NOT NULL, request_key TEXT NOT NULL, wire_key TEXT NOT NULL UNIQUE,\n                payload_json TEXT NOT NULL, payload_hash TEXT NOT NULL,\n                status TEXT NOT NULL, owner TEXT, fence INTEGER NOT NULL DEFAULT 0,\n                lease_until REAL, attempts INTEGER NOT NULL DEFAULT 0,\n                message_id TEXT, error TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL,\n                UNIQUE(exp_id,request_key))')
-            conn.execute('CREATE TABLE IF NOT EXISTS delivery_receipts(\n                delivery_id INTEGER PRIMARY KEY REFERENCES delivery(id),\n                exp_id TEXT NOT NULL REFERENCES experiments(id),\n                receipt_json TEXT NOT NULL, acked_at REAL NOT NULL)')
-            for operation in ('UPDATE', 'DELETE'):
-                conn.execute(f"CREATE TRIGGER IF NOT EXISTS delivery_receipts_no_{operation.lower()}\n                    BEFORE {operation} ON delivery_receipts BEGIN\n                    SELECT RAISE(ABORT,'delivery receipts are append-only'); END")
+        self.readonly = is_readonly_store(store) if readonly is None else bool(readonly)
+        if initialize is None:
+            initialize = not self.readonly
+        if initialize and self.readonly:
+            raise DeliveryError('只读 Delivery 不能初始化建表（initialize 与 readonly 冲突）')
+        self.initialize = bool(initialize)
+        if self.initialize:
+            with store.transaction() as conn:
+                conn.execute('CREATE TABLE IF NOT EXISTS delivery(\n                id INTEGER PRIMARY KEY, exp_id TEXT NOT NULL REFERENCES experiments(id),\n                kind TEXT NOT NULL, request_key TEXT NOT NULL, wire_key TEXT NOT NULL UNIQUE,\n                payload_json TEXT NOT NULL, payload_hash TEXT NOT NULL,\n                status TEXT NOT NULL, owner TEXT, fence INTEGER NOT NULL DEFAULT 0,\n                lease_until REAL, attempts INTEGER NOT NULL DEFAULT 0,\n                message_id TEXT, error TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL,\n                UNIQUE(exp_id,request_key))')
+                conn.execute('CREATE TABLE IF NOT EXISTS delivery_receipts(\n                delivery_id INTEGER PRIMARY KEY REFERENCES delivery(id),\n                exp_id TEXT NOT NULL REFERENCES experiments(id),\n                receipt_json TEXT NOT NULL, acked_at REAL NOT NULL)')
+                for operation in ('UPDATE', 'DELETE'):
+                    conn.execute(f"CREATE TRIGGER IF NOT EXISTS delivery_receipts_no_{operation.lower()}\n                    BEFORE {operation} ON delivery_receipts BEGIN\n                    SELECT RAISE(ABORT,'delivery receipts are append-only'); END")
+
+    def _require_write(self, action):
+        """只读 Delivery 的写动作一律拒绝：⛔ 不降级、不静默跳过、不伪造回执。"""
+        if self.readonly:
+            raise DeliveryError(f'只读 Delivery 拒绝 {action}：只读入口只能查询（get / status）；'
+                                '要写就用可写构造')
 
     def enqueue(self, exp_id, kind, body=None, *, artifact=None, sha256=None, recipient, event_reply_to=None, request_key, conn=None):
+        self._require_write('enqueue（排一条交付）')
         require_text(exp_id, 'exp_id')
         if not re.fullmatch('exp-[A-Za-z0-9][A-Za-z0-9_-]*', exp_id):
             raise DeliveryError('实验号格式错误')
@@ -152,6 +179,7 @@ class Delivery:
             conn.close()
 
     def claim(self, worker, *, exp_id=None, lease_seconds=60):
+        self._require_write('claim（领取交付任务）')
         require_text(worker, 'worker')
         _duration(lease_seconds)
         now = self.clock()
@@ -190,6 +218,7 @@ class Delivery:
         return self.get(claim['id'])
 
     def send(self, claim, adapter: OfflineAdapter):
+        self._require_write('send（发送交付）')
         with self.store.transaction() as conn:
             row = self._owned(conn, claim, ('leased',))
             payload = json.loads(row['payload_json'])
@@ -221,6 +250,7 @@ class Delivery:
             return self._state(claim, 'unknown', exc, release=True)
 
     def ack(self, claim, receipt):
+        self._require_write('ack（登记回执）')
         with self.store.transaction() as conn:
             row = self._owned(conn, claim, ('sending', 'unknown'))
             if not isinstance(receipt, Receipt) or not isinstance(receipt.message_id, str) or (not receipt.message_id.strip()) or ((receipt.request_key, receipt.exp_id, receipt.recipient, receipt.payload_hash) != (row['wire_key'], row['exp_id'], json.loads(row['payload_json'])['recipient'], row['payload_hash'])):
@@ -237,6 +267,7 @@ class Delivery:
         return self.get(claim['id'])
 
     def reconcile(self, claim, adapter: OfflineAdapter):
+        self._require_write('reconcile（复核并登记交付）')
         with self.store.transaction() as conn:
             row = self._owned(conn, claim, ('unknown',))
         try:

@@ -1,8 +1,8 @@
 # GENERATED-BY: portable functional migration
-# LAST-EDIT: 2026-11-09
+# LAST-EDIT: 2026-11-09 16:40 +08:00
 # PURPOSE: Create real shared budget grants from host-verified user commands and reserve before execution.
 # ORIGIN: runtime Accounts plus host evidence adapter
-# CUMULATIVE-DELTA: 2026-11-09 grant 先核真实用户命令再登记实验；事件文件/proof 重复键、错误字段、缺失库均 exit 2；status 只读不建表；补 release（未终态执行挡）与 settle（无受信计量适配器时只输出 pending 人工核账，不写状态）。此前：Never create budgets from a plan declaration; unknown cost remains reserved.
+# CUMULATIVE-DELTA: 2026-11-09 grant 不再在 authorize 之前 ensure_experiment：实验登记改由 Accounts.authorize(create_experiment=True) 在同一 BEGIN IMMEDIATE 事务里、可信时序/fence 预检之后完成，后续拒绝整体回滚，不会留下先写后拒的实验行或事件。此前：2026-11-09 grant 先核真实用户命令再登记实验；事件文件/proof 重复键、错误字段、缺失库均 exit 2；status 只读不建表；补 release（未终态执行挡）与 settle（无受信计量适配器时只输出 pending 人工核账，不写状态）。此前：Never create budgets from a plan declaration; unknown cost remains reserved.
 import argparse
 import hashlib
 import json
@@ -229,8 +229,9 @@ def _grant(args, root, db):
     store = Store(db)
     accounts = Accounts(store, ApprovalEvidence(
         {'dsh-user': SourcePolicy(source, frozenset({verified_principal}))}))
-    store.ensure_experiment(event['exp_id'])
-    return accounts.authorize('dsh-user', payload, request_key)
+    # 实验登记交给 authorize 在同一 BEGIN IMMEDIATE 事务里做：可信时序/fence 预检通过后
+    # 才登记，后续任何拒绝整体回滚；这里不再另开事务，避免自锁和先写后拒的残留。
+    return accounts.authorize('dsh-user', payload, request_key, create_experiment=True)
 
 
 def _reserve(args, root, db):

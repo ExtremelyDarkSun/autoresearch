@@ -31,7 +31,8 @@ def main(argv=None):
     modules = {'workflow': '.workflow_cli', 'reporting': '.reporting_cli',
                'monitoring': '.monitoring_cli', 'decisions': '.decisions_cli',
                'progress': '.progress_cli', 'workspace': '.workspace_cli', 'budget': '.budget_cli',
-               'issues': '.issues_cli', 'progress-host': '.progress_host_cli'}
+               'issues': '.issues_cli', 'progress-host': '.progress_host_cli',
+               'channels': '.channels_cli', 'remote': '.remote_cli'}
     if args and args[0] in modules:
         from importlib import import_module
         return import_module(modules[args[0]], __package__).main(args[1:])
@@ -55,7 +56,9 @@ def main(argv=None):
         ('workspace', '专题真实代码隔离、环境和研究快照'),
         ('issues', '首错查重、负责人、修复复验和冷件索引'),
         ('progress-host', '真实宿主goal、入向与受管作业的推进适配'),
-        ('budget', '真实用户预算授权、共享额度预留和只读状态')):
+        ('channels', '通道配置诊断与认证收件监听'),
+        ('remote', '受管远端运行与资源租约'),
+        ('budget', '真实用户预算授权、共享额度预留、结算和只读状态')):
         sub.add_parser(name, help=help_text)
     a = sub.add_parser('doctor', help='检查代码、配置和实际部署边界')
     a.add_argument('--profile', default=str(DEFAULT_PROFILE))

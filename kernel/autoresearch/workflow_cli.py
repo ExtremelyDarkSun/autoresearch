@@ -1,9 +1,11 @@
 # GENERATED-BY: research execution main chain migration, 2026-11-09
-# LAST-EDIT: 2026-11-09 首版：prepare / check / launch / finish / review / status 六个子命令
+# LAST-EDIT: 2026-11-09 17:10 check 改为只读构造（ReadonlyStore + Workflow(readonly=True) + DecisionService.readonly）
 # PURPOSE: `workflow.py` 的命令行入口。**生产接线固定**：监控接 `Monitoring(workspace, host=DSHHost())`，
 #          审计核验接 `DSHHost()`；⛔ 不提供跳过闸的开关（没有 --allow-unwired-monitor / --monitor-module）。
 # ORIGIN: 抽取自 AutoDL实验/tool/exp_launch.py 的「先检查后起跑 + 保留真实退出码」入口形态；无比赛/渠道值。
 # CUMULATIVE-DELTA: 首版。所有文件参数都是工作区内相对路径；argv 一律经 `--` 传入。
+#   本轮补：`check` 是明确只读入口 —— 只读 Store / 只读决策服务 / `Workflow(readonly=True)`，
+#   不建库、不建目录、不迁移 schema；缺库 / 缺表 / 旧 schema 返回 `undecidable`（退出码 2）。
 
 """研究执行主链的命令行入口。
 
@@ -44,12 +46,18 @@
    `plan.budget.max_cost_units`），`plan.authorization.scope` 为 `large` / `submission` 时
    再调 decisions 的 approved 检查。模块缺失或构建失败 ⇒ fail-closed。
    ⛔ 没有 `--allow-unwired-*` 这类跳过闸的参数。
+4. `check` 是**明确只读入口**：只读 `ReadonlyStore` + `Workflow(readonly=True)` + 只读准入
+   （`DecisionService.readonly`）。它不建库、不建目录、不迁移 schema；缺库 / 缺表 / 旧 schema
+   ⇒ `{"ok": false, "undecidable": true, ...}`（退出码 2），⛔ 不为了跑通检查去建库或补表。
+   `Monitoring` 的**构造**本身不 DDL（`Monitor.__init__` 只记路径与注入 host；事件账在写命令里
+   才 `CREATE TABLE`），`check_start` 是零写读；生产接线照旧固定接它。
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -64,12 +72,45 @@ def _dump(value):
     print(json.dumps(value, ensure_ascii=False, indent=2, default=str))
 
 
-def _shared_store(workspace, db):
-    """check / launch 用的共享 `runtime.Store`：与 `Admission` 用的是**同一个库**。"""
-    from kernel.autoresearch.runtime.store import Store
-    path = Path(db).resolve() if db else (Path(workspace).resolve() / ".autoresearch" / "runtime.sqlite3")
+def _shared_store(workspace, db, *, readonly=False):
+    """check / launch 用的共享状态库：与 `Admission` 用的是**同一个库**。
+
+    `readonly=True`（`check`）⇒ `runtime.store.ReadonlyStore`：⛔ 不建库、不建目录、
+    不迁移 schema。缺库就是缺库，只读检查返回「不可判」，⛔ 不会因为「读一下」把库建出来。
+
+    `readonly=False`（`launch` 等写命令）⇒ 原来的 `Store`（建目录 + 建表/迁移）。
+    """
+    from kernel.autoresearch.runtime.store import ReadonlyStore, Store
+    path = (Path(db).resolve() if db
+            else (Path(workspace).resolve() / ".autoresearch" / "runtime.sqlite3"))
+    if readonly:
+        return ReadonlyStore(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     return Store(path)
+
+
+def _run_readonly_check(flow, args, tail):
+    """只读起跑检查：缺库 / 缺表 / 旧 schema / WAL 歧义态 ⇒ 不可判（不建库、不迁移、不起进程）。
+
+    `Workflow(readonly=True).check()` 本身不写盘（`_read_conn` / `_ReadOnlyStore` 都委托
+    `runtime.store.ReadonlyStore`）；这里只把「读不到」的异常（`WorkflowError`：缺库；
+    `sqlite3.Error`：缺表 / 旧 schema；`StoreError`：WAL 边界 / 不是 SQLite 文件）统一成
+    同一形状的 `{"ok": False, "undecidable": True, ...}`，⛔ 不让它变成 traceback，
+    ⛔ 也不为了「让检查过」去建库、补表或创建 `-shm` / `-wal`。
+    """
+    from kernel.autoresearch.runtime.store import StoreError
+    try:
+        return flow.check(topic=args.topic, plan=args.plan,
+                          owner_session=args.owner_session, argv=tail,
+                          intent_id=args.intent_id,
+                          intent_none=bool(args.intent_none))
+    except (WorkflowError, StoreError, sqlite3.Error, KeyError, IndexError) as exc:
+        # `KeyError` / `IndexError` 是旧 schema 少列时的读出形状（例如准备记录缺 argv_json）：
+        # 只读检查不该因此 traceback，也不该去补列 ⇒ 同样判不可判。
+        problems = list(getattr(exc, "errors", None) or []) or [str(exc)]
+        return {"ok": False, "undecidable": True, "action": "check", "checks": {},
+                "problems": [f"只读检查不可判（缺库 / 缺表 / 旧 schema / WAL 边界，"
+                             f"本次不建库不迁移）：{item}" for item in problems]}
 
 
 def host_event_sink(workspace, db_path):
@@ -123,6 +164,10 @@ def host_monitor(workspace):
 
     ⛔ 没有「跳过闸」的开关。模块缺失、构造失败、没有 `check_start` 都返回一个
     **判不放行**的检查器，把原因原样带进闸的问题列表。
+
+    **构造零写（已核）**：`Monitor.__init__` 只解析路径与注入 host，不建目录、不建表；
+    事件账的 `CREATE TABLE` 只在写命令（`_append`）里发生，`check_start` 走只读连接。
+    所以 `check` 用同一条构造不会把 `.autoresearch/` 建出来。
     """
     try:
         from .host_evidence import DSHHost
@@ -153,7 +198,7 @@ def host_monitor(workspace):
         return blocked, reason
 
 
-def host_authorization(workspace, store):
+def host_authorization(workspace, store, *, readonly=None):
     """固定的**执行准入**入口：`admission.Admission(workspace, store=...).check`。
 
     协议：`check(plan, owner_session, exp_id) -> {ok|allow, problems, decision, scope}`。
@@ -161,9 +206,16 @@ def host_authorization(workspace, store):
     ≥ `plan.budget.max_cost_units`；`plan.authorization.scope` 是 large / submission 时
     再调 decisions 的 approved 检查。
 
+    `readonly=True`（`check`）⇒ 准入里的决策核验用**只读服务**
+    （`DecisionService.readonly(store.db_path)`：不建表、不建 `Accounts`、写入口全拒）；
+    `Admission.check` 本身只读，`ReadonlyStore` 由调用方传入。
+
     ⛔ 同样没有跳过开关。模块缺失 / 构造失败 / 没有 check ⇒ 返回「未接线不放行」的准入器：
     统一入口因此**不能**只凭 `plan.execution_argv` 就开远端大题而不看决策。
     """
+    from kernel.autoresearch.runtime.store import is_readonly_store
+    if readonly is None:
+        readonly = is_readonly_store(store)
     try:
         from .admission import Admission
     except Exception as exc:  # noqa: BLE001 - ImportError 也要 fail-closed
@@ -176,7 +228,11 @@ def host_authorization(workspace, store):
     try:
         try:
             from .decisions import DecisionService
-            admission = Admission(Path(workspace), store=store, decisions=DecisionService(store))
+            if readonly:
+                decisions = DecisionService.readonly(getattr(store, "db_path", store))
+            else:
+                decisions = DecisionService(store)
+            admission = Admission(Path(workspace), store=store, decisions=decisions)
         except TypeError:
             admission = Admission(workspace=Path(workspace), store=store)
         check = getattr(admission, "check", None)
@@ -271,24 +327,28 @@ def main(argv=None):
             return 0
 
         if args.action in ("check", "launch"):
-            store = _shared_store(workspace, args.db)
+            # `check` 是明确只读入口：只读 Store + `Workflow(readonly=True)` + 只读准入构造。
+            # ⛔ 不因为「检查一下」就建库 / 建目录 / 迁移 schema；缺库缺表返回不可判。
+            readonly = args.action == "check"
+            store = _shared_store(workspace, args.db, readonly=readonly)
             monitor, monitor_why = host_monitor(workspace)
-            admission, admission_why = host_authorization(workspace, store)
+            admission, admission_why = host_authorization(workspace, store, readonly=readonly)
             from .execution_target import ExecutionTarget
             flow = Workflow(workspace=workspace, db=args.db, store=store,
                             verifier=_host_verifier(), monitor_check=monitor,
                             authorization_check=admission,
-                            execution_target=ExecutionTarget(workspace, require_provision=True))
+                            execution_target=ExecutionTarget(workspace, require_provision=True),
+                            readonly=readonly)
             for reason in (monitor_why, admission_why):
                 if reason:
                     print(f"⚠️ {reason}", file=sys.stderr)
             if args.action == "check":
-                result = flow.check(topic=args.topic, plan=args.plan,
-                                    owner_session=args.owner_session, argv=tail,
-                                    intent_id=args.intent_id,
-                                    intent_none=bool(args.intent_none))
+                result = _run_readonly_check(flow, args, tail)
                 _dump(result)
-                return 0 if result.get("ok") else 9
+                if result.get("ok"):
+                    return 0
+                # 读不到状态库是输入 / 数据问题（2），规则拒绝才是 9（一定没起子进程）。
+                return 2 if result.get("undecidable") else 9
             result = flow.start(topic=args.topic, plan=args.plan,
                                 owner_session=args.owner_session, argv=tail,
                                 intent_id=args.intent_id,

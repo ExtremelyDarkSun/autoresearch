@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: repository documentation, 2026-11-09 +08:00
-LAST-EDIT: repository documentation, 2026-11-09 +08:00
+LAST-EDIT: 2026-11-09 执行接线复核：仓库已有统一 workflow 主链、真实 cwd/venv、宿主核验器与默认关闭的远端/通道适配层；改掉「只有 argv、什么都不执行」的旧说法
 PURPOSE: 用户可直接交给执行型 AI 的首次接入 prompt，直到完成一轮真实研究循环。
 ORIGIN: repository CLI, profile interfaces and deployment documentation
-CUMULATIVE-DELTA: 增加 Kaggle、AutoDL、真实执行适配和首轮验收指令。
+CUMULATIVE-DELTA: 补 workflow 主链与默认关闭适配层的边界、生产计划模板、以及「不要重复实现已有机制」的告诫。
 -->
 # 首次启动：让 AI 带你跑完一轮研究
 
@@ -30,7 +30,9 @@ flowchart TD
 
 首次运行需要实际评测器、数据和模型。
 这些组件的额外依赖，以选定比赛的官方说明为准。
-仓库内核只用 Python 标准库，不代表真实评测器也没有依赖。
+仓库内核只用 Python 标准库；只有飞书**加密事件收件**需要可选 `cryptography`（`python -m pip install -r requirements-feishu.txt`）。
+插件自检需要 Node.js 20+；读取真实 DSH 压缩会话日志的可信核验需要支持 Zstandard 的 Node.js 24+。
+这不代表真实评测器也没有依赖。
 
 ## 交给 AI 的 prompt
 
@@ -79,6 +81,8 @@ flowchart TD
 - docs/profiles.md。
 - profiles/agent-harness/README.md 与 EXTRACTION.md。
 - docs/autodl.md。
+- docs/RUNNING.md（每个主入口怎么跑、哪些是待验）。
+- docs/EXPECTATIONS_ACCEPTANCE.md（109 项逐条现状与缺口）。
 - 如果宿主是 DSH，读取 docs/dsh.md。
 - docs/migration.md 中关于真实适配器的边界。
 
@@ -154,6 +158,9 @@ python -X utf8 -B research.py init --workspace <新工作区绝对路径> --prof
 python -X utf8 -B research.py instructions --profile <工作区profile目录> --bundle <新的完整指令文件> --manifest <新的哈希清单>
 python -X utf8 -B research.py instructions --profile <工作区profile目录> --captured <真实捕获的请求文本>
 ```
+
+本轮完整材料的一次测量（2026-11-09，**仅测量**）：原始来源合计 109,236 B，合并 bundle 111,655 B，
+建议总预算 139,568 B，最大单来源 15,948 B。它不是宿主实际注入证据；配置后仍要捕获真实请求核对。
 
 生成材料后，配置宿主总预算和单文件上限。
 先检查所装宿主版本的配置文档与设置入口。
@@ -234,18 +241,40 @@ python -X utf8 -B kernel/autoresearch/backends/autodl/worker.py --workspace <工
 
 ### 补齐真实执行接线，不要假装仓库已有一键入口
 
-当前 research.py profile 只生成 argv，不执行评测。
-当前 AutoDL worker 只查询状态、生产事件和绑定目标。
-它不负责上传代码、启动远端评测或收回结果。
-当前仓库也不提供通用 Kaggle 登录和比赛执行器。
+仓库已有**统一的研究执行主链** `research.py workflow`（`prepare` → `check`/`launch` → `finish` → `review`）：
+事前材料冻结、起跑闸、真实本地子进程、真实 cwd 与专题独立 venv、退出码原值、复盘，以及自动的
+before/after 快照与报告投影。生产 CLI 固定接 `Monitoring`（唯一意图权威）、`DSHHost`（审计与 scribe
+证据）与 `Admission`（`Accounts` 预算 + `large`/`submission` 决策），**没有跳过闸的开关**。
+计划样例是[生产计划模板](<../kernel/templates/workflow.plan.template.json>)；通用
+[plan.template.json](<../kernel/templates/plan.template.json>) 通过 `check-plan` **不算**主链可起跑。
 
-先检查是否已有适合当前比赛的执行器。
-如果没有，在独立工作区实现最小真实适配器。
-可以编写代码、配置和针对性测试。
-不要为跑通而禁用内核检查。
-不要把比赛专属逻辑塞进通用内核。
+仓库还带两类**默认关闭**的适配层：
 
-运行入口至少要实际执行这些职责：
+- **受管远端**：`research.py remote doctor/check/provision/start/query/cancel/collect/release`，底层是
+  `remote_workflow.py` + `backends/ssh.py` + `ssh_worker.py`。执行预算用计划 `authorization` 的**同一笔**
+  预留；协议 v2 停止必须有 `stop_verified=True` + `stop_evidence`，并核 request / token / attempt 与
+  `argv_sha256`；本地 `start`、remote `claim`、紧邻 `send` 用同一套事务判据。**真实 SSH / POSIX / 平台
+  未验**；代码 / 题单 scp 上传到 `unit/code|input` 仍是独立部署步骤。⚠️ 停止只覆盖本 job 进程组，
+  不覆盖子进程 `setsid` 逃逸；更强隔离要部署 cgroup / namespace，group-stop 不等于整台机器停止。
+- **通道**：`research.py channels doctor/listen/poll` 与 `decisions --channel-config`；飞书发送、回执 GET
+  复核、webhook 验签、可选 AES-256-CBC 解密（`cryptography`）。`doctor` 只读；`listen` 缺解密后端时
+  起服务前 exit 2 且不建库。真实租户送达未验。
+
+仍未完成的是**真实部署验收**：真实 SSH / POSIX 停止与机器空闲、远端代码 / 题单上传、真实通道租户、
+真实云机上的托管执行与平台提交。`research.py profile` 只生成 argv，不执行评测；AutoDL worker 只查询
+状态、生产事件和绑定目标；仓库仍不提供通用 Kaggle 登录和平台提交。
+
+先检查现有入口，不要重复实现已有机制：
+
+- 先跑 `research.py workflow status` 与 `doctor`，确认主链、审计/监控/准入、执行落点是否已可用。
+- 需要新评测器时，只写比赛专属的最小适配器；不要改内核、不要为跑通禁用闸、不要把比赛逻辑塞进通用层。
+- 要远端执行，先跑 `research.py remote doctor`，用它现有的 CLI 与协议；不够再决定改适配器还是新写；
+  真实机器、停止与上传步骤都要自己实测。
+- 要发审批页/卡，用 `decisions --channel-config` 或实现 `ApprovalChannel`；状态机通过不等于真实送达。
+- 已有完整宿主证据（DSH 日志）时优先接到 `DSHHost`；没有宿主证据就只能记 `declared`，不能升级成
+  `verified`。
+
+如果现有主链不够，补的适配器至少要实际执行这些职责（已由主链承担的就不要重复实现）：
 
 - 核查冻结计划、审查结果与意图状态。
 - 核查真实授权、整轮预算和资源归属。
@@ -257,9 +286,9 @@ python -X utf8 -B kernel/autoresearch/backends/autodl/worker.py --workspace <工
 - 核查结果完整性，再结算实际成本。
 - 核查远端进程和资源，不能把本地超时当成远端停止。
 
-明确说明接线是否使用 Runtime 的事务和执行接口。
-如果只调用外部脚本，不要声称 Runtime 已托管该作业。
-如果需要可信 verifier，必须接入真实宿主证据。
+明确说明接线是否走 `workflow` 的登记与事务，还是只调外部脚本。
+如果绕过 `workflow`，不要声称 Runtime 已托管该作业，也不要声称起跑闸检查过它。
+可信 verifier 优先复用 `DSHHost`（只读真实宿主日志）；读不到证据就只能记 `declared`。
 不得复用 demo 的签名夹具或自签声明冒充用户授权。
 本地声明不能升级为 verified。
 
@@ -355,7 +384,9 @@ python -X utf8 -B research.py compare <对照JSONL> <候选JSONL> --profile <工
 
 ## 本文件的验证边界
 
-本文件与当前仓库接口做了静态核对。
-它要求未来的执行 AI 补齐和验证真实接线。
+本文件与当前仓库接口做了静态核对，命令参数按当前 `--help` 与 `docs/RUNNING.md` 对齐。
+仓库自身的 `selftest --plugins`、合成冷启动 6 项、V1–V3 合成语义核与真实宿主探针已有记录；
+**它们不等于**这台新机器上的真实云机、平台提交、真实 SSH / POSIX 停止或真实通道租户送达。
+具体计数以[验收记录](<VERIFICATION.md>)为准。
 本次编写没有登录 Kaggle、连接 AutoDL、开机或执行真实评测。
-因此，本文件不是“新机器端到端实测通过”的证明。
+因此，本文件不是“新机器端到端实测通过”的证明；执行 AI 必须自己补上并实测未验部分。

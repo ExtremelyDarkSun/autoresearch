@@ -1,8 +1,12 @@
 # GENERATED-BY: 完整功能迁移（意图与过程监控测试）
-# LAST-EDIT: 2026-11-09（首版；覆盖两水位 / 逐字引文 / 防篡改 / 旧报告阻断继承 / 安全动作豁免 / 只读零写）
+# LAST-EDIT: 2026-11-09（补自然语言撤回 / 替换的正反例：真实原话 + 独立报告 closure.user_command 绑定；
+#            原有 JSON 用户命令路径的用例原样保留）
 # PURPOSE: 用注入的假宿主对象明确模拟证据，验证迁移后的监控机制；不连真实宿主、不调用模型、不跑实验。
 # ORIGIN: 契约 kernel/contracts/intent_monitor.md 与行为预期 L1–L14 / V1–V3；上游测试场景的中性化重写
 # CUMULATIVE-DELTA: 首版。全部合成数据：会话 owner-alpha / monitor-bravo、实验 E1、题 t1/t2/r1。
+#         2026-11-09 补：withdrawn/replaced 的自然语言路径（quote + 报告绑定）正例与反例
+#         （无绑定 / 非用户原话 / 转述 / 不同一条 / 旧话 / 错意图 / 错理由 / 缺 closure.sources /
+#         绑定形状非法 / 超出截止 / 报告过期 / 未处置阻断 / 非最后一份报告），并确认 JSON 路径仍可用。
 """意图与过程监控测试。
 
 三条约束（与仓库其它测试一致）：
@@ -22,6 +26,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -37,6 +42,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from kernel.autoresearch import monitoring_cli  # noqa: E402
+from kernel.autoresearch.host_evidence import DSHHost  # noqa: E402
 from kernel.autoresearch.monitoring import (  # noqa: E402
     HOST_PROTOCOL,
     Monitor,
@@ -51,6 +57,8 @@ EXP = "E1"
 USER_TEXT = "请守住已经通过的回归题，别把翻正的又弄丢"
 NEW_WORDS = "继续按计划推进，不用额外授权"
 ANSWER_TEXT = "不用单独盯，按计划继续推进"
+WITHDRAW_TEXT = "这个方向先停掉，回归题不用再盯了"
+REPLACE_TEXT = "别盯回归题了，改成盯逐题读数"
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +180,28 @@ class FakeHost:
                 "prepared_id": (payload or {}).get("prepared_id")}
 
 
+class RealHostLogs:
+    """把合成会话写成**真 `DSHHost`** 能读的日志（decoder 注入，不启动 Node.js）。
+
+    与 `FakeHost` 的分工：`FakeHost` 只证明本模块的判据；这个夹具让
+    `host_evidence.DSHHost` 自己去读、自己去核（原话逐字、spawn 独立性），
+    用来证明自然语言闭合路径读的是宿主日志，不是夹具自报。
+    """
+
+    def __init__(self, root):
+        self.root = Path(root).resolve()
+        self.rows = {}
+
+    def write(self, sid, rows):
+        path = self.root / "sessions" / "project" / sid / "session.v1.jsonl.zstd"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"synthetic-session-log")
+        self.rows[str(path)] = rows
+
+    def host(self):
+        return DSHHost(root=self.root, decoder=lambda path: self.rows[str(path)])
+
+
 # ---------------------------------------------------------------------------
 # 会话事件构造
 # ---------------------------------------------------------------------------
@@ -281,12 +311,18 @@ class Harness:
                verdict="on_track", closure_target="keep",
                closure_basis="方向仍成立，本轮只提非阻塞意见，因此保持 active",
                monitor_session=MONITOR, evidence_reads=None, steps=None, rounds=None,
-               intent_sources=None, direction_text="继续同一假设，先补逐题读数"):
+               intent_sources=None, direction_text="继续同一假设，先补逐题读数",
+               closure_sources=None, closure_binding=None):
         trajectory = {"summary": "先确认基线，再改一处抓手，最后跑小样本验证",
                       "verdict": "on_track", "note": "每一步都能对上意图，没有偏离到别的抓手",
                       "steps": steps or [{"seq": 1, "what": "从用户原话里确认了意图与判据"}]}
         if rounds is not None:
             trajectory["rounds"] = rounds
+        closure = {"target": closure_target, "basis": closure_basis,
+                   "sources": (closure_sources if closure_sources is not None
+                               else [self.ref("plan.md", "L1")])}
+        if closure_binding is not None:
+            closure["user_command"] = closure_binding
         return {
             "prepared_id": prep["prepared_id"],
             "monitor_session": monitor_session,
@@ -305,8 +341,7 @@ class Harness:
             "issues": list(issues),
             "next_direction": {"text": direction_text, "direction_sha256": prep["direction_sha256"],
                                "sources": [self.ref("plan.md", "L1")]},
-            "closure": {"target": closure_target, "basis": closure_basis,
-                        "sources": [self.ref("plan.md", "L1")]},
+            "closure": closure,
             "evidence_reads": evidence_reads if evidence_reads is not None else [
                 {"kind": "raw_session", "session": OWNER, "seq": 1},
                 {"kind": "snapshot", "path": prep["snapshot"]}],
@@ -339,6 +374,32 @@ class Harness:
         return self.mon.respond(OWNER, [{"report_id": report_id, "issue_id": issue_id,
                                          "disposition": disposition, "reason": reason,
                                          "sources": [self.ref("results.json", "L2")]}])
+
+    def bind(self, *, seq, text, intent_id="INT-1", reason="withdrawn",
+             replacement_intent_id=None, target="closed"):
+        """报告 closure.user_command 的绑定对象（自然语言闭合路径）。"""
+        return {"expected": {"action": "close_intent", "intent_id": intent_id, "reason": reason,
+                             "replacement_intent_id": replacement_intent_id, "target": target},
+                "user_quote": {"session": OWNER, "seq": seq, "text": text}}
+
+    def bound_close_setup(self, *, quote_seq=6, quote_text=WITHDRAW_TEXT, reason="withdrawn",
+                          replacement_intent_id=None, target="closed", intent_id="INT-1",
+                          binding="auto", closure_sources="auto", issues=(), extra_users=()):
+        """一次「用户原话 + 绑定报告」：立意图 → 登记原话 → 触发 → prepare → record。"""
+        self.register_active(seq=1, intent_id=intent_id)
+        self.add(user(quote_seq, quote_text))
+        for seq, text in extra_users:
+            self.add(user(seq, text))
+        self.trigger()
+        prep = self.prepare()
+        bound = (self.bind(seq=quote_seq, text=quote_text, intent_id=intent_id, reason=reason,
+                           replacement_intent_id=replacement_intent_id, target=target)
+                 if binding == "auto" else binding)
+        sources = ([{"session": OWNER, "seq": quote_seq}] if closure_sources == "auto"
+                   else closure_sources)
+        recorded = self.record(self.report(prep, issues=issues, closure_target=target,
+                                           closure_binding=bound, closure_sources=sources))
+        return recorded, prep
 
     def active_with_report(self, *, issues=(), verdict="on_track", closure_target="keep",
                            reports=1, extra_events=None):
@@ -498,6 +559,52 @@ class MonitoringTests(unittest.TestCase):
         self.assertTrue(self.h.mon.check_start(OWNER, EXP)["allow"])
         self.assertNotEqual(recorded["prepared_id"], prep2["prepared_id"])
         self.assertTrue(pending["created"])
+
+    def test_prepare_ids_stay_unique_with_frozen_clock_and_nonce(self):
+        """材料标识不靠时间也不靠随机：墙钟与 nonce 都冻住时，仍靠追加序号区分。"""
+        self.h.register_active()
+        self.h.trigger()
+        fixed = "2026-01-01T00:00:00.000000+00:00"
+        with mock.patch("kernel.autoresearch.monitoring._now", return_value=fixed), \
+                mock.patch("kernel.autoresearch.monitoring.secrets.token_hex",
+                           return_value="0000000000000000"):
+            first = self.h.prepare()
+            second = self.h.prepare()
+        # 其余输入完全相同（状态、covers、方向 sha、事件摘要、墙钟、nonce），只有追加序号不同
+        self.assertEqual(first["covers"], second["covers"])
+        self.assertEqual(first["direction_sha256"], second["direction_sha256"])
+        self.assertNotEqual(first["prepared_id"], second["prepared_id"])
+        self.assertNotEqual(first["prepared_event_id"], second["prepared_event_id"])
+        self.assertNotEqual(first["pack"], second["pack"])
+        # 两次准备各留自己的材料包与快照：旧版本没有被覆盖
+        self.assertNotEqual((self.root / first["pack"]).read_bytes(),
+                            (self.root / second["pack"]).read_bytes())
+        for prep in (first, second):
+            self.assertTrue((self.root / prep["pack"]).is_file())
+            self.assertTrue((self.root / prep["snapshot"]).is_file())
+        # 账上两份准备记录各指自己的 id：没有「同一 prepared_id 命中多条」的歧义
+        rows = [event for event in self.h.mon._read(OWNER) if event["kind"] == "prepared"]
+        self.assertEqual([event["payload"]["prepared_id"] for event in rows],
+                         [first["prepared_id"], second["prepared_id"]])
+        self.assertEqual([event["id"] for event in rows],
+                         [first["prepared_event_id"], second["prepared_event_id"]])
+
+    def test_prepare_refuses_to_overwrite_existing_material_version(self):
+        """id 真撞车时宁可拒绝，也不覆盖旧材料包（否则旧报告会变成「材料包已被改写」）。"""
+        self.h.register_active()
+        self.h.trigger()
+        with mock.patch("kernel.autoresearch.monitoring._material_id",
+                        return_value="PREP-0000000000000000"):
+            first = self.h.prepare()
+            with self.assertRaises(MonitoringError) as caught:
+                self.h.prepare()
+        self.assertIn("撞车", str(caught.exception))
+        self.assertIn("拒绝覆盖", str(caught.exception))
+        # 旧材料包还在，未被第二次 prepare 改写
+        self.assertTrue((self.root / first["pack"]).is_file())
+        rows = [event for event in self.h.mon._read(OWNER) if event["kind"] == "prepared"]
+        self.assertEqual([event["payload"]["prepared_id"] for event in rows],
+                         [first["prepared_id"]])
 
     def test_quote_must_be_verbatim_and_from_user(self):
         self.h.set_owner([user(1, USER_TEXT), assistant(2, "收到，继续守回归。"),
@@ -954,6 +1061,380 @@ class MonitoringTests(unittest.TestCase):
         self.assertEqual(out["state"], "closed")
         self.assertEqual(out["command"]["replacement_intent_id"], "INT-2")
         self.assertTrue(h.mon.check_start(OWNER, EXP)["allow"])
+
+    # -- L8 / L9 自然语言撤回 / 替换（真实原话 + 独立报告绑定）----------------
+
+    def test_close_withdrawn_accepts_natural_quote_bound_by_report(self):
+        h = self._fresh()
+        recorded, prep = h.bound_close_setup()
+        out = h.mon.close(OWNER, reason="withdrawn", target="closed",
+                          report_id=recorded["report_id"],
+                          quote={"session": OWNER, "seq": 6, "text": WITHDRAW_TEXT})
+        self.assertEqual(out["state"], "closed")
+        self.assertIsNone(out["proof_seq"])
+        self.assertIsNone(out["verified"])
+        self.assertEqual(out["command"], {"action": "close_intent", "intent_id": "INT-1",
+                                          "reason": "withdrawn", "replacement_intent_id": None,
+                                          "target": "closed"})
+        self.assertEqual(out["binding"]["report_id"], recorded["report_id"])
+        self.assertEqual(out["binding"]["user_quote"]["seq"], 6)
+        self.assertEqual(out["binding"]["user_quote"]["text"], WITHDRAW_TEXT)
+        self.assertEqual(out["evidence"]["text"], WITHDRAW_TEXT)
+        # 自然语言路径不冒充「用户发过 JSON 命令」：不走 user_command 宿主核验
+        kinds = [call["kind"] for call in h.host.calls]
+        self.assertNotIn("user_command", kinds)
+        self.assertIn("monitor_independence", kinds)
+        after = h.mon.check_start(OWNER, EXP)
+        self.assertTrue(after["allow"], after["problems"])
+        self.assertEqual(after["state"], "closed")
+
+    def test_close_replaced_accepts_natural_quote_bound_by_report(self):
+        h = self._fresh()
+        recorded, _ = h.bound_close_setup(quote_text=REPLACE_TEXT, reason="replaced",
+                                          replacement_intent_id="INT-2")
+        out = h.mon.close(OWNER, reason="replaced", target="closed",
+                          report_id=recorded["report_id"], replacement_intent_id="INT-2",
+                          quote={"session": OWNER, "seq": 6, "text": REPLACE_TEXT})
+        self.assertEqual(out["state"], "closed")
+        self.assertEqual(out["command"]["replacement_intent_id"], "INT-2")
+        self.assertEqual(out["binding"]["expected"]["reason"], "replaced")
+        self.assertTrue(h.mon.check_start(OWNER, EXP)["allow"])
+
+    def test_close_natural_quote_to_none_with_binding(self):
+        h = self._fresh()
+        recorded, _ = h.bound_close_setup(target="none")
+        out = h.mon.close(OWNER, reason="withdrawn", target="none",
+                          report_id=recorded["report_id"],
+                          quote={"session": OWNER, "seq": 6, "text": WITHDRAW_TEXT})
+        self.assertEqual(out["state"], "none")
+        self.assertTrue(h.mon.check_start(OWNER, EXP)["allow"])
+
+    def test_close_withdrawn_uses_real_host_quote(self):
+        """真 `DSHHost` + 合成日志：原话是宿主会话里逐字读到的，spawn 独立性也由宿主核。"""
+        owner, child = "owner-real", "monitor-real"
+        logs = RealHostLogs(self.root)
+        owner_rows = [
+            {"type": "session", "id": owner, "delegationDepth": 0, "isSeeded": False,
+             "createdAt": 1000},
+            {"seq": 0, "type": "user/message", "time": 1100,
+             "data": {"source": {"kind": "user", "rpcId": "rpc-1"},
+                      "message": {"role": "user",
+                                  "content": [{"type": "text", "text": USER_TEXT}]}}},
+            {"seq": 1, "type": "assistant/message", "time": 1200,
+             "data": {"message": {"role": "assistant",
+                                  "content": [{"type": "text", "text": "收到，继续守回归。"}]}}},
+        ]
+        logs.write(owner, owner_rows)
+        mon = Monitor(self.root, host=logs.host())
+        mon.register(owner, state="active", intent="守住已经通过的回归题",
+                     sources=[{"session": owner, "seq": 0}],
+                     reason="用户原话要求盯住回归", intent_id="INT-1")
+        owner_rows.append(
+            {"seq": 2, "type": "user/message", "time": 1300,
+             "data": {"source": {"kind": "user", "rpcId": "rpc-2"},
+                      "message": {"role": "user",
+                                  "content": [{"type": "text", "text": WITHDRAW_TEXT}]}}})
+        logs.write(owner, owner_rows)
+        mon.event(owner, "result_analysis", exp=EXP, stage="pending", note="结果回收待分析",
+                  sources=[{"path": "results.json", "locator": "L1"}])
+        prep = mon.prepare(owner, exp=EXP, sources=[{"path": "results.json", "locator": "L1"}],
+                           direction=[{"path": "plan.md", "locator": "L1"}])
+        binding = {"expected": {"action": "close_intent", "intent_id": "INT-1",
+                                "reason": "withdrawn", "replacement_intent_id": None,
+                                "target": "closed"},
+                   "user_quote": {"session": owner, "seq": 2, "text": WITHDRAW_TEXT}}
+        report = {
+            "prepared_id": prep["prepared_id"], "monitor_session": child,
+            "owner_session": owner, "exp": EXP, "verdict": "on_track",
+            "covers": json.loads(json.dumps(prep["covers"])),
+            "direction_sha256": prep["direction_sha256"],
+            "intent": {"stated": "守住已经通过的回归题", "verdict": "consistent",
+                       "note": "用户原话与最近几轮动作一致",
+                       "quote": {"seq": 0, "text": USER_TEXT},
+                       "sources": [{"session": owner, "seq": 0}]},
+            "trajectory": {"summary": "先确认基线，再跑小样本验证", "verdict": "on_track",
+                           "note": "每一步都能对上意图，没有换抓手",
+                           "steps": [{"seq": 0, "what": "从用户原话确认意图与判据"}]},
+            "findings": [{"text": "样本太小，读数不能外推到全量",
+                          "sources": [{"path": "results.json", "locator": "L1"}]}],
+            "issues": [],
+            "next_direction": {"text": "先停这个方向，等负责人登记新意图",
+                               "direction_sha256": prep["direction_sha256"],
+                               "sources": [{"path": "plan.md", "locator": "L1"}]},
+            "closure": {"target": "closed",
+                        "basis": "用户最新原话撤回了这个方向，没有新原话要求继续",
+                        "sources": [{"session": owner, "seq": 2},
+                                    {"path": "plan.md", "locator": "L1"}],
+                        "user_command": binding},
+            "evidence_reads": [{"kind": "raw_session", "session": owner, "seq": 0},
+                               {"kind": "snapshot", "path": prep["snapshot"]}],
+            "resolves": [],
+        }
+        body = json.dumps(report, ensure_ascii=False, sort_keys=True)
+        logs.write(child, [
+            {"type": "session", "id": child, "parentSession": owner, "origin": "subagent",
+             "delegationDepth": 1, "isSeeded": False, "createdAt": 1400},
+            {"seq": 0, "type": "subagent/descriptor", "time": 1400,
+             "data": {"provider": "spawn", "mode": "one-shot"}},
+            {"seq": 1, "type": "assistant/message", "time": 1500,
+             "data": {"message": {"role": "assistant",
+                                  "content": [{"type": "text", "text": body}]}}},
+        ])
+        owner_rows.extend([
+            {"seq": 3, "type": "tool/call", "time": 1350,
+             "data": {"name": "subagent", "callId": "call-1",
+                      "arguments": {"prompt": "请独立审计 " + prep["prepared_id"]}}},
+            {"seq": 4, "type": "tool/result", "time": 1360,
+             "data": {"message": {"toolCallId": "call-1",
+                                  "content": [{"type": "text", "text": "started " + child}]}}},
+            {"seq": 5, "type": "subagent/catalog", "time": 1370,
+             "data": {"childId": child, "mode": "one-shot"}},
+        ])
+        logs.write(owner, owner_rows)
+        recorded = mon.record(owner, report_bytes=body.encode("utf-8"),
+                              proof={"session_id": child, "seq": 1})
+        # 真宿主逐字核验：转述 / 拼凑的文本被拒
+        with self.assertRaises(MonitoringError) as caught:
+            mon.close(owner, reason="withdrawn", target="closed",
+                      report_id=recorded["report_id"],
+                      quote={"session": owner, "seq": 2, "text": "用户说不想做了"})
+        self.assertIn("逐字", str(caught.exception))
+        out = mon.close(owner, reason="withdrawn", target="closed",
+                        report_id=recorded["report_id"],
+                        quote={"session": owner, "seq": 2, "text": WITHDRAW_TEXT})
+        self.assertEqual(out["state"], "closed")
+        self.assertIsNone(out["proof_seq"])
+        self.assertEqual(out["evidence"]["session"], owner)
+        self.assertEqual(out["evidence"]["text"], WITHDRAW_TEXT)
+        self.assertEqual(out["binding"]["user_quote"]["seq"], 2)
+        self.assertEqual(out["binding"]["user_quote"]["sha256"],
+                         "sha256:" + hashlib.sha256(
+                             WITHDRAW_TEXT.encode("utf-8")).hexdigest())
+        self.assertTrue(mon.check_start(owner, EXP)["allow"])
+
+    def test_close_quote_alone_cannot_close_intent(self):
+        # 用户原话 + 报告，但报告**没有**把这条原话解释成撤回：主会话自己传一段话不算
+        h = self._fresh()
+        h.register_active(seq=1)
+        h.add(user(6, WITHDRAW_TEXT))
+        h.trigger()
+        kept = h.record(h.report(h.prepare(), closure_target="closed"))
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="withdrawn", target="closed",
+                        report_id=kept["report_id"],
+                        quote={"session": OWNER, "seq": 6, "text": WITHDRAW_TEXT})
+        self.assertIn("closure.user_command", str(caught.exception))
+        # 连报告都不给：报错要同时指出两条路径
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="withdrawn", target="closed", report_id=kept["report_id"])
+        self.assertIn("proof", str(caught.exception))
+        self.assertIn("quote", str(caught.exception))
+        # 只给 quote、不给报告：主会话单句关不掉
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="withdrawn", target="closed", report_id="MON-missing",
+                        quote={"session": OWNER, "seq": 6, "text": WITHDRAW_TEXT})
+        self.assertIn("找不到该监控报告", str(caught.exception))
+        # 失败后状态仍是 active：没有半闭合
+        self.assertEqual(h.mon.status(OWNER)["state"], "active")
+
+    def test_close_quote_must_be_real_user_message(self):
+        h = self._fresh()
+        recorded, _ = h.bound_close_setup()
+        # 转述 / 拼凑的文本：逐字比对失败
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="withdrawn", target="closed",
+                        report_id=recorded["report_id"],
+                        quote={"session": OWNER, "seq": 6, "text": "用户说不想做了"})
+        self.assertIn("逐字", str(caught.exception))
+        # 指到 assistant 消息：不是真实用户原话
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="withdrawn", target="closed",
+                        report_id=recorded["report_id"],
+                        quote={"session": OWNER, "seq": 2, "text": "收到，继续守回归。"})
+        self.assertIn("真实用户原话", str(caught.exception))
+        # 必须写明 session
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="withdrawn", target="closed",
+                        report_id=recorded["report_id"],
+                        quote={"seq": 6, "text": WITHDRAW_TEXT})
+        self.assertIn("session", str(caught.exception))
+        # 指到别人（监控子会话）的会话：拒绝串会话
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="withdrawn", target="closed",
+                        report_id=recorded["report_id"],
+                        quote={"session": "monitor-1", "seq": 6, "text": WITHDRAW_TEXT})
+        self.assertIn("session", str(caught.exception))
+
+    def test_close_quote_must_be_the_same_one_bound_by_report(self):
+        h = self._fresh()
+        recorded, _ = h.bound_close_setup()
+        # 同一 seq 的另一个片段：不是「同一条 quote」
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="withdrawn", target="closed",
+                        report_id=recorded["report_id"],
+                        quote={"session": OWNER, "seq": 6, "text": WITHDRAW_TEXT[:6]})
+        self.assertIn("同一条", str(caught.exception))
+
+        h = self._fresh()
+        recorded, _ = h.bound_close_setup(extra_users=((7, NEW_WORDS),))
+        # 报告绑的是 seq=6，close 却拿 seq=7：不是同一条
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="withdrawn", target="closed",
+                        report_id=recorded["report_id"],
+                        quote={"session": OWNER, "seq": 7, "text": NEW_WORDS})
+        self.assertIn("同一条", str(caught.exception))
+
+    def test_close_quote_must_be_newer_than_intent_source(self):
+        h = self._fresh()
+        h.register_active(seq=1)
+        h.trigger()
+        prep = h.prepare()
+        kept = h.record(h.report(prep, closure_target="closed",
+                                 closure_binding=h.bind(seq=1, text=USER_TEXT),
+                                 closure_sources=[{"session": OWNER, "seq": 1}]))
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="withdrawn", target="closed",
+                        report_id=kept["report_id"],
+                        quote={"session": OWNER, "seq": 1, "text": USER_TEXT})
+        self.assertIn("晚于", str(caught.exception))
+
+    def test_close_binding_must_point_at_current_intent_and_action(self):
+        h = self._fresh()
+        recorded, _ = h.bound_close_setup(binding=h.bind(seq=6, text=WITHDRAW_TEXT,
+                                                         intent_id="INT-9"))
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="withdrawn", target="closed",
+                        report_id=recorded["report_id"],
+                        quote={"session": OWNER, "seq": 6, "text": WITHDRAW_TEXT})
+        text = str(caught.exception)
+        self.assertIn("逐键", text)
+        self.assertIn("INT-9", text)
+
+        # 报告绑 withdrawn，本次却按 replaced 关：理由不同就是不逐键相等
+        h = self._fresh()
+        recorded, _ = h.bound_close_setup()
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="replaced", target="closed",
+                        report_id=recorded["report_id"], replacement_intent_id="INT-2",
+                        quote={"session": OWNER, "seq": 6, "text": WITHDRAW_TEXT})
+        self.assertIn("逐键", str(caught.exception))
+
+    def test_close_binding_requires_same_quote_in_closure_sources(self):
+        h = self._fresh()
+        h.register_active(seq=1)
+        h.add(user(6, WITHDRAW_TEXT))
+        h.trigger()
+        prep = h.prepare()
+        with self.assertRaises(MonitoringError) as caught:
+            h.record(h.report(prep, closure_target="closed",
+                              closure_binding=h.bind(seq=6, text=WITHDRAW_TEXT)))
+        self.assertIn("closure.sources", str(caught.exception))
+
+    def test_report_binding_shape_checked_at_record(self):
+        h = self._fresh()
+        h.register_active(seq=1)
+        h.add(user(6, WITHDRAW_TEXT))
+        h.trigger()
+        prep = h.prepare()
+        good = h.bind(seq=6, text=WITHDRAW_TEXT)
+        sources = [{"session": OWNER, "seq": 6}]
+        cases = [
+            (dict(good, extra=1), "不允许的字段"),
+            ({"expected": good["expected"]}, "user_quote"),
+            ({"expected": dict(good["expected"], action="keep_intent"),
+              "user_quote": good["user_quote"]}, "close_intent"),
+            ({"expected": dict(good["expected"], note="顺便"),
+              "user_quote": good["user_quote"]}, "不允许的字段"),
+            ({"expected": dict(good["expected"], reason="achieved"),
+              "user_quote": good["user_quote"]}, "withdrawn / replaced"),
+            ({"expected": dict(good["expected"], target="none"),
+              "user_quote": good["user_quote"]}, "closure.target"),
+            ({"expected": dict(good["expected"], reason="replaced",
+                               replacement_intent_id=None),
+              "user_quote": good["user_quote"]}, "replacement_intent_id"),
+            ({"expected": good["expected"], "user_quote": 6}, "user_quote"),
+            ({"expected": good["expected"],
+              "user_quote": dict(good["user_quote"], session="monitor-1")}, "负责人会话"),
+            ({"expected": good["expected"],
+              "user_quote": dict(good["user_quote"], text="用户说不用了")}, "逐字"),
+        ]
+        for binding, expected_text in cases:
+            with self.subTest(binding=binding):
+                with self.assertRaises(MonitoringError) as caught:
+                    h.record(h.report(prep, closure_target="closed",
+                                      closure_binding=binding, closure_sources=sources))
+                self.assertIn(expected_text, str(caught.exception))
+        # 这些失败都不该落账：状态仍是 active，报告数仍是 0
+        status = h.mon.status(OWNER)
+        self.assertEqual(status["state"], "active")
+        self.assertEqual(status["reports"], [])
+
+    def test_report_binding_cannot_claim_message_beyond_cutoff(self):
+        h = self._fresh()
+        h.register_active(seq=1)
+        h.trigger()
+        prep = h.prepare()
+        h.add(user(9, WITHDRAW_TEXT))  # prepare 之后才出现：不在报告证据内
+        with self.assertRaises(MonitoringError) as caught:
+            h.record(h.report(prep, closure_target="closed",
+                              closure_binding=h.bind(seq=9, text=WITHDRAW_TEXT),
+                              closure_sources=[{"session": OWNER, "seq": 9}]))
+        self.assertIn("截止", str(caught.exception))
+
+    def test_new_user_message_after_report_blocks_natural_close(self):
+        h = self._fresh()
+        recorded, _ = h.bound_close_setup()
+        h.add(user(9, NEW_WORDS))  # 报告之后的新原话：没有评估过
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="withdrawn", target="closed",
+                        report_id=recorded["report_id"],
+                        quote={"session": OWNER, "seq": 6, "text": WITHDRAW_TEXT})
+        self.assertIn("过期", str(caught.exception))
+        self.assertEqual(h.mon.status(OWNER)["state"], "active")
+
+    def test_open_blocking_issue_blocks_natural_close(self):
+        h = self._fresh()
+        recorded, _ = h.bound_close_setup(issues=(h.issue(blocking=True),))
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="withdrawn", target="closed",
+                        report_id=recorded["report_id"],
+                        quote={"session": OWNER, "seq": 6, "text": WITHDRAW_TEXT})
+        text = str(caught.exception)
+        self.assertTrue("未处理" in text or "阻断" in text, text)
+        self.assertEqual(h.mon.status(OWNER)["state"], "active")
+
+    def test_binding_report_must_be_the_current_one(self):
+        h = self._fresh()
+        recorded, _ = h.bound_close_setup()
+        # 再出一份更新的独立报告：旧报告不再是「最后一份仍有效」
+        h.trigger(exp="E2")
+        h.record(h.report(h.prepare(exp="E2")))
+        with self.assertRaises(MonitoringError) as caught:
+            h.mon.close(OWNER, reason="withdrawn", target="closed",
+                        report_id=recorded["report_id"],
+                        quote={"session": OWNER, "seq": 6, "text": WITHDRAW_TEXT})
+        self.assertIn("最后一份仍有效", str(caught.exception))
+
+    def test_json_command_path_still_works_with_binding(self):
+        # 无独立绑定时的原路径保持可用：用户自己发完整 JSON 命令
+        h = self._fresh()
+        command = {"action": "close_intent", "intent_id": "INT-1", "reason": "withdrawn",
+                   "replacement_intent_id": None, "target": "closed"}
+        h.register_active(seq=1, intent_id="INT-1")
+        h.add(user(6, WITHDRAW_TEXT))
+        h.add(user(7, json.dumps(command, ensure_ascii=False)))
+        h.trigger()
+        prep = h.prepare()
+        kept = h.record(h.report(prep, closure_target="closed",
+                                 closure_binding=h.bind(seq=6, text=WITHDRAW_TEXT),
+                                 closure_sources=[{"session": OWNER, "seq": 6}]))
+        out = h.mon.close(OWNER, reason="withdrawn", target="closed",
+                          report_id=kept["report_id"], proof={"session_id": OWNER, "seq": 7})
+        self.assertEqual(out["state"], "closed")
+        self.assertEqual(out["command"], command)
+        self.assertEqual(out["proof_seq"], 7)
+        self.assertIsNone(out["binding"])
+        self.assertIn("user_command", [call["kind"] for call in h.host.calls])
 
     # -- L13 未登记 / 无 host ----------------------------------------------
 
