@@ -3,13 +3,13 @@
 # PURPOSE: `remote_workflow.py` 的命令行入口。生产接线固定：审计核验 `DSHHost()`、监控 `Monitoring.check_start`、
 #          执行准入 `admission.Admission(...).check`；⛔ 没有 --allow-unwired-* 这类跳过闸的开关。
 # ORIGIN: 形态照 `workflow_cli.py`（先检查后起跑 + 保留真实退出码），语义来自 remote_workflow 的受管远端链。
-# CUMULATIVE-DELTA: 首版。默认关闭：没有 `.autoresearch/remote/deployment.json`（enabled=true）时，
+# CUMULATIVE-DELTA: 2026-11-09 默认关闭监控时不再要求意图声明参数； 首版。默认关闭：没有 `.autoresearch/remote/deployment.json`（enabled=true）时，
 #          除 `doctor` / `status` 外的子命令都诚实拒绝并且**一个连接都不发**；`doctor` 与 `status` 只读本地。
 """受管远端执行的命令行入口。
 
     python -m kernel.autoresearch.remote_cli doctor  --workspace W [--plan-id P]
     python -m kernel.autoresearch.remote_cli check   --workspace W --topic T --plan P \\
-        --owner-session S (--intent-id I | --intent-none) --resource R [...] -- ARGV...
+        --owner-session S [--intent-id I | --intent-none] --resource R [...] -- ARGV...
     python -m kernel.autoresearch.remote_cli provision --workspace W [--force]
     python -m kernel.autoresearch.remote_cli start   （同 check，可加 --run-series-id / --run-reservation-id）
     python -m kernel.autoresearch.remote_cli status  --workspace W [--run-id R] [--topic T] [--plan-id P]
@@ -167,11 +167,11 @@ def _parser():
         node.add_argument("--topic", required=True)
         node.add_argument("--plan", required=True)
         node.add_argument("--owner-session", required=True)
-        intent = node.add_mutually_exclusive_group(required=True)
+        intent = node.add_mutually_exclusive_group()
         intent.add_argument("--intent-id", default=None,
                             help="专项意图编号（必须等于 Monitoring.check_start 的真实当前 id）")
         intent.add_argument("--intent-none", action="store_true",
-                            help="显式声明当前没有专项意图（省略不默认放行）")
+                            help="显式声明当前没有专项意图（关闭监控时可省略；启用后仍须声明）")
         node.add_argument("--resource", action="append", default=[],
                           help="资源租约键（可重复，例如 machine:gpu-a/gpu0）")
 

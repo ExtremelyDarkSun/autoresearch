@@ -60,7 +60,8 @@
    `--allow-unwired-monitor` / `--monitor-module` 这类可跳闸的开关（有就等于生产旁路）。
    监控结果必须带完整协议：`{ok|allow, problems, registered, state, intent_id}`；缺字段即拒，
    ⛔ 不接受 `{"ok": True}` 这种裸放行。`--intent-id` 必须等于监控当前 active/blocked 意图 id，
-   `--intent-none` 必须对应 none/closed 且没有当前意图 id。
+   `--intent-none` 必须对应 none/closed 且没有当前意图 id。⚠️ 监控**默认关闭**时监控返回
+   `state="disabled"`：不要求登记、不要求意图声明，直接放行（不是给生产开旁路，而是闸的开关没开）。
    旧的 `Governance.check_start` 只保留给兼容 API，**不接生产双重拦截**（否则只按 monitoring
    登记的真实用户永远无法起跑）。只有 Python 测试可以注入夹具回调，并**必须**显式
    `require_monitor_check=False` 标记夹具；夹具照样要给完整协议字段。
@@ -242,7 +243,8 @@ _DDL = (
 _APPEND_ONLY_TABLES = ("wf_preparations", "wf_runs", "wf_finishes", "wf_reviews", "wf_events")
 
 #: 监控状态枚举（`Monitoring.check_start` 的协议字段；gate 只认这些）。
-MONITOR_STATES = ("none", "active", "blocked", "closed")
+#: `disabled` = 监控**默认关闭**（缺开关文件）：不要求登记、不要求声明意图、不拦起跑。
+MONITOR_STATES = ("none", "active", "blocked", "closed", "disabled")
 
 
 class _ReadOnlyStore:
@@ -279,9 +281,12 @@ class _ReadOnlyStore:
                 conn.close()
 
 
-def _readonly_governance(db_path, *, verifier=None, policy=None):
+def _readonly_governance(db_path, *, verifier=None, policy=None, workspace=None):
     """不跑 `Governance.__init__`（它会建表）的只读实例：只调只读投影方法。"""
     gov = object.__new__(Governance)
+    database = Path(db_path).resolve()
+    inferred = database.parent.parent if database.parent.name == '.autoresearch' else None
+    gov.workspace = str(workspace or inferred) if (workspace or inferred) is not None else None
     gov.store = _ReadOnlyStore(db_path)
     gov.verifier = verifier
     gov.experiment_id = None
@@ -491,6 +496,7 @@ class Workflow:
             if self.gov is None:
                 self.gov = Governance(
                     self.store,
+                    workspace=self.root,
                     verifier=verifier,
                     policy={"require_verified_independence": self.require_verified_independence},
                 )
@@ -514,7 +520,7 @@ class Workflow:
             if self.store is None:
                 self.store = _ReadOnlyStore(self.db)
             if self.gov is None:
-                self.gov = _readonly_governance(self.db, verifier=verifier)
+                self.gov = _readonly_governance(self.db, verifier=verifier, workspace=self.root)
         self._gov_ro = None
 
     # -- 基础设施 -----------------------------------------------------------
@@ -667,8 +673,8 @@ class Workflow:
                 problems.append("criteria.mode 必须是 confirmatory 或 exploratory")
             if not _filled(criteria.get("metric")):
                 problems.append("criteria.metric 必填：这一轮要读的那个量")
-            if not _filled(criteria.get("source")):
-                problems.append("criteria.source 必填：判据 / 门槛的出处（哪次读数、哪条规则、哪份契约）")
+            if "source" in criteria and not isinstance(criteria["source"], str):
+                problems.append("criteria.source 若填写必须是字符串；不是必填项")
             if mode == "confirmatory":
                 if criteria.get("direction") not in ("increase", "decrease"):
                     problems.append("确认性判据必须写 criteria.direction（increase / decrease）")
@@ -944,7 +950,12 @@ class Workflow:
         ⛔ 不提供任何跳过开关）。**完整适配器协议**（缺字段即拒，⛔ 不接受 `{"ok": True}` 这种裸放行）：
 
             {ok|allow: bool, problems: [...], registered: bool,
-             state: "none"|"active"|"blocked"|"closed", intent_id: str|null}
+             state: "none"|"active"|"blocked"|"closed"|"disabled", intent_id: str|null}
+
+        ⚠️ **监控默认关闭**（缺 `intent_monitor_policy.json` 的 `{"enabled": true}`）时，
+        `Monitoring.check_start` 返回 `state="disabled"`：这里**不要求 `registered`**、也不要求
+        `--intent-id` / `--intent-none` 声明（关闭即不拦起跑）；只有「还带着意图 id」这种自相矛盾的
+        声明才拒。显式启用后，下面的登记与声明核对一条都不放宽。
 
         闸还会核声明与真实状态一致：`--intent-id` 必须等于监控当前 active/blocked 意图 id；
         `--intent-none` 必须是 none/closed 且没有当前意图 id。
@@ -983,13 +994,22 @@ class Workflow:
         state = result.get("state")
         current_intent = result.get("intent_id")
         protocol = []
-        if registered is not True:
+        disabled = state == "disabled"
+        # ⚠️ 默认关闭时**不要求登记**（`registered` 为假是正常状态，不是缺口）。
+        if not disabled and registered is not True:
             protocol.append("监控未登记（registered≠true）：先按 Monitoring.register 登记负责人会话")
         if state not in MONITOR_STATES:
             protocol.append(f"监控状态字段不可判（state={state!r}，应为 {'/'.join(MONITOR_STATES)}）")
         if current_intent is not None and not isinstance(current_intent, str):
             protocol.append(f"监控 intent_id 字段不可判（{current_intent!r}）")
-        if _filled(owner_session) and intent_none:
+        if disabled:
+            # 默认关闭：不要求 `--intent-none`（没有监控就没有「要不要立意图」的声明义务）。
+            # 只有「声明了一个 active 意图 id」才拒：关闭时不存在可核的意图。
+            if _filled(intent_id):
+                protocol.append(
+                    "监控默认关闭（state=disabled）：没有可声明的意图 id；"
+                    "要按意图起跑，先按用户明确要求写开关文件启用监控")
+        elif _filled(owner_session) and intent_none:
             if state not in ("none", "closed"):
                 protocol.append(
                     f"声明 --intent-none，但监控真实状态是 {state!r}：不能按『没有专项意图』起跑")
@@ -999,7 +1019,7 @@ class Workflow:
                     "先按意图流程处理，或换 --intent-id")
         elif _filled(owner_session):
             if not _filled(intent_id):
-                protocol.append("必须显式声明 --intent-id 或 --intent-none（省略不默认放行）")
+                protocol.append("必须显式声明监控入口：--intent-id <id> 或 --intent-none（省略不默认放行）")
             elif state not in ("active", "blocked"):
                 protocol.append(
                     f"声明 --intent-id={intent_id!r}，但监控真实状态是 {state!r}："
@@ -1034,8 +1054,8 @@ class Workflow:
             problems.append("owner_session 必填：省略或空白不放行（旧入口「省略会话就默认放行」的行为在这里没有）")
         if intent_none and intent_id:
             problems.append("intent 声明冲突：--intent-id 与 --intent-none 只能给一个")
-        elif not intent_none and not intent_id:
-            problems.append("必须显式声明监控入口：--intent-id <id> 或 --intent-none（省略不默认放行）")
+        # ⚠️ 「必须显式声明意图入口」由 `_monitor_gate` 在**启用后**判：监控默认关闭时
+        #    不存在「要不要立意图」的声明义务（关闭即不拦），所以这里不再前置拒绝。
         actual = []
         if argv is None or (isinstance(argv, (list, tuple)) and not list(argv)):
             problems.append("必须给出实际 argv（显式数组，经 `--` 传入）：省略不默认放行，也不跳过比对")
@@ -1285,7 +1305,7 @@ class Workflow:
             return self._gov_ro
         policy = getattr(self.gov, "policy", None) if self.gov is not None else None
         verifier = getattr(self.gov, "verifier", None) if self.gov is not None else None
-        self._gov_ro = _readonly_governance(self.db, verifier=verifier, policy=policy)
+        self._gov_ro = _readonly_governance(self.db, verifier=verifier, policy=policy, workspace=self.root)
         return self._gov_ro
 
     # -- 生命周期投影（通知，非闸） -----------------------------------------

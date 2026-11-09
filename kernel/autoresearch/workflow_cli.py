@@ -3,7 +3,7 @@
 # PURPOSE: `workflow.py` 的命令行入口。**生产接线固定**：监控接 `Monitoring(workspace, host=DSHHost())`，
 #          审计核验接 `DSHHost()`；⛔ 不提供跳过闸的开关（没有 --allow-unwired-monitor / --monitor-module）。
 # ORIGIN: 抽取自 AutoDL实验/tool/exp_launch.py 的「先检查后起跑 + 保留真实退出码」入口形态；无比赛/渠道值。
-# CUMULATIVE-DELTA: 首版。所有文件参数都是工作区内相对路径；argv 一律经 `--` 传入。
+# CUMULATIVE-DELTA: 2026-11-09 默认关闭监控时不再要求意图声明参数； 首版。所有文件参数都是工作区内相对路径；argv 一律经 `--` 传入。
 #   本轮补：`check` 是明确只读入口 —— 只读 Store / 只读决策服务 / `Workflow(readonly=True)`，
 #   不建库、不建目录、不迁移 schema；缺库 / 缺表 / 旧 schema 返回 `undecidable`（退出码 2）。
 
@@ -15,7 +15,7 @@
         --owner-session S [--source P ...] [--source-file F] [--actor A]
 
     python -m kernel.autoresearch.workflow_cli check  --workspace W --topic T --plan P \\
-        --owner-session S (--intent-id I | --intent-none) -- ARGV...
+        --owner-session S [--intent-id I | --intent-none] -- ARGV...
 
     python -m kernel.autoresearch.workflow_cli launch （同 check）
 
@@ -284,11 +284,11 @@ def _parser():
         node.add_argument("--topic", required=True)
         node.add_argument("--plan", required=True)
         node.add_argument("--owner-session", required=True)
-        intent = node.add_mutually_exclusive_group(required=True)
+        intent = node.add_mutually_exclusive_group()
         intent.add_argument("--intent-id", default=None,
                             help="专项意图编号；必须等于 Monitoring.check_start 报告的真实当前 id")
         intent.add_argument("--intent-none", action="store_true",
-                            help="显式声明当前没有专项意图（Monitoring 状态必须是 none/closed；省略不默认放行）")
+                            help="显式声明当前没有专项意图（Monitoring 状态必须是 none/closed；关闭监控时可省略；启用后仍须声明）")
 
     finish = sub.add_parser("finish", parents=[common],
                             help="登记结束：真实原因 + 退出码（文档失败不覆盖退出码）")

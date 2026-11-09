@@ -4,7 +4,7 @@
 #          以及下一轮只读 preflight 与跨专题四阶段排序。
 # ORIGIN: 上游推进器的 CLI 形态（同一命令多模式、JSON 输出、退出码区分「无需打扰」「叫醒」「失败」）；
 #         宿主约定见 kernel/autoresearch/progress.py 的 WATCH_CONTRACT。
-# CUMULATIVE-DELTA: 首版。与上游的差异：① watch 是**受管后台作业本体**，一次唤醒即退出，不设固定寿命、
+# CUMULATIVE-DELTA: 2026-11-09 默认关闭监控时不再要求意图声明参数； 首版。与上游的差异：① watch 是**受管后台作业本体**，一次唤醒即退出，不设固定寿命、
 #         不自续、不起替代服务；② 退出码可能被后台作业压成 1，所以同时把 verdict / intended_exit /
 #         actual_exit 写进 <state.root>/runs/<job_id>.json 与事件账（A7）；③ probe 不用管道采集，
 #         原文落私有工作区文件并回传路径与 sha256；④ rearm 必须显式执行，未重挂不许再挂第二个作业。
@@ -33,7 +33,7 @@
 `Admission.check`（只读）与只读 overdue 源。⛔ 它们不会替你起进程、开机器或发任务。
 
 `preflight` / `next-round` 需要显式给 `--next-plan`（工作区内相对路径）、`--topic`、
-`--owner-session`、意图声明（`--intent-id` 或 `--intent-none`）与 `--` 之后的完整 argv；
+`--owner-session`与 `--` 之后的完整argv；只有用户显式启用监控后才必需意图声明（`--intent-id` 或 `--intent-none`）；
 `schedule` 需要显式候选（`--entries` 文件或可重复 `--entry-json`）。
 
 ⛔ 本 CLI **不会**自己起替代服务、不会自续、不会伪造「宿主已被唤醒」。
@@ -292,10 +292,10 @@ def build_parser():
                           help="下一轮计划：工作区内相对路径（CLI 需要路径才能给命令）")
         node.add_argument("--topic", required=True, help="下一轮专题")
         node.add_argument("--owner-session", required=True, help="下一轮负责人会话")
-        intent = node.add_mutually_exclusive_group(required=True)
+        intent = node.add_mutually_exclusive_group()
         intent.add_argument("--intent-id", default=None, help="专项意图编号（必须等于监控真实当前 id）")
         intent.add_argument("--intent-none", action="store_true",
-                            help="显式声明当前没有专项意图（监控必须是 none/closed）")
+                            help="显式声明当前没有专项意图（仅启用监控时必须为none/closed；关闭可省）")
         node.add_argument("--stage", default=None, choices=list(progress.STAGES),
                           help="显式研究阶段（缺省时读计划 research.stage / stage / execution.stage）")
         node.add_argument("--resources-json", default=None,

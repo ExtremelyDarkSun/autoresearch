@@ -1,26 +1,56 @@
 <!--
 GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-LAST-EDIT: 2026-11-09 (DSH agent)（§4.1：withdrawn/replaced 除原有 JSON 用户命令外，接受真实用户原话 +
-           当前独立报告 closure.user_command 逐键绑定；公开 CLI 两条路都已接通且互斥；不改其余规则）
-PURPOSE: 跨轮专项意图与过程监控 —— 四态、三触发、来源必须可追、两个水位、闭合四理由、进下一轮前的检查
+LAST-EDIT: 2026-11-09 (DSH agent)（同步上游「监控默认关闭」：新增 §0 开关 —— 只认
+            `<workspace>/.autoresearch/intent_monitor_policy.json` 顶层 JSON 布尔 `{"enabled": true}`；
+            缺文件 / 坏 JSON / 非对象 / 非布尔一律 off。关闭时 `check_start` 直接放行、`event` no-op、
+            写命令拒写、历史 `active`/`blocked` 账保留但不拦；**删掉的义务只在关闭时**：不要求登记、
+            不逐条问「要不要立意图」、不因监控缺失/过期阻断开跑。显式启用后原判据一条不放宽）
+PREVIOUS-LAST-EDIT: 2026-11-09 (DSH agent)（§4.1：withdrawn/replaced 除原有 JSON 用户命令外，接受真实用户原话 +
+            当前独立报告 closure.user_command 逐键绑定；公开 CLI 两条路都已接通且互斥；不改其余规则）
+PURPOSE: 跨轮专项意图与过程监控 —— **默认关闭** · 开关与判定接口 · 四态、三触发、来源必须可追、两个水位、
+         闭合四理由、进下一轮前的检查
 ORIGIN: none（新文件）。抽取自上游 contracts/intent_monitor.md 的 §2–§13，去掉了个人通道、会话文件格式与具体 seq
 CUMULATIVE-DELTA: 2026-11-09 完整监控迁移到 monitoring 服务；同步完整报告、可信豁免与关闭、双水位及真实启动接线。
-           2026-11-09 补自然语言闭合路径：close 可给真实用户 quote（session/seq/text），由宿主会话逐字核验，
-           并由当前仍有效的独立报告在 closure.user_command 里逐键绑定同一原话与同一动作；原 JSON 命令路径不变。
-           2026-11-09 CLI：`monitoring close --user-quote` / `--user-quote-file` / `@文件` 走自然语言路径，
-           与 `--proof` / `--proof-seq` 互斥；CLI 不跳过独立报告约束。
+            2026-11-09 补自然语言闭合路径：close 可给真实用户 quote（session/seq/text），由宿主会话逐字核验，
+            并由当前仍有效的独立报告在 closure.user_command 里逐键绑定同一原话与同一动作；原 JSON 命令路径不变。
+            2026-11-09 CLI：`monitoring close --user-quote` / `--user-quote-file` / `@文件` 走自然语言路径，
+            与 `--proof` / `--proof-seq` 互斥；CLI 不跳过独立报告约束。
+            2026-11-09 **流程减负（默认关闭）**：`enabled(root)` 读 `.autoresearch/intent_monitor_policy.json`
+            顶层布尔；关闭即不派工、不拦起跑、不要求任何登记；新增只读 `monitoring enabled`；
+            workflow 起跑闸把 `state="disabled"` 当合法协议状态（不要求 register、不要求意图声明）。
 -->
 
-# 专项意图与节点监控
+# 专项意图与节点监控（**默认关闭**）
 
-> 一句话：**用户明确要盯住的一件事，必须有来源、跨轮存活、在三个节点被独立核过；
+> 一句话（**启用后**）：**用户明确要盯住的一件事，必须有来源、跨轮存活、在三个节点被独立核过；
 > 没盯住就不许开新方向。**
+>
+> ⚠️ 默认没有这件事：仓库里没有 `.autoresearch/intent_monitor_policy.json` 的 `{"enabled": true}`，
+> 监控就是关的 —— 不登记、不派工、不拦起跑（§0）。
 
 它**不是**方案审阅（那是开跑前审设计），也**不是**轨迹复盘（那是收尾时回看一次）。
 
 ---
 
-## 1 只监控「专项意图」
+## 0 开关：默认关闭（2026-11-09）
+
+| 项 | 口径 |
+|---|---|
+| **开关文件** | `<workspace>/.autoresearch/intent_monitor_policy.json` —— **只认顶层 JSON 对象里的布尔 `"enabled": true`**。缺文件 / 读不动 / 坏 JSON / 非对象 / 字符串 `"true"` / `1` / 缺键 ⇒ **关闭**（默认 off，⛔ 不静默回退旧行为） |
+| **判定接口** | `monitoring.enabled(root) -> bool` —— 只读这一个小文件（⛔ 不建目录、⛔ 不写盘、⛔ 不读宿主日志）；结果 hook 与启动闸共用同一个判定 |
+| **谁写它** | **只有用户明确要求时**（例如「给这个专题开意图监控」）才写；⛔ 默认不建这个文件，⛔ 主 agent 不代用户打开 |
+| **只读看状态** | `python research.py monitoring enabled`：只输出 `enabled` / `state` / `policy`，⛔ 不改任何文件 |
+| **关闭时** | `check_start` 立刻返回 `ok=true / allow=true / enabled=false / state="disabled" / problems=[]`（⛔ 不读日志、⛔ 不要求 `register`、⛔ 不要求评估用户原话）；`event` **no-op**（不登记触发、不产生待审）；`register` / `sync` / `intent` / `assess` / `prepare` / `record` / `respond` / `waive` / `close` **拒写**；`status` / `diagnose` / `protocol` / `ledger` 仍只读可用（`status` 另给 `history_state`） |
+| **历史 `active` / `blocked` 账** | **保留、不删、默认不拦** —— 关闭时它不构成起跑阻断；重新启用后仍按原账判 |
+| **启用后** | 恢复 §1–§7 的原判据（四态 · 三触发 · 两水位 · 报告过期 · hook 缺口 · `resolves` 闭合**一条都不放宽**）；入口拦截只针对重大研究缺陷 |
+
+⛔ **默认关闭时这三件都不做**：① 不逐条问「这句要不要立为跨轮意图」；② 不在结果分析 / 用户补充 / 运行偏差三处派监控子会话；③ 监控缺失 / 报告过期不阻断开跑。
+⚠️ **用户显式启用后仍按旧机制**（①见 §1 末段；②③见 §3 / §7）—— 代码在启用后没有放宽这些门。
+⚠️ **关闭 ≠ 绕过用户停止 / 预算**：取包、用户喊停、故障停机、预算耗尽停机本来就不受监控阻断（§7 最后一行）。
+
+## 1 只监控「专项意图」（启用后；关闭时整节不适用）
+
+> ⛔ 关闭时不存在「要不要立意图」这件事：不登记、不问用户、不派子会话。下表是**启用后**的判定。
 
 | 情形 | 算不算 | 处理 |
 |---|---|---|
@@ -36,10 +66,14 @@ CUMULATIVE-DELTA: 2026-11-09 完整监控迁移到 monitoring 服务；同步完
 ⚠️ 出现了用户原话，**先问用户**「这句要不要立为跨轮意图」：他说要才建 `active`，
 说不要才 `assess_update(decision="none", answer_seq=…)`，`answer_seq` 必须晚于被评估那句。
 主 agent 自己的技术判断不能把一条原话判成 `none`。
+⚠️ 这条是**显式启用后**的旧机制：⛔ 默认关闭时整段不适用（不登记、不问用户、不要求评估，§0）。
 
 ---
 
-## 2 四种状态
+## 2 四种状态（启用后）
+
+> ⛔ **关闭时四态不适用**：`state="disabled"`，不要求 `register`、不要求评估用户原话；
+> 历史 `active` / `blocked` 账保留但不拦起跑（§0）。
 
 | 状态 | 含义 | 怎么进 | 怎么出 |
 |---|---|---|---|
@@ -54,7 +88,9 @@ CUMULATIVE-DELTA: 2026-11-09 完整监控迁移到 monitoring 服务；同步完
 
 ---
 
-## 3 三个触发（其余一律不触发）
+## 3 三个触发（其余一律不触发；启用后）
+
+> ⛔ **关闭时不存在触发**：`event` 是 no-op（不读日志、不写事件），三类事件都不登记、不派工、不拦起跑。
 
 | `kind` | 什么时候 | 边界 |
 |---|---|---|
@@ -70,7 +106,9 @@ CUMULATIVE-DELTA: 2026-11-09 完整监控迁移到 monitoring 服务；同步完
 
 ---
 
-## 4 闭合的四条理由（别的都不许）
+## 4 闭合的四条理由（别的都不许；启用后）
+
+> ⛔ 关闭时没有可闭合的东西：`close` 拒写；历史已闭合的账只读保留（§0）。
 
 | 理由 | 要什么 | 谁判 |
 |---|---|---|
@@ -121,10 +159,13 @@ CUMULATIVE-DELTA: 2026-11-09 完整监控迁移到 monitoring 服务；同步完
 ⇒ `none` / `closed` 下，凡「已同步但评估水位更低」的用户原话一律**拦**：
 `check_start` 返回 `allow=False`，并给出补做 `assess_update` 的提示。
 ⚠️ `active` 更严：新原话必须被仍 current 的报告覆盖。
+⚠️ **默认关闭时整段不适用**（不存在评估要求，也不拦起跑，§0）。
 
 ---
 
-## 6 报告字段
+## 6 报告字段（启用后）
+
+> ⛔ 关闭时不产材料包、不产报告、不要求 `evidence_reads`：`prepare` / `record` 拒写（§0）。
 
 报告至少包含 `prepared_id`、`owner_session`、`monitor_session`、`exp`、`direction_sha256`，以及 `intent`、`trajectory`、`findings`、`issues`、`next_direction`、`closure`、`covers`、`evidence_reads`。不得用旧的 covers/verdict/basis 三字段对象替代完整报告。
 
@@ -146,8 +187,13 @@ CUMULATIVE-DELTA: 2026-11-09 完整监控迁移到 monitoring 服务；同步完
 
 ## 7 进下一轮之前：`check_start`
 
+> ⭐ **默认关闭时直接放行**：`state="disabled"` / `ok=true` / `allow=true` / `problems=[]`。
+> ⛔ 不读宿主日志、⛔ 不要求 `register`、⛔ 不要求评估用户原话、⛔ 历史 `active` 账与阻断都不拦
+> （用户 2026-11-09 裁定，§0）。下表是**启用后**的判据。
+
 | 情形 | 结论 |
 |---|---|
+| **默认关闭（`disabled`）** | **放行**：不要求登记 / 评估 / 派工；历史 `active` / `blocked` 账不拦 |
 | 无专项意图，且没有已同步未评估的原话 | 放行；诊断行写明「不派监控」 |
 | 无专项意图，但有未评估原话 | **拦** |
 | `active` / `blocked`，有未覆盖触发 / 报告过期 / 阻断未关 | **拦** |
@@ -160,6 +206,9 @@ CUMULATIVE-DELTA: 2026-11-09 完整监控迁移到 monitoring 服务；同步完
 
 ## 8 仍是纪律与边界
 
+0. **默认关闭**：没有 `{"enabled": true}` 就什么都不用做 —— 不登记、不评估、不派工、不拦起跑。
+   这是**减负**，不是给生产开旁路：显式启用后 §1–§7 一条不放宽；关闭时也**不绕过用户停止 / 预算**
+   （取包、喊停、故障停机、预算耗尽停机本来就不受监控阻断）。
 1. **语义识别**：什么算专项意图、什么算执行偏差，本层判不了（只看登记）。撤回 / 替换的语义同样判不了：
    自然语言路径只把「独立报告的解释」与「真实用户原话」逐键绑起来（§4.1），不声称本层读懂了那句话。
 2. **及时派工**：工具只出材料，不替你派子会话。

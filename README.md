@@ -36,7 +36,7 @@ python -X utf8 -B research.py layout-check --workspace ../my-research
 
 默认初始化按模板复制目录和正文，安装所选 profile 与内核契约副本，重写本地链接并生成空状态库及来源哈希回执。目标必须尚不存在。工具固定的 `topics/`、`worktrees/`、`environments/` 与 `.autoresearch/` 保持兼容；中文业务目录承担分层入口和资料组织，不复制另一套专题正文。
 
-结构、内容边界及与原组织的对应关系见[组织映射](<project/ORGANIZATION_MAP.md>)；初始化、维护规则恢复及独立读取测试见[项目组织验收](<docs/PROJECT_ORGANIZATION.md>)。宿主是否实际分层加载须另测；链接检查不冒充注入证明。原工作区最新监控与审计减负仍有执行政策差异，已在[加载说明](<project/AutoDL实验/框架/CONTEXT_LOADING.md#执行兼容边界>)单列。
+结构、内容边界及与原组织的对应关系见[组织映射](<project/ORGANIZATION_MAP.md>)；初始化、维护规则恢复及独立读取测试见[项目组织验收](<docs/PROJECT_ORGANIZATION.md>)。宿主是否实际分层加载须另测；链接检查不冒充注入证明。最新监控默认关闭、审计减负及专题文档创建已同步，范围与验证见[框架同步记录](<docs/FRAMEWORK_SYNC.md>)。
 
 ## 让 AI 带你走一轮
 
@@ -75,7 +75,7 @@ python -X utf8 -B research.py selftest --plugins     # 需要 Node.js
 | [kernel/autoresearch/governance.py](kernel/autoresearch/governance.py) | 通用研究治理 | 计划检查、冻结、独立审查（宿主绑定）、意图、复盘和经验确认 |
 | [kernel/autoresearch/workflow.py](kernel/autoresearch/workflow.py) | 研究执行主链 | 事前材料与来源哈希、起跑闸、真子进程与退出码、结束、复盘、只读状态 |
 | [kernel/autoresearch/reporting.py](kernel/autoresearch/reporting.py) | 人读页供料与验收 | 完整供料包、页面检查、scribe 回执、整轮交付、checkpoint 时效诊断 |
-| [kernel/autoresearch/monitoring.py](kernel/autoresearch/monitoring.py) | 意图与过程监控 | 四态、三触发、两水位、独立子会话报告核验、意见处置与跨报告阻断 |
+| [kernel/autoresearch/monitoring.py](kernel/autoresearch/monitoring.py) | 意图与过程监控 | 默认关闭，显式启用后核四态、三触发、两水位与独立子会话报告、意见处置与跨报告阻断 |
 | [kernel/autoresearch/decisions.py](kernel/autoresearch/decisions.py) | 审批与入向 | 自包含审批页、先页后卡、双回执重算、两小时超时、文字回复窗口 |
 | [kernel/autoresearch/progress.py](kernel/autoresearch/progress.py) | 进度采集与推进器 | 声明式 spec、采集比较、租约、静默窗口、一次唤醒即退出、显式重挂 |
 | [kernel/autoresearch/progress_host.py](kernel/autoresearch/progress_host.py) | 宿主侧联动 | DSH goal 重放、超期只读、受管 job 登记台账（只读宿主） |
@@ -125,7 +125,7 @@ python -X utf8 -B research.py topics --db ../my-research/.autoresearch/runtime.s
 python -X utf8 -B research.py topics --db ../my-research/.autoresearch/runtime.sqlite3 show --topic demo-topic
 ```
 
-`workspace topic` 会真的建 `worktrees/<topic>` 与 `environments/<topic>`，失败时把 `status=incomplete` 与错误写进 `topics/<topic>/provision.json`，**不静默覆盖**。它**不装依赖、不跑评测**（`ready_for_evaluation=false`）。
+`workspace topic`从版本模板建立TOPIC、日期EVIDENCE及STATUS骨架，骨架不算已交付报告。它会真的建 `worktrees/<topic>` 与 `environments/<topic>`，失败时把 `status=incomplete` 与错误写进 `topics/<topic>/provision.json`，**不静默覆盖**。它**不装依赖、不跑评测**（`ready_for_evaluation=false`）。
 
 ⚠️ 旧版只有 `topics create`：它只登记目录与分支字符串，**不会**建 worktree、不会建独立环境、也不证明远端隔离。真实实验仍需把这两步都做到；`claim` / 交接命令保留不变。
 
@@ -154,7 +154,7 @@ python -X utf8 -B research.py workspace snapshot --workspace ../my-research --to
 | 统一检查清单 | `research.py assurance checklist` | 16项只读聚合，复用审计、预算与远端租约判据 |
 | 普通提问 | `research.py questions ask/open/answer/declare/link/expire/cancel` | `<工作区>/.autoresearch/runtime.sqlite3` 的提问台账 |
 
-三条边界：**起跑闸是 fail-closed 的**（缺审计/监控/准入任一就拒绝启动，且不起来子进程）；**没有可信验证器时授权、豁免、交付确认会拒绝**；**通道、云机、平台凭据属于部署配置**，仓库只放引用。
+三条边界：**起跑闸是 fail-closed 的**（缺当前审计或准入就拒绝启动；监控仅在用户显式启用后参与，且不起来子进程）；**没有可信验证器时授权、豁免、交付确认会拒绝**；**通道、云机、平台凭据属于部署配置**，仓库只放引用。
 
 ## 怎么换成自己的比赛
 

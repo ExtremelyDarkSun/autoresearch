@@ -20,8 +20,7 @@
     "observation": "<支持、反驳、未看到分别是什么观察>",
     "interpretation_boundary": "<本次观察能解释什么、不能外推什么>",
     "conditions": "<装置、样本、预算和比较前提>",
-    "stop_condition": "<获得哪些观察时结束，或什么条件下停止>",
-    "source": "<观察边界与停止条件的原始依据>"
+    "stop_condition": "<获得哪些观察时结束，或什么条件下停止>"
   },
   "baseline": {
     "label": "<这一轮对照的是谁>",

@@ -3,7 +3,7 @@ GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
 LAST-EDIT: latest framework synchronization, 2026-11-09
 PURPOSE: 一次实验的「事前设计」正文 —— 假设、一次一组同假设改动、判据与出处、三类对照与历史已通过项、结果分支、预算，以及冻结与指纹
 ORIGIN: none（新文件）。抽取自上游 EXPERIMENT_RULES.md §1.1/§1.2/§1.3/§1.5/§1.9 与 plan_audit.md §4/§6，去掉了题单规模阈值与个人渠道
-CUMULATIVE-DELTA: 2026-11-09 增加复盘v2的下一步判据、证据、成本、负责人及审批说明；历史兼容但缺字段保留unknown。此前补齐探索性停止条件及来源、方向证据边界、工具变更与上下文纪律；生产主链加入四锚点、实现五项与文件定位、实际argv和共享预算授权绑定。
+CUMULATIVE-DELTA: 2026-11-09 判据source可选，新模板默认探索性；2026-11-09 增加复盘v2的下一步判据、证据、成本、负责人及审批说明；历史兼容但缺字段保留unknown。此前补齐探索性停止条件及来源、方向证据边界、工具变更与上下文纪律；生产主链加入四锚点、实现五项与文件定位、实际argv和共享预算授权绑定。
 -->
 
 # 方案契约（一次一轮）
@@ -52,7 +52,7 @@ CUMULATIVE-DELTA: 2026-11-09 增加复盘v2的下一步判据、证据、成本�
 
 ## 3 探索性观察与确认性门槛
 
-探索性实验使用 `mode=exploratory`，写 `metric`、`observation`、`interpretation_boundary`、`conditions`、`stop_condition`、`source`。它不强制数字门槛。确认性实验用 `mode=confirmatory`，或沿用未写 mode 的旧格式。确认性门槛必须有出处。
+新模板默认探索性，使用 `mode=exploratory`，写 `metric`、`observation`、`interpretation_boundary`、`conditions`、`stop_condition`。它不强制数字门槛。`source`可选，不为每条研究判据强制附原文背书。确认性实验用 `mode=confirmatory`，或沿用未写mode的旧格式，保留门槛与解释理由。
 
 ```json
 "criteria": {
@@ -68,10 +68,10 @@ CUMULATIVE-DELTA: 2026-11-09 增加复盘v2的下一步判据、证据、成本�
 | `metric` | 非空，且是**这一个设计能产出的量** |
 | `direction` | `increase` / `decrease` |
 | `threshold` | 有限数（`NaN` / `Infinity` / `true` 一律拒） |
-| `source` | 非空。**门槛从哪来**：哪次读数、哪条规则、哪份契约 |
+| `source` | 可选字符串。有实际来源时保留定位，不设硬必填 |
 
 ⚠️ 阈值不是「拍一个数」：要能说出它在什么条件下成立。
-⚠️ 「差 1 题算不算显著」这类问题不在本层判 —— 本层只保证**你写下的门槛有出处**。
+⚠️ 「差 1 题算不算显著」这类问题不在本层判 —— 本层检查形状，不能保证阈值合理或来源支撑结论。
 
 ---
 

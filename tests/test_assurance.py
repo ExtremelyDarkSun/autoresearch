@@ -235,6 +235,10 @@ class SeparateItemsTests(AssuranceCase):
         ws, store = workspace_with_state(self)
         (ws / 'results').mkdir()
         (ws / 'evidence').mkdir()
+        # 本用例测「显式启用监控后」的缺口分列：默认关闭时 monitoring.intent 不再算缺口。
+        (ws / '.autoresearch').mkdir(parents=True, exist_ok=True)
+        (ws / '.autoresearch' / 'intent_monitor_policy.json').write_text(
+            json.dumps({'enabled': True}), encoding='utf-8')
         (ws / 'results' / 'run.log').write_text('boom at step 3\n', encoding='utf-8')
         (ws / 'evidence' / 'quote.md').write_text('用户：用 v3\n', encoding='utf-8')
         store.ensure_experiment(EXP)

@@ -117,7 +117,7 @@ def audit_report(prepared_id: str, *, decision: str = "proceed", issues=None,
         "issues": list(issues or []),
         "resolves": list(resolves or []),
         "decision": decision,
-        "decision_reason": "七项都核过；没有会改变研究决定的重大问题",
+        "decision_reason": "三件事都核过；没有会改变研究决定的重大问题",
         "focus": {
             "question_goal": "研究问题与目标相连",
             "design_interpretation": "设计与解释没有重大缺陷",
@@ -588,7 +588,7 @@ class ReportFileTests(HostCase):
             "prepared_id": report["prepared_id"],
             "decision": report["decision"],
             "decision_reason": report["decision_reason"],
-            "report_file": str(path),
+            "report_file": str(path.resolve()),
             "report_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "issues": [{"id": item["id"], "blocking": item["blocking"]}
                        for item in report["issues"]],
@@ -983,7 +983,8 @@ class CliTests(HostCase):
         cases = [("policy", ("--proof", "--scope", "--mode")),
                  ("audit-waive", ("--report-id", "--issue-id", "--proof")),
                  ("audit-extend", ("--plan-id", "--proof", "--show-expected")),
-                 ("audit-file", ("--declaration", "--report", "--prepared-id"))]
+                 ("audit-file", ("--declaration", "--report", "--prepared-id")),
+                 ("audit-declaration", ("--plan-id", "--report", "--prepared-id"))]
         for command, needles in cases:
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
@@ -1015,22 +1016,16 @@ class AuthorizationFingerprintTests(HostCase):
             self.assertNotEqual(g.plan_fingerprint(changed), fingerprint, key)
         self.assertEqual(g.plan_fingerprint(dict(auth, notes="换个说法")), fingerprint)
 
-    def test_authorization_cannot_be_granted_as_minor_fix(self):
+    def test_minor_fix_paths_authorization_is_withdrawn(self):
+        # 2026-11-09 减负：逐字段 minor_fix_paths 授权已撤销（措辞走 correct，实质变化复审）。
         prepared = self.prepare()
         report = audit_report(prepared, decision="minor_fix",
                               issues=[issue("AUD-1", blocking=False)])
-        report["minor_fix_paths"] = [{"path": "authorization.scope", "issue_id": "AUD-1",
-                                      "why": "把作用域从小样本调到大规模"}]
+        report["minor_fix_paths"] = [{"path": "input_files.0", "issue_id": "AUD-1",
+                                      "why": "证据路径笔误"}]
         with self.assertRaises(g.GovernanceError) as ctx:
             self.record(prepared, report=report)
-        self.assertIn("硬实质", str(ctx.exception))
-        # 对照：可授权的普通证据路径仍然允许（别把整条小修通道关死）
-        allowed = audit_report(prepared, decision="minor_fix",
-                               issues=[issue("AUD-1", blocking=False)])
-        allowed["minor_fix_paths"] = [{"path": "input_files.0", "issue_id": "AUD-1",
-                                       "why": "证据路径笔误"}]
-        out = self.record(prepared, report=allowed)
-        self.assertEqual(out["blocking_open"], [])
+        self.assertIn("已撤销", str(ctx.exception))
 
 
 # ---------------------------------------------------------------------------

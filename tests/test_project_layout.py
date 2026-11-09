@@ -2,7 +2,7 @@
 # LAST-EDIT: 2026-11-09 +08:00
 # PURPOSE: 用临时合成仓库验证模板安装的不覆盖、正文复制、回执、链接重写、空状态与只读校验。
 # ORIGIN: 用户要求（有意义临时夹具；不依赖真实 project 模板即可运行）
-# CUMULATIVE-DELTA: 首版；跨框架引用与命名模式按实际边界断言。
+# CUMULATIVE-DELTA: 2026-11-09 templates副本与框架链接一并安装；跨框架引用与命名模式按实际边界断言。
 import hashlib
 import json
 import os
@@ -60,6 +60,7 @@ def build_framework(base):
             ensure_ascii=False, indent=2) + '\n',
         'kernel/instructions/main_session.md': '# 主会话\n\n[契约](<../contracts/CONTRACT.md>)\n',
         'kernel/roles/researcher.md': '# 研究者\n\n[契约](<../contracts/plan.md>)\n',
+        'kernel/templates/status_page.template.md': '# 现状页骨架\n\n[契约](<../contracts/CONTRACT.md>)\n',
         'kernel/autoresearch/decisions.py': '# 不在复制范围内的内核源码\n',
         'docs/EXPECTATIONS.md': '# 验收记录\n',
         'profiles/agent-harness/profile.toml': PROFILE_TOML,
@@ -136,6 +137,13 @@ class ProjectLayoutTests(unittest.TestCase):
         return initialize_layout(self.root, self.dest, self.root / 'profiles/agent-harness', **kwargs)
 
     # ---- 目标边界 -------------------------------------------------------
+
+    def test_installs_versioned_document_templates(self):
+        manifest = self.install()
+        relative = 'AutoDL实验/框架/templates/status_page.template.md'
+        self.assertTrue((self.dest / relative).is_file())
+        self.assertTrue(any(item['path'] == relative for item in manifest['files']))
+        self.assertIn('../contracts/CONTRACT.md', (self.dest / relative).read_text(encoding='utf-8'))
 
     def test_refuses_existing_destination_without_touching_it(self):
         self.dest.mkdir()

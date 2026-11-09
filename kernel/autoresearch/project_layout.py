@@ -2,7 +2,7 @@
 # LAST-EDIT: 2026-11-09 +08:00
 # PURPOSE: 从仓库内 project 模板确定性地安装项目目录、重写 Markdown 链接、返回回执并只读校验结果。
 # ORIGIN: 用户要求（模板安装、@FRAMEWORK@ 替换、manifest 回执、只读 validate_layout）
-# CUMULATIVE-DELTA: 首版；机器可读清单契约是模板的 context_routes.json。
+# CUMULATIVE-DELTA: 2026-11-09 安装templates文档骨架并纳入来源回执；机器可读清单契约是模板的 context_routes.json。
 """项目目录模板的确定性安装与只读校验。
 
 四条边界（改本模块前先读）：
@@ -44,7 +44,7 @@ TEMPLATE_CANDIDATES = ('project', 'repo/project')
 FRAMEWORK_TOP = 'AutoDL实验'
 FRAMEWORK_DOC_DIR = '框架'
 #: 从 ``kernel/`` 复制到框架落点的子树。
-FRAMEWORK_TREES = ('contracts', 'instructions', 'roles')
+FRAMEWORK_TREES = ('contracts', 'instructions', 'roles', 'templates')
 #: 平台配置落点。
 PLATFORM_TOP = 'Kaggle平台'
 PLATFORM_PROFILE_DIR = 'config/agent-harness'
@@ -104,7 +104,7 @@ def initialize_layout(repo_root, destination, profile_path=None, *, template=Non
 
     * 复制模板里的全部常规文件，保留模板自带的 ``.gitignore``；跳过符号链接、缓存与状态
       （``.git``、``__pycache__``、SQLite 等）。模板没有 ``.gitignore`` 时才写默认内容。
-    * ``kernel/contracts``、``kernel/instructions``、``kernel/roles`` 复制到
+    * ``kernel/contracts``、``kernel/instructions``、``kernel/roles``、``kernel/templates`` 复制到
       ``AutoDL实验/框架/`` 下的同名目录；所选 profile 复制到
       ``Kaggle平台/config/agent-harness``；profile 里的符号链接必须留在 profile 目录内。
     * Markdown 本地链接按目标位置重写：模板指向 ``../kernel/<tree>/...`` 的链接落到框架副本，

@@ -43,7 +43,7 @@ python -X utf8 -B research.py workflow check --workspace ../my-research --topic 
 
 `plans/P1.json` 从 [生产计划模板](<../kernel/templates/workflow.plan.template.json>) 复制后逐项填真实值（见 §4）。
 
-⚠️ `workflow check/launch` 会**同时**核这些：当前审计（要宿主核过的独立性子会话报告）、意图监控（§6）、执行准入（§3 的预算预留 + §7 的决策）、实际 argv（§4）、执行落点（专题已 provision 的 cwd/venv）、before 快照收据与前轮复盘状态。
+⚠️ `workflow check/launch` 会**同时**核这些：当前审计（要宿主核过的独立性子会话报告）、用户显式启用后的意图监控（§6）、执行准入（§3 的预算预留 + §7 的决策）、实际 argv（§4）、执行落点（专题已 provision 的 cwd/venv）、before 快照收据与前轮复盘状态。
 缺任何一样都**拒绝启动且不起子进程**——这是有意的 fail-closed，不是待修的 bug。要让闸真的通过，就得把这几件部署件都接上；接不上的部分本文档直接写成「待验」。
 
 ---
@@ -82,12 +82,14 @@ python -X utf8 -B research.py workspace topic --workspace ../my-research --topic
 
 | 产出 | 说明 |
 |---|---|
-| `topics/<topic>/{TOPIC.md,OBJECTIVE.md,REQUIREMENTS.md,sources.json}` | 研究主文档骨架 + 原始用户要求（逐字保留） |
+| `topics/<topic>/{TOPIC.md,EVIDENCE_<日期>.md,STATUS.md,OBJECTIVE.md,REQUIREMENTS.md,sources.json}` | 从版本模板生成三份骨架 + 原始用户要求（逐字保留）；记录模板指纹，骨架不算报告验收 |
 | `topics/<topic>/provision.json` | 状态 `provisioning` / `provisioned` / `incomplete`（含 `error`）；⛔ 不静默覆盖 |
 | `worktrees/<topic>` | 给了 `--code-repo` 就是真实 `git worktree`（分支 `research/<topic>`）；不给就是**独立空 Git 仓库** |
 | `environments/<topic>` | `python -m venv --without-pip` 的独立解释器；`--no-environment` 则不建并在回执里写明 |
 
 ⚠️ 它**不装依赖**（`dependencies_installed=false`）、**不跑评测**（`ready_for_evaluation=false`）。专题已登记过或代码/环境落点已存在时直接拒，避免把旧研究接到新代码上。
+
+已有专题缺文档时，可运行 `python research.py workspace documents --workspace ../my-research --topic demo`。只补缺失类别；已有证据页不再另建空页，现有文件不覆盖。scribe完成有来源的正文后删除SCAFFOLD标记，再走reporting验收。
 
 实验前后各留一次主文档原始快照：
 
@@ -244,6 +246,8 @@ python -X utf8 -B research.py reporting --workspace ../my-research process-statu
 
 ## 6 意图与过程监控：`research.py monitoring`
 
+默认关闭，缺开关不要求register、sync、逐条问用户或派监控，历史active/blocked账保留且不拦起跑。只有用户明确要求才按[监控契约](<../kernel/contracts/intent_monitor.md>)启用；下面命令用于已启用监控的项目。只读开关查询用 `python research.py monitoring --root ../my-research enabled`。
+
 ```powershell
 # 有宿主适配器才可能"可判"：--adapter 指向部署方写法（见 --help），--log-root 是真实证据根
 python -X utf8 -B research.py monitoring --root ../my-research --adapter 部署适配器.py --log-root <真实日志根> \
@@ -263,8 +267,8 @@ python -X utf8 -B research.py monitoring --root ../my-research close --session s
     --user-quote '{"session":"session-owner","seq":6,"text":"逐字原话"}'   # 也可 @文件 或 --user-quote-file
 ```
 
-- 三触发（结果分析 / 用户更新 / 重大偏差）才派监控；**心跳不是触发**（会被拒）。
-- 没有适配器时「会话层」判不了 ⇒ 写命令与 `launch` 闸**不放行**；`--allow-foreign` 只放宽只读诊断。
+- 启用后，三触发（结果分析 / 用户更新 / 重大偏差）才派监控；**心跳不是触发**（会被拒）。
+- 启用后没有适配器时「会话层」判不了 ⇒ 写命令与 `launch` 闸**不放行**；`--allow-foreign` 只放宽只读诊断。
 - `record` 要独立子会话报告：fork / 自造 JSON 一律拒；`close` 只认四条理由 + 仍有效报告 + 全部意见已处置。
 - `close` 的自然语言路径已可用：`--user-quote`（内联 JSON 或 `@文件`）/ `--user-quote-file`，格式 `{session,seq,text}`，与旧 `--proof` / `--proof-seq` **互斥**；独立报告必须是 current + 新 spawn，`closure.user_command` 与用户原话同条绑定。`withdrawn` / `replaced` 可用，`achieved` / `unsatisfiable` 不能靠原话绕过。
 - `workflow launch` 的意图闸**只认** `Monitoring.check_start`（生产 CLI 固定 `Monitoring(workspace, host=DSHHost())`），旧 gov 意图账不参与生产拦截；占用事务里会再核一次。

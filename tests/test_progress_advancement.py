@@ -157,6 +157,9 @@ class AdvanceFixture(unittest.TestCase):
         )
         self.admission = Admission(self.ws, store=self.store)
         # 监控：真实事件账 + 真实 check_start；会话证据来自合成 host。
+        # 本文件测「显式启用监控后」的推进链：先写开关（默认关闭时 register 会拒写）。
+        (self.ws / ".autoresearch" / "intent_monitor_policy.json").write_text(
+            json.dumps({"enabled": True}), encoding="utf-8")
         self.host = SyntheticHost(synthetic_records(SESSION))
         self.monitoring = Monitoring(self.ws, db_path=str(self.db), host=self.host)
         # 资源租约：真实 Scheduler（只读入口读它写下的 resources 行）。
@@ -489,6 +492,18 @@ class OutcomeOverdueTests(AdvanceFixture):
 
 
 class PreflightTests(AdvanceFixture):
+    def test_disabled_monitor_needs_no_intent_declaration_and_emits_no_flag(self):
+        built = self.ready("P1", resources={"keys": [], "gpu_units": 0})
+        (self.ws / '.autoresearch/intent_monitor_policy.json').write_text('{"enabled":false}', encoding='utf-8')
+        result = self.progress.preflight(**self.preflight_kwargs(built["plan"], intents=None))
+        self.assertTrue(result['ok'], result['checks'])
+        self.assertNotIn('--intent-none', result['next_command'])
+        self.assertNotIn('--intent-id', result['next_command'])
+        (self.ws / '.autoresearch/intent_monitor_policy.json').write_text('{"enabled":true}', encoding='utf-8')
+        enabled = self.progress.preflight(**self.preflight_kwargs(built["plan"], intents=None))
+        self.assertFalse(enabled['ok'])
+        self.assertEqual(enabled['checks']['declarations']['state'], 'missing')
+
     def test_full_fixture_gives_executable_command_and_writes_nothing(self):
         built = self.ready("P1", resources={"keys": [], "gpu_units": 0})
         before = self.snapshot_tree()
@@ -1001,6 +1016,10 @@ class RemotePreflightIntegrationTests(RemoteCase):
         Delivery(self.store)
         Inbox(self.store, accounts=self.accounts, delivery=Delivery(self.store))
         DecisionService(self.store)
+        # 真实 assurance 走真实监控：先写开关（默认关闭时 register 会拒写）。
+        (self.ws / ".autoresearch").mkdir(parents=True, exist_ok=True)
+        (self.ws / ".autoresearch" / "intent_monitor_policy.json").write_text(
+            json.dumps({"enabled": True}), encoding="utf-8")
         host = SyntheticHost(synthetic_records(SESSION))
         monitoring = Monitoring(self.ws, db_path=str(self.db), host=host)
         monitoring.register(SESSION, state="none",

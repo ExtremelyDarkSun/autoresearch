@@ -3,7 +3,7 @@ GENERATED-BY: repository bootstrap and integration acceptance, 2026-11-09 +08:00
 LAST-EDIT: 2026-11-09，复盘v2、普通提问、统一检查与下一轮组合完成整库验收
 PURPOSE: 记录公开仓库已实测的行为、证据种类和真实部署未验边界。
 ORIGIN: isolated offline tests, direct CLI checks and private host probes
-CUMULATIVE-DELTA: 用最终集成验收替换早期批次数；保留宿主实测与合成日志的区别。
+CUMULATIVE-DELTA: 2026-11-09 最新政策与文档生成完整回归；用最终集成验收替换早期批次数；保留宿主实测与合成日志的区别。
 -->
 # 验收记录
 
@@ -16,9 +16,11 @@ python -X utf8 -B research.py selftest --plugins
 python -X utf8 -B tools/check_repository.py
 ```
 
-【实测】最后一次完整回归退出码 0：事务运行时 272 项通过；其余 unittest 共 1,126 项，其中 1,115 项通过、11 项跳过。Python 合计 **1,387 项通过、11 项跳过**。三个插件另有 **221 条断言通过**。本次包含复盘v2、普通提问、16项统一检查、可信超期闸、本地/远端下一轮预检与显式阶段排序的组合验证。
+【实测】最后一次完整回归退出码0：事务运行时272项通过；其余unittest共1,173项，其中1,162项通过、11项跳过。Python合计**1,434项通过、11项跳过**。三个插件另有**221条断言通过**。本次包含监控默认关闭、审计减负、实际实现字节绑定、程序生成短声明、可选判据source、专题三份骨架、旧专题补建与本地/远端/下一轮入口的组合验证。
 
 跳过的 11 项属于 [SSH 后端测试](<../tests/test_ssh_backend.py>)的真实 POSIX worker、硬超时与进程组停止。本机为 Windows；这些用例尚未在 POSIX 机器现场运行。
+
+新增同步规则、109编号对比与中性源指纹见[最新同步记录](<FRAMEWORK_SYNC.md>)。本次还实测全新分层初始化、安装文件哈希与链接、空数据库，以及公开documents命令的幂等补建与空骨架拒收。
 
 ## 行为证据
 
@@ -34,11 +36,11 @@ python -X utf8 -B tools/check_repository.py
 | 受管远端执行 | [远端集成](<../tests/test_remote_workflow.py>)47 项：本地与远端共用起跑复核；claim 和发送前复核授权、来源、审计与监控；失败不发送；共享同笔预算、真实 Runtime/Scheduler 资源租约；unknown 保留预算与资源；起跑立即生成 reporting/AI_WORK 投影，投影失败不阻安全取消 |
 | 远端停止判定 | [停止安全测试](<../tests/test_ssh_safety.py>)41 项：假进程与假进程组覆盖晚启动、超时、残留子进程、错 token/request/attempt；两个真实本地进程验证锁排他；没有把这些用例称为真实 POSIX 停止 |
 | 实际环境指纹 | [环境测试](<../tests/test_ssh_environment.py>)：真实临时 venv 的安装包元数据改变会改变环境指纹，声明包列表不能替代实际探测 |
-| 完整指令 | 全文材料生成、逐来源 SHA256 与范围核对；source 110,747 B、bundle 113,166 B、最大来源15,948 B、建议总上限141,457 B；这组数只是测量，不证明模型实际收到全文 |
+| 完整指令 | 全文材料生成、逐来源 SHA256 与范围核对；source 143,178 B、bundle 145,597 B、最大来源18,105 B、建议总上限181,996 B；这组数只是测量，不证明模型实际收到全文 |
 | 复盘下一轮交接 | [复盘v2测试](<../tests/test_review_continuation.py>)14项：判据与原始证据、成本范围、负责人、是否需批准；旧记录保持 legacy unknown；待批准的交接不签发执行批准；冷启动已使用 require_version2 |
 | 普通提问与可信回复 | [问题测试](<../tests/test_questions.py>)39项：真实 Store/Inbox/Delivery、FeishuChannel本地认证及公开CLI；错问题号、歧义、旧时间、非有限时间拒绝；普通待答默认非阻断，enqueue仅排入交付队列 |
 | 当前检查与实验关联 | [统一检查](<../tests/test_assurance.py>)39项与[工程问题](<../tests/test_issues.py>)34项：16项清单、旧哈希查重兼容、追加关联、实际冻结预算绑定、阶段正确的远端租约；缺表只读零写，费用未知不假结算 |
-| 下一轮与跨专题排序 | [推进组合](<../tests/test_progress_advancement.py>)29项与[远端预检](<../tests/test_progress_remote.py>)17项：真实 Workflow/Admission/Runtime/assurance 组合；静态空超期快照不能绕过可信Inbox，远端用 remote start 命令，检查器缺失不降级；显式候选按冻结阶段和正式资源键排序，不自动启动 |
+| 下一轮与跨专题排序 | [推进组合](<../tests/test_progress_advancement.py>)30项与[远端预检](<../tests/test_progress_remote.py>)17项：真实 Workflow/Admission/Runtime/assurance 组合；静态空超期快照不能绕过可信Inbox，远端用 remote start 命令，检查器缺失不降级；显式候选按冻结阶段和正式资源键排序，不自动启动 |
 | 回复来源与时间边界 | [回复绑定](<../tests/test_reply_binding.py>)5项：同号异源需分别实际回复、无来源旧回执不算证明、无效时间不可判、真实只读查询不改库或产生sidecar |
 | 公开源文件 | Python AST、JSON、Markdown 本地链接与已知私人模式检查；不声称识别所有可能的私有值 |
 
@@ -56,7 +58,7 @@ V1–V3 只有三个合成语义案例的一次独立核。V1 首次报告引用
 
 以下仍未验证：真实飞书租户加密推送、送达、权限与群 @ 条件；真实 SSH/POSIX 停止；真实云机与正式评测器；平台提交；模型请求的完整指令注入；长期无人值守恢复与唤醒送达。
 
-远端代码与题单上传是部署方的独立步骤，本模块没有自动 scp 上传入口。公开 start 使用生产监控，需要可信宿主原话及独立报告；测试中的假传输不替代这些前置条件。
+远端代码与题单上传是部署方的独立步骤，本模块没有自动scp上传入口。公开start按同一个监控开关判断：默认关闭不要求意图原话与报告，用户显式启用后再核可信宿主原话和独立报告。执行授权与预算始终独立核验；测试中的假传输不替代这些前置条件。
 
 停止证明来自绑定到本次 request/token/attempt 的 worker 回执，桥接层没有第三方进程观察源。worker 只核本 job 的进程组，不覆盖子进程主动 `setsid` 逃逸；更强保证需要 cgroup/namespace。Windows 无可靠进程组枚举，实际运行后的终态因此保留 unknown；没有启动过的任务可用 never-launched 证明。停止进程组不等于机器空闲或整机关闭。
 

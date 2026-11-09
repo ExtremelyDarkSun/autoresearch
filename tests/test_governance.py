@@ -78,17 +78,21 @@ def make_plan(**overrides) -> dict:
 
 
 def audit_report(prepared_id: str, **overrides) -> dict:
-    coverage = {
-        key: {"verdict": "ok", "note": "看过了，没问题",
-              "sources": [{"path": "docs/plan.md", "locator": "L1"}]}
-        for key in gov.AUDIT_CATEGORIES
+    """最小审计报告（2026-11-09 减负）：三态 + focus 三项 + issues；coverage 可选。"""
+    report = {
+        "prepared_id": prepared_id,
+        "issues": [],
+        "resolves": [],
+        "decision": "proceed",
+        "decision_reason": "三件事都核过，没有会改变研究决定的重大问题",
+        "focus": {
+            "question_goal": "研究问题与目标相连",
+            "design_interpretation": "设计与解释没有重大缺陷",
+            "history_constraints": "核过历史证据与实际限制",
+        },
     }
-    report = {"prepared_id": prepared_id, "coverage": coverage, "issues": [], "resolves": []}
     for key, value in overrides.items():
-        if key == "coverage":
-            coverage.update(value)
-        else:
-            report[key] = value
+        report[key] = value
     return report
 
 
@@ -240,9 +244,14 @@ class PlanValidationTests(unittest.TestCase):
                               {"id": "c1", "description": "b"}]
         self.assertTrue(any("重复" in item for item in gov.validate_plan(plan)))
 
-    def test_criteria_needs_source(self):
+    def test_criteria_source_is_optional_but_typed(self):
+        # 源 J1（2026-11-09）：criteria.source 不再机械必填；显式写了才必须是字符串。
         plan = make_plan()
         plan["criteria"] = {"metric": "m", "direction": "increase", "threshold": 1}
+        self.assertEqual(gov.validate_plan(plan), [])
+        plan["criteria"]["source"] = ""
+        self.assertEqual(gov.validate_plan(plan), [])
+        plan["criteria"]["source"] = 3
         errors = gov.validate_plan(plan)
         self.assertTrue(any("criteria.source" in item for item in errors), errors)
 
@@ -394,46 +403,64 @@ class FreezeAndAuditTests(GovCase):
             self.gov.record_audit(prepared["prepared_id"],
                                   audit_report("PREP-other"), actor="reviewer")
 
-    def test_report_needs_exactly_seven_categories(self):
+    def test_coverage_is_optional_and_partial(self):
         self.frozen()
         prepared = self.gov.prepare_audit("P1", actor="main")
-        report = audit_report(prepared["prepared_id"])
-        report["coverage"].pop("history")
+        # 只写实际看过的项（⛔ 不再要求七项逐项填表）
+        report = audit_report(prepared["prepared_id"],
+                              coverage={"design": {"verdict": "ok", "note": "只看设计"}})
+        self.gov.record_audit(prepared["prepared_id"], report, actor="reviewer")
+        self.assertTrue(self.gov.audit_state("P1")["ok"])
+
+        prepared2 = self.gov.prepare_audit("P1", actor="main")
+        # 完全不写 coverage 也能登记
+        self.gov.record_audit(prepared2["prepared_id"],
+                              audit_report(prepared2["prepared_id"]), actor="reviewer-2")
+        self.assertTrue(self.gov.audit_state("P1")["ok"])
+
+    def test_coverage_keys_are_still_checked(self):
+        self.frozen()
+        prepared = self.gov.prepare_audit("P1", actor="main")
+        bad = audit_report(prepared["prepared_id"],
+                           coverage={"extra": {"verdict": "ok", "note": "n"}})
         with self.assertRaises(gov.GovernanceError) as ctx:
-            self.gov.record_audit(prepared["prepared_id"], report, actor="reviewer")
-        self.assertTrue(any("history" in item for item in ctx.exception.errors))
+            self.gov.record_audit(prepared["prepared_id"], bad, actor="reviewer")
+        self.assertTrue(any("unknown" in item or "未知" in item for item in ctx.exception.errors))
 
-        report = audit_report(prepared["prepared_id"])
-        report["coverage"]["extra"] = {"verdict": "ok", "note": "n",
-                                       "sources": [{"path": "p", "locator": "L1"}]}
-        with self.assertRaises(gov.GovernanceError):
-            self.gov.record_audit(prepared["prepared_id"], report, actor="reviewer")
-
-    def test_issue_verdict_needs_matching_issue(self):
+    def test_issue_verdict_no_longer_needs_matching_issue(self):
+        # 撤销旧硬规则：coverage 判 issue 不强制建同 category 的 issue（ok 项也不必举证）。
         self.frozen()
         prepared = self.gov.prepare_audit("P1", actor="main")
         report = audit_report(prepared["prepared_id"],
                               coverage={"criterion": {"verdict": "issue",
-                                                      "note": "门槛没出处",
-                                                      "sources": [{"path": "p", "locator": "L1"}]}})
-        with self.assertRaises(gov.GovernanceError) as ctx:
-            self.gov.record_audit(prepared["prepared_id"], report, actor="reviewer")
-        self.assertTrue(any("criterion" in item for item in ctx.exception.errors))
+                                                      "note": "门槛没出处"}})
+        self.gov.record_audit(prepared["prepared_id"], report, actor="reviewer")
+        self.assertTrue(self.gov.audit_state("P1")["ok"])
 
-    def test_unknown_verdict_must_be_blocking(self):
+    def test_unknown_coverage_without_issue_is_allowed(self):
+        # 撤销「unknown 必建 issue」：真正待读数的未知可以不进 issue。
         self.frozen()
         prepared = self.gov.prepare_audit("P1", actor="main")
         report = audit_report(prepared["prepared_id"],
                               coverage={"activation": {"verdict": "unknown",
-                                                       "note": "看不到生效链路",
-                                                       "sources": [{"path": "p", "locator": "L1"}]}})
+                                                       "note": "看不到生效链路"}})
+        self.gov.record_audit(prepared["prepared_id"], report, actor="reviewer")
+        self.assertTrue(self.gov.audit_state("P1")["ok"])
+
+    def test_unknown_coverage_with_issue_needs_reason(self):
+        self.frozen()
+        prepared = self.gov.prepare_audit("P1", actor="main")
+        report = audit_report(prepared["prepared_id"],
+                              coverage={"activation": {"verdict": "unknown",
+                                                       "note": "看不到生效链路"}})
         report["issues"] = [{"id": "AUD-P1-1", "category": "activation", "blocking": False,
                              "problem": "生效链路不明", "consequence": "可能测的不是这份包",
-                             "suggestion": "补一条可观察证据",
-                             "sources": [{"path": "p", "locator": "L1"}]}]
-        with self.assertRaises(gov.GovernanceError) as ctx:
+                             "suggestion": "补一条可观察证据"}]
+        with self.assertRaises(gov.GovernanceError):
             self.gov.record_audit(prepared["prepared_id"], report, actor="reviewer")
-        self.assertTrue(any("unknown" in item for item in ctx.exception.errors))
+        report["issues"][0]["why_not_blocking"] = "本轮只观察机制，不外推幅度"
+        self.gov.record_audit(prepared["prepared_id"], report, actor="reviewer")
+        self.assertEqual(self.gov.audit_state("P1")["decision"], "minor_fix")
 
     def test_second_report_on_same_prepare_rejected(self):
         self.frozen()
@@ -473,9 +500,11 @@ class FreezeAndAuditTests(GovCase):
                                                       "note": "门槛是拍的",
                                                       "sources": [{"path": "p", "locator": "L2"}]}})
         report["issues"] = [{"id": "AUD-P1-1", "category": "criterion", "blocking": True,
+                             "why_blocking": "判据读的不是被判分的量，跑完也判不了",
                              "problem": "门槛没有出处", "consequence": "读数无法解释",
                              "suggestion": "补一条规则出处",
                              "sources": [{"path": "p", "locator": "L2"}]}]
+        report["decision"] = "blocked"
         self.gov.record_audit(prepared["prepared_id"], report, actor="reviewer")
         state = self.gov.audit_state("P1")
         self.assertFalse(state["ok"])
@@ -517,9 +546,11 @@ class FreezeAndAuditTests(GovCase):
         prepared = self.gov.prepare_audit("P1", actor="main")
         report = audit_report(prepared["prepared_id"])
         report["issues"] = [{"id": "AUD-P1-1", "category": "cost", "blocking": True,
+                             "why_blocking": "预算超限会直接改变这一轮能不能跑",
                              "problem": "成本偏高", "consequence": "多花机时",
                              "suggestion": "减题",
                              "sources": [{"path": "p", "locator": "L3"}]}]
+        report["decision"] = "blocked"
         recorded = self.gov.record_audit(prepared["prepared_id"], report, actor="reviewer")
         # 旧式「自述 + 任意时间」被拒：豁免只收宿主 proof。
         with self.assertRaises(gov.GovernanceError) as ctx:

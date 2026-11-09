@@ -135,6 +135,10 @@ class CliCase(unittest.TestCase):
         (self.root / "plan.md").write_text("# 计划\n第 1 步：守住回归\n第 2 步：小样本验证\n",
                                            encoding="utf-8")
         self.logs = SyntheticLogs(self.root)
+        # 本文件测「显式启用后」的 CLI 行为：默认关闭时写命令会拒写（另有单独用例覆盖）。
+        policy = self.root / ".autoresearch" / "intent_monitor_policy.json"
+        policy.parent.mkdir(parents=True, exist_ok=True)
+        policy.write_text(json.dumps({"enabled": True}), encoding="utf-8")
         self.mon = Monitor(self.root, host=self.logs.host())
         self.adapter = self.logs.adapter()
 
@@ -460,6 +464,67 @@ class CloseNaturalQuoteCliTests(CliCase):
                 self.assertEqual(code, 2)
                 self.assertIn(expected, "；".join(payload["problems"]))
         self.assertEqual(self._run(self._args("status"))[1]["state"], "active")
+
+
+class SwitchCliTests(unittest.TestCase):
+    """CLI 层开关：`enabled` 只读；默认关闭时 `check` 放行且不写盘、写命令拒写；启用后按原判据。"""
+
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self.root = Path(self._directory.name)
+
+    def _run(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
+                mock.patch.dict(os.environ, {"DSH_SESSION_ID": ""}):
+            try:
+                code = monitoring_cli.main(argv)
+            except SystemExit as exc:
+                code = exc.code
+        text = out.getvalue()
+        payload = json.loads(text) if text.strip().startswith("{") else None
+        return code, payload, text, err.getvalue()
+
+    def _tree(self):
+        base = self.root / ".autoresearch"
+        if not base.is_dir():
+            return {}
+        return {path.relative_to(self.root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in sorted(base.rglob("*")) if path.is_file()}
+
+    def test_enabled_command_is_read_only_and_defaults_off(self):
+        before = self._tree()
+        code, payload, text, _ = self._run(["--root", str(self.root), "enabled"])
+        self.assertEqual(code, 0, text)
+        self.assertFalse(payload["enabled"])
+        self.assertEqual(payload["state"], "disabled")
+        self.assertEqual(self._tree(), before, "enabled 命令必须零写")
+        policy = self.root / ".autoresearch" / "intent_monitor_policy.json"
+        policy.parent.mkdir(parents=True)
+        policy.write_text('{"enabled": true}', encoding="utf-8")
+        code, payload, text, _ = self._run(["--root", str(self.root), "enabled"])
+        self.assertEqual(code, 0, text)
+        self.assertTrue(payload["enabled"])
+        self.assertEqual(payload["state"], "enabled")
+
+    def test_off_check_passes_without_adapter_and_writes_nothing(self):
+        before = self._tree()
+        code, payload, text, _ = self._run(
+            ["--root", str(self.root), "--session", OWNER, "check", "--exp", EXP])
+        self.assertEqual(code, 0, text)
+        self.assertTrue(payload["allow"])
+        self.assertEqual(payload["state"], "disabled")
+        self.assertFalse(payload["undecidable"])
+        self.assertEqual(self._tree(), before, "默认关闭时 check 不许建目录 / 写账")
+
+    def test_off_write_commands_are_refused(self):
+        code, payload, _, _ = self._run(
+            ["--root", str(self.root), "--session", OWNER, "register",
+             "--state", "none", "--reason", "关闭时不该登记"])
+        self.assertEqual(code, 2)
+        self.assertIn("拒写", "；".join(payload["problems"]))
+        self.assertFalse((self.root / ".autoresearch").exists())
 
 
 if __name__ == "__main__":

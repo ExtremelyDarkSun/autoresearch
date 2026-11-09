@@ -18,7 +18,7 @@ CUMULATIVE-DELTA: 2026-11-09 同步 host_evidence、复盘交接 v2、普通提�
 
 | 没有这一层会发生什么 | 这一层怎么拦 |
 |---|---|
-| 方案是事后补的，判据是跑完再定的 | `freeze_plan` 要求 必需字段齐全，探索性写观察边界，确认性门槛有出处 |
+| 方案是事后补的，判据是跑完再定的 | `freeze_plan` 要求 必需字段齐全，探索性写观察边界，确认性门槛保留理由；source可选 |
 | 一轮里同时改三件事，读数分不开 | `validate_plan` 拒绝多个 `hypothesis_id` |
 | 本来能过的题被悄悄删掉 | `previous_passes ⊂ case_sets.regression` |
 | 自己审自己，结论必然通过 | `record_audit` 拒绝「审计者 = 负责人」；独立性只认宿主日志里的新 spawn 子会话 |
@@ -33,7 +33,7 @@ CUMULATIVE-DELTA: 2026-11-09 同步 host_evidence、复盘交接 v2、普通提�
 
 | 能力 | 机械判据（会拒绝的函数） | 真实边界 |
 |---|---|---|
-| 事前假设与判据出处 | `validate_plan`（探索性观察/条件/边界，确认性阈值与出处） | 判不了「这个假设值不值得做」 |
+| 事前假设与判据 | `validate_plan`（探索性观察/条件/边界，确认性阈值；source可选） | 判不了「这个假设值不值得做」 |
 | 一次一组同假设改动 | `validate_plan`（多个 `hypothesis_id` ⇒ 拒） | 判不了两项改动是不是真属于同一假设 |
 | 三类对照 + 历史已通过项不丢 | `validate_plan`（`target` 非空、三类不重叠、类内不重复、`previous_passes ⊂ regression`） | 判不了那些题号是不是真的在同一个测量装置上通过过 |
 | 结果分支 | `validate_plan`（三支都要 `action`，且不许完全相同） | 判不了某一支的行动是不是合理 |
@@ -41,7 +41,7 @@ CUMULATIVE-DELTA: 2026-11-09 同步 host_evidence、复盘交接 v2、普通提�
 | 预算政策可配 | `validate_plan`（`max_cost_units` ≥0 整数、`max_seconds` >0 整数） | 预算单位由部署方定义，本层不换算 |
 | 独立方案审计 + 版本绑定 | `prepare_audit` / `record_audit` / `audit_state` | 独立性靠宿主日志核（`host_evidence.DSHHost`，默认读 `~/.dsh`）；不注入或读不到就只记 `declared`，`verified` 要真读过新 spawn 子会话 |
 | 每个计划跨版本最多 2 次、措辞不重审 | `prepare_audit` 按 `plan_id` 累计计数；超限直接拒 | 扩额没有自我通道（这是设计） |
-| 用户专项意图 + 节点监控 | `create_intent`（原话 + 会话 + seq）· `record_monitor_report`（覆盖全部触发）· `check_start` · `close`（旧 proof / 自然语言 `--user-quote` 两路） | 判不了「这句话算不算专项意图」，那是语义判断；`achieved` / `unsatisfiable` 不能靠原话绕过，必须有 current 独立报告绑定同一句 |
+| 用户显式启用后的专项意图 + 节点监控 | `create_intent`（原话 + 会话 + seq）· `record_monitor_report`（覆盖全部触发）· `check_start` · `close`（旧 proof / 自然语言 `--user-quote` 两路） | 判不了「这句话算不算专项意图」，那是语义判断；`achieved` / `unsatisfiable` 不能靠原话绕过，必须有 current 独立报告绑定同一句 |
 | 复盘继续交接 | `review_continuation.validate`（schema2：criterion + evidence、cost_scope、next_owner、needs_approval + reason） | 旧复盘只读兼容并投影 unknown；「等待批准」是研究交接，不等于已获批，执行前仍核真实预算与批准 |
 | 普通提问 | `Questions.ask/answer/declare/link/expire`；答复只认 Inbox `authenticate` 事件 | 默认 `blocking=false`：问用户不等于停等；旧无 exp 记录 unknown，不猜关联；真实租户未验 |
 | 入向超期（D2） | `progress.outcome` advance 调 `_require_no_overdue`；`decisions.reply_status` / `progress_host.read_overdue` 按 `source + event_id` 配对 | 同号异源不串；未指定 source 的旧回执不算回复；`event_time/now/grace` 非有限或非正判不可判；真实通道未验 |
@@ -94,7 +94,7 @@ g = gov.Governance(store, verifier=DSHHost()) # 只读真实宿主日志：读�
 errors = gov.validate_plan(plan)              # 纯函数：空列表才可冻结
 frozen = g.freeze_plan(plan, actor="main")    # 指纹 + 版本
 prep = g.prepare_audit(plan["id"], actor="main")
-# 把 prep 交给一个**新会话**按七项审，收回报告后：
+# 把 prep 交给一个**新会话**按目标连接、基本正确性和关键历史三项重点审，收回报告后：
 rec = g.record_audit(prep["prepared_id"], report, actor="reviewer")
 state = g.audit_state(plan["id"])             # ok=True 才继续
 if not state["ok"]:
@@ -105,7 +105,7 @@ if not state["ok"]:
 
 统一 CLI 用法：`python research.py governance --db <工作区>/.autoresearch/runtime.sqlite3 --help`。写操作必须显式加 `--commit`；不加时只显示计划模式。`audit-prepare` 成功就占用该计划一次审查额度。
 
-`sync-user --file update.json` 接收 `source_session/seq/quote`；`intent-new --file intent.json` 接收 `intent_id/quote/source_session/seq`（可加 `acceptance`）。先按用户的实际回答决定是否登记意图。`assess-update --file assessment.json` 接收 `source_session/covers_seq/decision/quote`，判 `intent` 时提供 `intent_id`，判 `none` 时提供晚于原句的 `answer_seq`。这些 CLI 输入只是本地声明，不构成已认证的用户事件。意图闭合、豁免与用户确认等完整接口仍由 Python API 提供；需要可信验证器的路径在没有验证器时拒绝执行。
+`sync-user --file update.json` 接收 `source_session/seq/quote`；`intent-new --file intent.json` 接收 `intent_id/quote/source_session/seq`（可加 `acceptance`）。这些gov意图接口仅保留兼容；生产监控默认关闭，不要求先问意图或登记。只有用户显式启用后才按监控契约执行。`assess-update --file assessment.json` 接收 `source_session/covers_seq/decision/quote`，判 `intent` 时提供 `intent_id`，判 `none` 时提供晚于原句的 `answer_seq`。这些 CLI 输入只是本地声明，不构成已认证的用户事件。意图闭合、豁免与用户确认等完整接口仍由 Python API 提供；需要可信验证器的路径在没有验证器时拒绝执行。
 写操作全部 `store.transaction()` + `store.emit()`，事件进 `store` 的 append-only 事件流。
 
 ---

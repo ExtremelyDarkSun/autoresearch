@@ -810,14 +810,15 @@ class WorkflowCliReadonlyTests(flow_fixtures.FlowCase):
         before = tree_snapshot(self.ws)
         code, output = self.cli(self.check_argv(self.ws))
         payload = json.loads(output)
-        # 生产接线的监控 / 准入在这份合成工作区上判不放行 ⇒ 规则拒绝（9），
-        # 但**不是**「不可判」：它确实读到了库并跑完了闸。
+        # 监控现在**默认关闭**（缺开关文件 ⇒ state=disabled）：监控项本身放行，
+        # 整体仍被审计独立性 / 准入拦下 ⇒ 规则拒绝（9），但**不是**「不可判」。
         self.assertEqual(code, 9, output)
         self.assertFalse(payload["ok"])
         self.assertNotIn("undecidable", payload)
         self.assertIn("monitor", payload["checks"])
         self.assertIn("authorization", payload["checks"])
-        self.assertFalse(payload["checks"]["monitor"]["ok"])
+        self.assertTrue(payload["checks"]["monitor"]["ok"])
+        self.assertEqual(payload["checks"]["monitor"]["state"], "disabled")
         self.assertEqual(self.run_row_count(), 0)
         self.assertEqual(self.marker_lines(), [])
         # 含 DB 字节：只读检查一个字节都不改（也没建 monitoring 事件账）。
@@ -953,12 +954,17 @@ class MonitoringConstructionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="hil_monitoring_") as directory:
             workspace = Path(directory) / "ws"
             workspace.mkdir()
+            # 本用例测「显式启用后」的未登记 fail-closed；默认关闭时 check_start 直接放行。
+            (workspace / ".autoresearch").mkdir()
+            (workspace / ".autoresearch" / "intent_monitor_policy.json").write_text(
+                '{"enabled": true}', encoding="utf-8")
             before = tree_snapshot(workspace)
             monitor = Monitoring(workspace)          # host=None ⇒ 会话证据不可判
             result = monitor.check_start("session-owner", "P1", action="launch")
             self.assertIsInstance(result, dict)
             self.assertFalse(result.get("ok"))
-            self.assertFalse((workspace / ".autoresearch").exists())
+            # 零写：不建事件账、不改任何字节（开关文件是本用例自己写的，不是 check_start 造的）。
+            self.assertFalse((workspace / ".autoresearch" / "monitoring.sqlite3").exists())
             self.assertEqual(tree_snapshot(workspace), before)
 
 

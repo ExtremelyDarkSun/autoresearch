@@ -1,78 +1,13 @@
 {
   "_template": "plan_audit_report.template.json",
-  "_usage": "独立审计者填这份。prepared_id 必须是 prepare_audit 返回的 id；七个 coverage 键一个都不能少。填完交回：调 record_audit(prepared_id, report, actor=<审计会话>)。⛔ 不要保留下划线键。",
+  "_usage": "独立审计者填这份。最小集：decision / decision_reason / focus（恰好三项）/ issues。coverage、history_search 可省略；prepared_id 可省略（登记时用 --prepared-id 绑定最近一次 prepare）。填完存 JSON 文件，确认是最终版后跑 governance audit-declaration 生成六键短声明。⛔ 不要保留 _template / _usage 键；⛔ 不要写 minor_fix_paths（已撤销）。",
   "prepared_id": "<PREP-…>",
-  "coverage": {
-    "hypothesis": {
-      "verdict": "ok",
-      "note": "<什么观察会否定它 / 有没有把两件事混成一个假设>",
-      "sources": [
-        {
-          "path": "<文件>",
-          "locator": "L1"
-        }
-      ]
-    },
-    "design": {
-      "verdict": "ok",
-      "note": "<读数变好能否支持所声称的解释>",
-      "sources": [
-        {
-          "path": "<文件>",
-          "locator": "L1"
-        }
-      ]
-    },
-    "criterion": {
-      "verdict": "ok",
-      "note": "<门槛有出处吗 / 样本与波动够不够>",
-      "sources": [
-        {
-          "path": "<文件>",
-          "locator": "L1"
-        }
-      ]
-    },
-    "history": {
-      "verdict": "ok",
-      "note": "<是否已试过并被否掉（自己检索的）>",
-      "sources": [
-        {
-          "path": "<文件>",
-          "locator": "L1"
-        }
-      ]
-    },
-    "cost": {
-      "verdict": "ok",
-      "note": "<有没有更省的验证路径>",
-      "sources": [
-        {
-          "path": "<文件>",
-          "locator": "L1"
-        }
-      ]
-    },
-    "branches": {
-      "verdict": "ok",
-      "note": "<三支行动是否真的不同>",
-      "sources": [
-        {
-          "path": "<文件>",
-          "locator": "L1"
-        }
-      ]
-    },
-    "activation": {
-      "verdict": "ok",
-      "note": "<改动到读数要经过哪几跳、每跳的证据>",
-      "sources": [
-        {
-          "path": "<文件>",
-          "locator": "L1"
-        }
-      ]
-    }
+  "decision": "minor_fix",
+  "decision_reason": "<1–3 句：目标连接 / 设计实现测量的基本正确性 / 会改变决定的历史限制>",
+  "focus": {
+    "question_goal": "<这一轮回答的是不是目标要问的研究问题>",
+    "design_interpretation": "<设计、实现、测量是否基本正确；缺陷在哪>",
+    "history_constraints": "<会改变这次决定的历史证据或实际限制（没有就写未命中）>"
   },
   "issues": [
     {
@@ -82,21 +17,8 @@
       "problem": "<问题一句话>",
       "consequence": "<不改会怎样>",
       "suggestion": "<最小改法>",
-      "sources": [
-        {
-          "path": "<文件>",
-          "locator": "L2"
-        }
-      ]
+      "sources": []
     }
   ],
-  "resolves": [],
-  "decision": "minor_fix",
-  "decision_reason": "<目标连接、设计重大缺陷、会改变决定的历史约束>",
-  "minor_fix_paths": [],
-  "focus": {
-    "question_goal": "<研究问题如何连接目标>",
-    "design_interpretation": "<设计与解释的重大缺陷>",
-    "history_constraints": "<会改变研究决定的历史和实际限制>"
-  }
+  "resolves": []
 }

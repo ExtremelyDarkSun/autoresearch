@@ -53,7 +53,7 @@ def _read_json(path: str | None):
     return json.loads(Path(path).read_text(encoding='utf-8-sig'))
 
 
-def _read_governance(db: str) -> Governance:
+def _read_governance(db: str, workspace: str | None = None) -> Governance:
     class ReadStore:
         def connect(self):
             conn = sqlite3.connect(Path(db).resolve().as_uri() + '?mode=ro', uri=True)
@@ -78,12 +78,15 @@ def _read_governance(db: str) -> Governance:
     gov.verifier = None
     gov.experiment_id = None
     gov.policy = dict(Governance.DEFAULT_POLICY)
+    #: 只读路径也要能核实现文件的磁盘字节（`audit-state` / `audit-declaration`）。
+    gov.workspace = str(workspace) if workspace is not None else None
     return gov
 
 
 def _write_governance(db: str, workspace: str) -> Governance:
     from .host_evidence import DSHHost
-    return Governance(Store(db), verifier=DSHHost(workspace=workspace))
+    return Governance(Store(db), verifier=DSHHost(workspace=workspace),
+                      workspace=workspace)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -127,7 +130,7 @@ def _parser() -> argparse.ArgumentParser:
     a.add_argument('--prepared-id', '--id', dest='prepared_id', required=True,
                    help='prepare_audit 返回的 prepared_id')
     a.add_argument('--report', '--file', dest='report', required=True,
-                   help='完整审计报告 JSON 文件（七项 coverage + issues + decision）')
+                   help='完整审计报告 JSON 文件（decision/decision_reason/focus + issues）')
     a.add_argument('--proof', help='宿主证据 JSON：{"session_id": "session-…", "seq": 12}；'
                                   '给了就核独立子会话的真实消息')
 
@@ -154,6 +157,14 @@ def _parser() -> argparse.ArgumentParser:
 
     a = sub.add_parser('audit-digest', help='只读：报告文件原始字节 SHA256（抄进六键短声明）')
     a.add_argument('--file', required=True, help='报告 JSON 文件')
+
+    a = sub.add_parser('audit-declaration',
+                       help='只读：从报告文件生成六键短声明（不写库、不占审计额度）')
+    a.add_argument('--plan-id', required=True, help='方案号')
+    a.add_argument('--report', '--file', dest='report', required=True,
+                   help='完整审计报告 JSON 文件（decision/decision_reason/focus + issues）')
+    a.add_argument('--prepared-id',
+                   help='被审材料 id（默认取报告里写的，或该方案最近一次 audit-prepare）')
 
     a = sub.add_parser(
         'audit-waive',
@@ -257,7 +268,7 @@ def main(argv=None):
         if getattr(args, 'show_expected', False):
             if not Path(args.db).is_file():
                 raise ValueError('数据库不存在；先初始化独立工作区')
-            gov = _read_governance(args.db)
+            gov = _read_governance(args.db, _workspace_for(args.db, args.workspace))
             if args.action == 'policy':
                 expected = gov.policy_command(scope=args.scope, target=args.target,
                                               mode=args.mode)
@@ -286,7 +297,7 @@ def main(argv=None):
         if args.action in _WRITE_ACTIONS:
             gov = _write_governance(args.db, workspace)
         else:
-            gov = _read_governance(args.db)
+            gov = _read_governance(args.db, workspace)
 
         if args.action == 'freeze':
             out = gov.freeze_plan(_read_json(args.file), actor=args.actor)
@@ -304,6 +315,9 @@ def main(argv=None):
                                         evidence=_read_json(args.proof))
         elif args.action == 'audit-state':
             out = gov.audit_state(args.id)
+        elif args.action == 'audit-declaration':
+            out = gov.audit_declaration(args.plan_id, args.report,
+                                        prepared_id=args.prepared_id)
         elif args.action == 'audit-respond':
             out = gov.respond_audit(args.id, _read_json(args.file), actor=args.actor)
         elif args.action == 'audit-correct':

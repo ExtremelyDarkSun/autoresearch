@@ -2,7 +2,7 @@
 # LAST-EDIT: 2026-11-09
 # PURPOSE: Create genuine isolated topic code, environment, source references and research snapshots.
 # ORIGIN: generic topic/bootstrap requirements from framework expectations
-# CUMULATIVE-DELTA: Initialization is separate from registration; preserve incomplete provisioning for diagnosis.
+# CUMULATIVE-DELTA: 2026-11-09 从版本模板建立TOPIC、EVIDENCE与STATUS，骨架不代表验收；Initialization is separate from registration; preserve incomplete provisioning for diagnosis.
 from __future__ import annotations
 import hashlib
 import json
@@ -108,36 +108,8 @@ def provision_topic(workspace, *, topic, objective, requirements, owner_session,
         header = '<!-- GENERATED-BY: topic provisioning; LAST-EDIT: initial; PURPOSE: research source; ORIGIN: explicit user input; CUMULATIVE-DELTA: initial -->\n'
         _write(target / 'REQUIREMENTS.md', header + '# 用户要求\n\n' + requirements + '\n')
         _write(target / 'OBJECTIVE.md', header + '# 目标\n\n' + objective + '\n')
-        _write(target / 'TOPIC.md', header + f'''# {topic}：{objective}
-
-## 1 目的
-
-{objective}
-
-## 2 假设与假设迭代
-
-尚未提出可检验假设。先读取用户要求与历史原始证据。
-
-## 3 完成条件
-
-待事前方案明确。未有已达成的研究结果。
-
-## 4 研究边界与方向判断
-
-当前仅完成专题初始化；没有实验结论。
-
-## 5 路线
-
-先准备有出处的假设、判据、实现和实际命令。
-
-## 6 数据索引
-
-用户要求：[REQUIREMENTS.md](<REQUIREMENTS.md>)。目标：[OBJECTIVE.md](<OBJECTIVE.md>)。
-
-## 7 与其他专题的关系
-
-待负责人查证后填写；尚未确认共享证据或方向冲突。
-''')
+        from .topic_documents import ensure_topic_documents
+        record['research_documents'] = ensure_topic_documents(target, topic=topic, objective=objective)
         source_list = [f'topics/{topic}/OBJECTIVE.md', f'topics/{topic}/TOPIC.md', f'topics/{topic}/REQUIREMENTS.md']
         _write(target / 'sources.json', json.dumps(source_list, ensure_ascii=False, indent=2) + '\n')
         store = Store(root / '.autoresearch/runtime.sqlite3')

@@ -349,8 +349,7 @@ class PreparationTests(FlowCase):
     def test_exploratory_needs_stop_condition_without_numeric_threshold(self):
         criteria = {"mode": "exploratory", "metric": "机制是否生效", "observation": "看到调用记录",
                     "interpretation_boundary": "只判机制存在，不外推幅度",
-                    "conditions": "同装置小样本", "stop_condition": "取到调用记录或预算耗尽",
-                    "source": "docs/design.md"}
+                    "conditions": "同装置小样本", "stop_condition": "取到调用记录或预算耗尽"}
         built = self.prepare(criteria=criteria)
         self.assertTrue(built["prepared"]["ok"])
         bad = dict(criteria)
@@ -493,6 +492,33 @@ class GateTests(FlowCase):
         self.assertFalse((self.ws / "marker.log").exists())
         self.assertEqual(self.run_row_count(), 0)
         self.assertTrue(built["prepared"]["ok"])
+
+    def test_monitoring_default_off_allows_check_without_registration_or_declaration(self):
+        """监控默认关闭（缺开关文件）：`check` 不要求 register、也不要求意图声明。
+
+        这里接的是**真实** `Monitoring.check_start`，不是夹具：默认 off 时它返回
+        `state="disabled"`；显式写 `{"enabled": true}` 之后同一局面又按原判据拒（未登记）。
+        """
+        from kernel.autoresearch.monitoring import Monitoring
+        monitor = Monitoring(self.ws, host=None)
+        flow = self.make_flow(monitor_check=monitor.check_start, require_monitor_check=True)
+        built = self.prepare(flow=flow)
+        self.audit(flow=flow)
+        gate = flow.check(topic=TOPIC, plan=built["plan"], owner_session=SESSION,
+                          argv=self.argv, intent_id=None, intent_none=False)
+        self.assertTrue(gate["ok"], gate["problems"])
+        self.assertTrue(gate["checks"]["monitor"]["ok"])
+        self.assertEqual(gate["checks"]["monitor"]["state"], "disabled")
+
+        policy = self.ws / ".autoresearch" / "intent_monitor_policy.json"
+        policy.parent.mkdir(parents=True, exist_ok=True)
+        policy.write_text('{"enabled": true}', encoding="utf-8")
+        blocked = flow.check(topic=TOPIC, plan=built["plan"], owner_session=SESSION,
+                             argv=self.argv, intent_id=None, intent_none=False)
+        self.assertFalse(blocked["ok"])
+        self.assertEqual(blocked["checks"]["monitor"]["state"], "unknown")
+        self.assertTrue(any("监控" in item for item in blocked["problems"]),
+                        blocked["problems"])
 
 
 class LaunchTests(FlowCase):

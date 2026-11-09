@@ -5,7 +5,7 @@
   "goal": "<本轮研究问题，与专题目标的联系>",
   "hypothesis": {"id": "<hypothesis-id>", "text": "<可被观察否掉的假设>"},
   "change_set": [{"id": "<change-id>", "description": "<实际改动>", "hypothesis_id": "<hypothesis-id>"}],
-  "criteria": {"mode": "exploratory", "metric": "<观察什么>", "observation": "<支持/反驳/未看到的观察>", "interpretation_boundary": "<适用和不能外推的范围>", "conditions": "<装置样本与比较前提>", "stop_condition": "<何时结束或停止>", "source": "<事前判断依据的文件及定位>"},
+  "criteria": {"mode": "exploratory", "metric": "<观察什么>", "observation": "<支持/反驳/未看到的观察>", "interpretation_boundary": "<适用和不能外推的范围>", "conditions": "<装置样本与比较前提>", "stop_condition": "<何时结束或停止>"},
   "baseline": {"label": "<对照件>", "fingerprint": "<实际内容指纹>"},
   "case_sets": {"target": ["<target-id>"], "regression": ["<previous-pass-id>"], "control": ["<control-id>"]},
   "previous_passes": ["<previous-pass-id>"],

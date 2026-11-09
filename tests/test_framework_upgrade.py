@@ -35,11 +35,11 @@ class UpgradeTests(GovCase):
         del plan['criteria']['conditions']
         self.assertTrue(g.validate_plan(plan))
 
-    def test_exploration_requires_stop_and_source(self):
+    def test_exploration_requires_stop_and_typed_source(self):
         criteria = {'mode':'exploratory','metric':'机制观察','observation':'观察调用',
                     'interpretation_boundary':'不外推','conditions':'固定装置',
                     'stop_condition':'获得观察或预算耗尽','source':'docs/design.md'}
-        for key in ('stop_condition', 'source'):
+        for key in ('stop_condition',):
             for value in (None, '', '   ', 3):
                 with self.subTest(key=key, value=value):
                     candidate = dict(criteria)
@@ -48,20 +48,32 @@ class UpgradeTests(GovCase):
                     else:
                         candidate[key] = value
                     self.assertTrue(g.validate_plan(make_plan(criteria=candidate)))
+        # 源 J1：source 可选（缺失/空串都放行），显式写了必须是字符串
+        for value in (None, '', '   '):
+            candidate = dict(criteria)
+            if value is None:
+                candidate.pop('source')
+            else:
+                candidate['source'] = value
+            self.assertEqual(g.validate_plan(make_plan(criteria=candidate)), [])
+        for value in (3, [], {}):
+            candidate = dict(criteria, source=value)
+            self.assertTrue(g.validate_plan(make_plan(criteria=candidate)))
 
     def test_stop_change_invalidates_audit_and_cannot_be_minor(self):
         p = make_plan()
         p['criteria']['stop_condition'] = '预算耗尽'
         self.frozen(p)
         prep = self.gov.prepare_audit('P1', actor='main')['prepared_id']
-        with self.assertRaises(g.GovernanceError):
-            self.gov.record_audit(prep, modern(prep, 'minor_fix', [issue()],
-                minor_fix_paths=[{'path':'criteria.stop_condition','issue_id':'I1','why':'改变停止观察'}]), actor='r1')
         self.gov.record_audit(prep, modern(prep), actor='r1')
         self.assertTrue(self.gov.audit_state('P1')['ok'])
         p['criteria']['stop_condition'] = '发现反例即停止'
         self.frozen(p)
         self.assertFalse(self.gov.audit_state('P1')['ok'])
+        # 判据机器读项变了，不能当小修
+        with self.assertRaises(g.GovernanceError):
+            self.gov.correct_audit(self.gov.audit_state('P1')['report_id'],
+                                   [{'what': '改停止条件', 'self_check': '想当措辞'}], actor='main')
 
     def test_context_budget_is_fully_included(self):
         from kernel.autoresearch.context import instruction_manifest, render_bundle, verify_injection
@@ -123,24 +135,58 @@ class UpgradeTests(GovCase):
 
     def test_minor_correction_without_reaudit(self):
         p=make_plan();p['input_files']=['docs/old.md'];self.frozen(p)
-        prep=self.gov.prepare_audit('P1',actor='main')['prepared_id']
-        rec=self.gov.record_audit(prep,modern(prep,'minor_fix',[issue()],minor_fix_paths=[{'path':'input_files.0','issue_id':'I1','why':'证据路径笔误'}]),actor='r1')
+        prep=self.gov.prepare_audit('P1', actor='main')['prepared_id']
+        rec=self.gov.record_audit(prep,modern(prep,'minor_fix',[issue()]),actor='r1')
         p['input_files']=['docs/new.md'];self.frozen(p)
         self.assertFalse(self.gov.audit_state('P1')['ok'])
-        self.gov.correct_audit(rec['report_id'],[{'issue_id':'I1','what':'修正路径','self_check':'读取内容核对','sources':[{'path':'a','locator':'L1'}],'paths':['input_files.0']}],actor='main')
+        # 证据引用换文件＝自动小修：直接 correct，不需要任何授权表
+        self.gov.correct_audit(rec['report_id'],[{'issue_id':'I1','what':'修正证据路径',
+            'self_check':'新路径与读取内容一致'}],actor='main')
         state=self.gov.audit_state('P1');self.assertTrue(state['ok']);self.assertEqual(state['audits_used'],1)
 
-    def test_unapproved_path_and_hard_change_rejected(self):
-        p=make_plan();self.frozen(p);prep=self.gov.prepare_audit('P1',actor='main')['prepared_id']
+    def test_hard_change_rejected_auto_minor_accepted(self):
+        p=make_plan();p['input_files']=['docs/old.md'];self.frozen(p)
+        prep=self.gov.prepare_audit('P1', actor='main')['prepared_id']
         rec=self.gov.record_audit(prep,modern(prep,'minor_fix',[issue()]),actor='r1')
-        correction={'issue_id':'I1','what':'修正','self_check':'已读','sources':[{'path':'a','locator':'L1'}],'paths':['input_files.0']}
-        with self.assertRaises(g.GovernanceError):self.gov.correct_audit(rec['report_id'],[correction],actor='main')
-        correction['paths']=['criteria.threshold']
-        with self.assertRaises(g.GovernanceError):self.gov.correct_audit(rec['report_id'],[correction],actor='main')
+        # 判据门槛是机器读项：改了不许记小修
+        p['criteria']['threshold']=2;self.frozen(p)
+        with self.assertRaises(g.GovernanceError):
+            self.gov.correct_audit(rec['report_id'],[{'issue_id':'I1','what':'改门槛',
+                'self_check':'只想小修'}],actor='main')
+        # 改回去（门槛回到被审值），只留证据路径变化 ⇒ 自动小修通过
+        p['criteria']['threshold']=1;p['input_files']=['docs/new.md'];self.frozen(p)
+        self.gov.correct_audit(rec['report_id'],[{'issue_id':'I1','what':'修正证据路径',
+            'self_check':'读取内容一致'}],actor='main')
+        self.assertTrue(self.gov.audit_state('P1')['ok'])
 
-    def test_hard_path_cannot_be_authorized(self):
+    def test_minor_fix_paths_authorization_is_rejected(self):
         self.frozen();prep=self.gov.prepare_audit('P1',actor='main')['prepared_id']
-        with self.assertRaises(g.GovernanceError):self.gov.record_audit(prep,modern(prep,'minor_fix',[issue()],minor_fix_paths=[{'path':'implementation.code','issue_id':'I1','why':'想小修'}]),actor='r1')
+        report=modern(prep,'minor_fix',[issue()],
+            minor_fix_paths=[{'path':'input_files.0','issue_id':'I1','why':'证据路径笔误'}])
+        with self.assertRaises(g.GovernanceError) as ctx:
+            self.gov.record_audit(prep,report,actor='r1')
+        self.assertIn('已撤销',str(ctx.exception))
+
+    def test_wording_only_requires_before_after_text(self):
+        p=make_plan();self.frozen(p)
+        prep=self.gov.prepare_audit('P1',actor='main')['prepared_id']
+        rec=self.gov.record_audit(prep,modern(prep,'minor_fix',[issue()]),actor='r1')
+        before=p['hypothesis']['text']
+        after=before+'。'
+        p['hypothesis']={'id':'H1','text':after};self.frozen(p)
+        with self.assertRaises(g.GovernanceError):
+            self.gov.correct_audit(rec['report_id'],[{'issue_id':'I1','what':'写顺假设',
+                'self_check':'否定条件不变','wording_only':[{'path':'hypothesis.text',
+                'before':'错的原文','after':after,'why':'同义'}]}],actor='main')
+        # 实现文件路径/字节不在白名单
+        with self.assertRaises(g.GovernanceError):
+            self.gov.correct_audit(rec['report_id'],[{'issue_id':'I1','what':'改实现',
+                'self_check':'只是措辞','wording_only':[{'path':'implementation.source',
+                'before':'a','after':'b','why':'x'}]}],actor='main')
+        self.gov.correct_audit(rec['report_id'],[{'issue_id':'I1','what':'写顺假设',
+            'self_check':'否定条件不变','wording_only':[{'path':'hypothesis.text',
+            'before':before,'after':after,'why':'同义订正'}]}],actor='main')
+        self.assertTrue(self.gov.audit_state('P1')['ok'])
 
     def test_correction_table_append_only(self):
         with self.store.transaction() as conn:
@@ -156,10 +202,89 @@ class ReportFileTests(unittest.TestCase):
             path=Path(folder)/'report.json';r=modern('PREP-x')
             path.write_text(json.dumps(r),encoding='utf-8')
             decl={k:r[k] for k in ('prepared_id','decision','decision_reason')}
-            decl.update(report_file=str(path),report_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),issues=[])
+            decl.update(report_file=str(path.resolve()),report_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),issues=[])
             self.assertEqual(load_bound_report(str(path),decl),r)
             path.write_text(json.dumps(r)+' ',encoding='utf-8')
             with self.assertRaises(ValueError):load_bound_report(str(path),decl)
+
+
+class DeclarationTests(GovCase):
+    def test_declaration_is_generated_and_bound(self):
+        self.frozen()
+        prep = self.gov.prepare_audit('P1', actor='main')['prepared_id']
+        report = modern(prep, 'proceed', [])
+        path = Path(self._tmp.name) / 'report.json'
+        path.write_text(json.dumps(report, ensure_ascii=False), encoding='utf-8')
+        decl = self.gov.audit_declaration('P1', str(path))
+        self.assertEqual(set(decl), set(g.DECLARATION_KEYS))
+        self.assertEqual(decl['prepared_id'], prep)
+        self.assertEqual(decl['report_file'], str(path.resolve()))
+        path.write_text(json.dumps(report, ensure_ascii=False) + ' ', encoding='utf-8')
+        with self.assertRaises(g.GovernanceError):
+            self.gov.record_audit_file(prep, str(path), decl, actor='reviewer')
+
+    def test_report_may_omit_prepared_id(self):
+        self.frozen()
+        prep = self.gov.prepare_audit('P1', actor='main')['prepared_id']
+        report = modern(prep)
+        report.pop('prepared_id')
+        self.gov.record_audit(prep, report, actor='reviewer')
+        self.assertTrue(self.gov.audit_state('P1')['ok'])
+
+    def test_declaration_refuses_stale_prepare(self):
+        p = make_plan()
+        self.frozen(p)
+        prep = self.gov.prepare_audit('P1', actor='main')['prepared_id']
+        report = modern(prep)
+        path = Path(self._tmp.name) / 'report.json'
+        path.write_text(json.dumps(report, ensure_ascii=False), encoding='utf-8')
+        p['criteria']['threshold'] = 2
+        self.frozen(p)
+        with self.assertRaises(g.GovernanceError):
+            self.gov.audit_declaration('P1', str(path))
+
+
+class ImplementationBindingTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.ws = Path(self._tmp.name)
+        (self.ws / 'submission').mkdir()
+        self.impl = self.ws / 'submission' / 'impl.py'
+        self.impl.write_text('x = 1\n', encoding='utf-8')
+        from kernel.autoresearch.runtime.store import Store
+        self.gov = g.Governance(Store(str(self.ws / 'gov.sqlite')), workspace=self.ws)
+
+    def plan(self):
+        return make_plan(implementation={'files': ['submission/impl.py']})
+
+    def test_implementation_bytes_are_bound(self):
+        self.gov.freeze_plan(self.plan(), actor='main')
+        prep = self.gov.prepare_audit('P1', actor='main')['prepared_id']
+        self.gov.record_audit(prep, modern(prep), actor='reviewer')
+        self.assertTrue(self.gov.audit_state('P1')['ok'])
+        self.impl.write_text('x = 2\n', encoding='utf-8')
+        state = self.gov.audit_state('P1')
+        self.assertFalse(state['ok'])
+        self.assertTrue(any('实现文件' in item for item in state['problems']), state['problems'])
+        with self.assertRaises(g.GovernanceError):
+            self.gov.correct_audit(state['report_id'],
+                                   [{'what': '小修', 'self_check': '已读'}], actor='main')
+
+    def test_prepare_requires_existing_implementation_file(self):
+        self.gov.freeze_plan(make_plan(implementation={'files': ['submission/none.py']}),
+                             actor='main')
+        with self.assertRaises(g.GovernanceError) as ctx:
+            self.gov.prepare_audit('P1', actor='main')
+        self.assertIn('实现文件', str(ctx.exception))
+
+    def test_record_rejects_changed_bytes_since_prepare(self):
+        self.gov.freeze_plan(self.plan(), actor='main')
+        prep = self.gov.prepare_audit('P1', actor='main')['prepared_id']
+        self.impl.write_text('x = 3\n', encoding='utf-8')
+        with self.assertRaises(g.GovernanceError) as ctx:
+            self.gov.record_audit(prep, modern(prep), actor='reviewer')
+        self.assertIn('实现文件', str(ctx.exception))
 
 
 class ResearchPageTests(unittest.TestCase):

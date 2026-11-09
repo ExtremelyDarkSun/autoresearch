@@ -49,6 +49,7 @@ from kernel.autoresearch.monitoring import (  # noqa: E402
     Monitoring,
     MonitoringError,
     Undecidable,
+    enabled,
 )
 
 OWNER = "owner-alpha"
@@ -246,14 +247,34 @@ def base_events():
 
 
 class Harness:
-    def __init__(self, root):
+    #: 开关文件（相对工作区根）：默认关闭时这个文件不存在。
+    POLICY = Path(".autoresearch") / "intent_monitor_policy.json"
+
+    def __init__(self, root, *, monitoring=True):
         self.root = Path(root)
         self.host = FakeHost()
         self._monitor_seq = 0
         self.write("results.json", "t1 通过\nt2 通过\nr1 通过\n")
         self.write("plan.md", "# 计划\n第 1 步：守住回归\n第 2 步：小样本验证\n")
         self.set_owner(base_events())
+        # ⚠️ 本夹具默认**显式启用**监控：这些用例测的是「启用后」的原机制。
+        #    默认关闭的用例自己用 `set_enabled(False)`（或缺省不放 policy）来覆盖。
+        self.set_enabled(monitoring)
         self.mon = Monitor(self.root, host=self.host)
+
+    def policy_path(self):
+        return self.root / self.POLICY
+
+    def set_enabled(self, on=True, *, text=None):
+        """写 / 删开关文件；`text` 可给任意原文（用来测坏 JSON、非布尔等）。"""
+        path = self.policy_path()
+        if on:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text if text is not None else json.dumps({"enabled": True}),
+                            encoding="utf-8")
+        elif path.exists():
+            path.unlink()
+        return path
 
     # -- 文件 / 会话 --------------------------------------------------------
 
@@ -1549,6 +1570,127 @@ class MonitoringTests(unittest.TestCase):
         for command in ("register", "sync", "assess", "intent", "event", "prepare", "record",
                         "respond", "close", "check", "status", "diagnose", "protocol"):
             self.assertIn(command, text)
+
+
+class MonitoringSwitchTests(unittest.TestCase):
+    """开关（默认关闭）：缺 policy 即 off · 坏 policy 不误开 · 只有顶层 `enabled: true` 生效 ·
+    历史 `active` 账保留但不拦起跑 · 启用后原判据一条不放宽。"""
+
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self.root = Path(self._directory.name)
+        # ⚠️ 不带开关文件：这就是「默认关闭」的真实起点（本类不写 policy，除非用例自己写）。
+        self.h = Harness(self.root, monitoring=False)
+
+    def _tree(self):
+        base = self.root / ".autoresearch"
+        if not base.is_dir():
+            return {}
+        return {path.relative_to(self.root).as_posix(): path.read_bytes()
+                for path in sorted(base.rglob("*")) if path.is_file()}
+
+    def test_missing_policy_is_off_and_never_blocks(self):
+        self.assertFalse(enabled(self.root))
+        self.assertFalse(enabled(str(self.root)))       # 也接受字符串根
+        before = self._tree()
+        out = self.h.mon.check_start(OWNER, EXP)
+        self.assertTrue(out["ok"])
+        self.assertTrue(out["allow"])
+        self.assertFalse(out["enabled"])
+        self.assertEqual(out["state"], "disabled")
+        self.assertEqual(out["problems"], [])
+        self.assertEqual(self._tree(), before, "默认关闭时 check_start 必须零写")
+        self.assertFalse((self.root / ".autoresearch" / "monitoring.sqlite3").exists())
+        # 关闭时没有 init 义务，也没有登记口：写命令拒写（不是静默 no-op）
+        with self.assertRaises(MonitoringError):
+            self.h.mon.register(OWNER, state="none", reason="关闭时不该登记")
+
+    def test_event_is_noop_when_off(self):
+        before = self._tree()
+        out = self.h.mon.event(OWNER, "result_analysis", exp=EXP, stage="pending",
+                               sources=[self.h.ref("results.json", "L1")])
+        self.assertTrue(out["ok"])
+        self.assertFalse(out["enabled"])
+        self.assertFalse(out["created"])
+        self.assertIsNone(out["event_id"])
+        self.assertEqual(self._tree(), before, "关闭时 event 不许读日志 / 写事件")
+
+    def test_bad_policy_shapes_never_enable(self):
+        bad = ["", "not json", "[]", '"true"', '{"enabled": "true"}', '{"enabled": 1}',
+               '{"enabled": null}', '{"enabled": false}', '{}', '{"Enabled": true}']
+        for text in bad:
+            self.h.set_enabled(True, text=text)
+            with self.subTest(policy=text):
+                self.assertFalse(enabled(self.root), "坏 policy 不许误开")
+                out = self.h.mon.check_start(OWNER, EXP)
+                self.assertTrue(out["allow"])
+                self.assertEqual(out["state"], "disabled")
+                with self.assertRaises(MonitoringError):
+                    self.h.mon.register(OWNER, state="none", reason="坏 policy 不放行写")
+
+    def test_explicit_enable_restores_original_gates(self):
+        self.h.set_enabled(True)
+        self.assertTrue(enabled(self.root))
+        unregistered = self.h.mon.check_start(OWNER, EXP)
+        self.assertFalse(unregistered["allow"], "启用后未登记仍 fail closed")
+        self.assertEqual(unregistered["state"], "unknown")
+        self.assertTrue(any("register" in item for item in unregistered["problems"]))
+        self.h.register_none()
+        self.assertTrue(self.h.mon.check_start(OWNER, EXP)["allow"])
+        # 启用后三触发照旧记账（关闭时才 no-op）
+        trigger = self.h.trigger()
+        self.assertTrue(trigger["created"])
+        self.assertEqual([item["id"] for item in self.h.mon.status(OWNER)["pending"]],
+                         [trigger["event_id"]])
+
+    def test_historical_active_account_is_kept_but_not_blocking_when_off(self):
+        self.h.set_enabled(True)
+        self.h.register_active()
+        self.h.trigger()
+        self.assertFalse(self.h.mon.check_start(OWNER, EXP)["allow"],
+                         "启用时 active 且有未覆盖触发 ⇒ 拦")
+        ledger_before = self.h.mon.ledger(OWNER)
+        self.h.set_enabled(False)                       # 用户关掉（等同删掉 enabled）
+        files_before = self._tree()
+        self.assertFalse(enabled(self.root))
+        out = self.h.mon.check_start(OWNER, EXP)
+        self.assertTrue(out["allow"], "历史 active 账默认不拦起跑")
+        self.assertEqual(out["state"], "disabled")
+        status = self.h.mon.status(OWNER)
+        self.assertTrue(status["ok"])
+        self.assertFalse(status["enabled"])
+        self.assertEqual(status["state"], "disabled")
+        self.assertEqual(status["history_state"], "active", "历史账保留、只读展示")
+        self.assertTrue(status["registered"])
+        self.assertEqual(self.h.mon.ledger(OWNER), ledger_before, "历史账不删不改")
+        self.assertEqual(self._tree(), files_before, "关闭后 status 必须零写")
+        with self.assertRaises(MonitoringError):
+            self.h.mon.prepare(OWNER, exp=EXP, sources=[self.h.ref("results.json", "L1")],
+                               direction=[self.h.ref("plan.md", "L1")])
+        with self.assertRaises(MonitoringError):
+            self.h.mon.close(OWNER, reason="achieved", target="closed", report_id="MON-x")
+        with self.assertRaises(MonitoringError):
+            self.h.mon.respond(OWNER, [])
+        self.h.set_enabled(True)                        # 重新启用：旧账仍按原判据判
+        self.assertFalse(self.h.mon.check_start(OWNER, EXP)["allow"])
+
+    def test_readonly_views_stay_available_when_off(self):
+        out = self.h.mon.status(OWNER)
+        self.assertTrue(out["ok"])
+        self.assertIsNone(out["history_state"])
+        diag = self.h.mon.diagnose(OWNER)
+        self.assertTrue(diag["ok"])
+        self.assertFalse(diag["enabled"])
+        self.assertEqual(diag["state"], "disabled")
+        self.assertIsNone(diag["session"])
+        protocol_out = io.StringIO()
+        with contextlib.redirect_stdout(protocol_out):
+            code = monitoring_cli.main(["--root", str(self.root), "enabled"])
+        self.assertEqual(code, 0)
+        payload = json.loads(protocol_out.getvalue())
+        self.assertFalse(payload["enabled"])
+        self.assertEqual(payload["state"], "disabled")
 
 
 if __name__ == "__main__":

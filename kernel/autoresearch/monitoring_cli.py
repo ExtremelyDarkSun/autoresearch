@@ -22,7 +22,11 @@
     # 用户自己发的 JSON 命令（旧路径，与上面互斥）：
     ... close --reason withdrawn --to closed --report-id MON-… --proof-seq 7
 
-读命令（`status` / `diagnose` / `protocol` / `check`）**零写**：不建目录、不改事件库。
+读命令（`status` / `diagnose` / `protocol` / `enabled` / `check`）**零写**：不建目录、不改事件库。
+**默认关闭**：缺 `.autoresearch/intent_monitor_policy.json` 的 `{"enabled": true}` 时 `check` 直接放行
+（`state=disabled`），写命令（`register` / `sync` / `intent` / `assess` / `prepare` / `record` /
+`respond` / `waive` / `close`）**拒写**（exit 2，`event` 是 no-op）；`status` / `diagnose` 仍只读，
+`enabled` 专看开关。只有用户明确要求才写这个开关文件。
 没有 `--adapter` 时会话层一律判「不可判」（exit 2），绝不因为「读不到就说通过」。
 
 退出码：0=通过；9=被拒（有未处理项）；2=错误或不可判。
@@ -44,7 +48,9 @@ from .monitoring import (
     CLOSURE_REASONS,
     ENFORCED_ACTIONS,
     HOST_PROTOCOL,
+    POLICY_NAME,
     SAFE_ACTIONS,
+    STATE_DIR,
     STATES,
     TRIGGERS,
     Monitor,
@@ -53,6 +59,7 @@ from .monitoring import (
     _parse_ref,
     _safe_name,
     _same_session,
+    enabled as monitoring_enabled,
 )
 
 DEFAULT_ROOT = Path.cwd()
@@ -230,6 +237,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = add("protocol", "打印宿主注入协议（父 agent 按它实现 DSH adapter）")
 
+    p = add("enabled", "只读查看开关状态（默认关闭：缺开关文件即 off；不改任何文件）")
+
     p = add("register", "登记负责人会话的监控状态（一次性；none 是一次显式评估，不是默认值）")
     p.add_argument("--state", choices=["none", "active"], default="none")
     p.add_argument("--intent", default="", help="专项意图正文（state=active 必填）")
@@ -356,6 +365,16 @@ def main(argv=None) -> int:
     try:
         if args.command == "protocol":
             _dump(HOST_PROTOCOL)
+            return 0
+        if args.command == "enabled":
+            # 只读开关：不建目录、不写盘、不需要会话 / adapter。
+            on = monitoring_enabled(root)
+            _dump({"ok": True, "enabled": on,
+                   "state": "enabled" if on else "disabled",
+                   "policy": f"{STATE_DIR}/{POLICY_NAME}",
+                   "note": ("只有顶层 JSON 布尔 {\"enabled\": true} 才算启用；"
+                            "缺文件 / 坏 JSON / 非布尔一律按关闭处理。"
+                            "默认关闭时不要求登记 / 评估 / 派工，也不拦起跑。")})
             return 0
         if args.command == "check":
             host = _load_host(args.adapter, args.log_root, root)

@@ -113,8 +113,7 @@
         },
         "source": {
           "type": "string",
-          "minLength": 1,
-          "description": "门槛的出处：哪次读数 / 哪条规则 / 哪份契约。⛔ 不许写「经验值」。"
+          "description": "可选的判据来源字符串，不强制逐条原文背书。"
         },
         "unit": {
           "type": "string"
@@ -160,15 +159,13 @@
               "observation",
               "interpretation_boundary",
               "conditions",
-              "stop_condition",
-              "source"
+              "stop_condition"
             ]
           },
           "else": {
             "required": [
               "direction",
-              "threshold",
-              "source"
+              "threshold"
             ]
           }
         }

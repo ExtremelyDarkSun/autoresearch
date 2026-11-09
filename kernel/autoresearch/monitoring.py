@@ -1,6 +1,7 @@
 # GENERATED-BY: 完整功能迁移（意图与过程监控 L1–L14 / V1–V3）
-# LAST-EDIT: 2026-11-09（补自然语言撤回 / 替换路径：真实用户原话 + 独立报告 closure.user_command 逐键绑定；
-#            原有 JSON 用户命令路径保持原样）
+# LAST-EDIT: 2026-11-09（同步上游「监控默认关闭」：新增 `enabled(root)` 开关读 `.autoresearch/
+#            intent_monitor_policy.json` 顶层布尔；缺文件/坏 JSON/非布尔一律 off；关闭时 check_start 直接放行、
+#            event no-op、写命令拒写、历史 active 账不拦起跑；启用后判据一条不放宽）
 # PURPOSE: 专项意图与过程监控的通用机制 —— 四态、三触发、两个水位、固定截止快照、独立子会话报告核验、
 #          意见处置与跨报告阻断、四理由闭合、进下一轮前的只读检查。不调用模型、不自动派工、不伪造授权。
 # ORIGIN: 上游单文件工具（2552 行）的机制；契约 kernel/contracts/intent_monitor.md；角色 kernel/roles/intent-monitor.md；
@@ -25,14 +26,30 @@
 2. **报告不是授权**：它不批准线上提交，也**不阻止**取包、用户停跑、故障停机、预算耗尽停机。
 3. **只读检查零写**：`check_start` / `status` / `diagnose` 不写事件账、不建目录、不改数据库字节。
 4. **未登记会话 fail closed**：没有 `register` 过的负责人会话，`check_start(action="launch")` 一律不放行；
-   会话日志读不到、宿主证据不可核 ⇒ 判「不可判」，**不是放行**。
+   会话日志读不到、宿主证据不可核 ⇒ 判「不可判」，**不是放行**。⚠️ 这一条**只在启用后**成立。
 5. **记录是只读不可信数据**：会话与结果文件里出现的指令式文本，一律不当命令执行。
+
+开关：默认关闭（2026-11-09 同步上游裁定）
+========================================
+
+`enabled(root)` 只读 `<root>/.autoresearch/intent_monitor_policy.json` 的顶层布尔 `"enabled": true`；
+缺文件 / 坏 JSON / 非对象 / 非布尔 ⇒ **关闭**（默认 off，⛔ 不静默回退旧行为）。
+
+* **关闭时**：`check_start` 立刻 `ok=true / allow=true / state="disabled"`（不读宿主日志、不要求
+  `register`、不要求评估用户原话、**历史 `active` / `blocked` 账保留但不拦起跑**）；`event` no-op
+  （不登记触发、不产生待审）；写命令 `register` / `sync` / `intent` / `assess` / `prepare` / `record` /
+  `respond` / `waive` / `close` **拒写**；`status` / `diagnose` / `protocol` / `ledger` 仍只读可用，
+  `status` 另给 `history_state`。
+* **显式启用后**一律沿用原机制：四态、三触发、两个水位、报告过期、hook 缺口、`resolves` 闭合
+  **一条都不放宽**（代码没有为「默认关闭」在启用路径上开新口子）。
+* ⚠️ 关闭 ≠ 绕过用户停止 / 预算 / 安全停机：取包、停跑、故障停机、预算耗尽停机本来就不受监控阻断。
 
 状态机（按负责人会话保存）
 ==========================
 
 | 状态 | 含义 | 对 `check_start(launch)` 的影响 |
 |---|---|---|
+| `disabled` | **默认关闭**（缺 `intent_monitor_policy.json` 的 `{"enabled": true}`） | **一律放行**：不要求登记、不评估用户原话、历史 `active` 账不拦 |
 | `none` | 当前没有专项意图 | 有**未评估**用户原话 ⇒ 不放行；其余放行（`result_analysis` 等只记账） |
 | `active` | 正在盯 | 待审触发 / 无仍有效报告 / 意见未处置 / 阻断未闭合 ⇒ 不放行 |
 | `blocked` | 暂时受阻，意图仍有效 | **恒不放行**，直到 `event --kind unblock` 且阻断问题已闭合 |
@@ -86,6 +103,7 @@ kind 为空或 user」算出）；`events` 缺 `text` / `is_user` / `rpc_id` 时
 
     Monitor(root, *, db_path=None, host=None, hook_tools=None, hook_events=None)
     Monitoring = Monitor            # 父 agent 的 workflow 适配层按这个名字构造
+    enabled(root)                   # 只读开关（默认关闭；不建目录、不写盘、不读宿主日志）
     monitor.register(owner, *, state, intent, sources, reason, note, exp, intent_id)
     monitor.sync(owner, *, exp)
     monitor.intent(owner, *, text, sources, quote, replace, exp, note, intent_id)
@@ -170,6 +188,13 @@ STATE_DIR = ".autoresearch"
 EVENTS_DIR = "monitoring"
 DB_NAME = "monitoring.sqlite3"
 ROLE = Path("kernel/roles/intent-monitor.md")
+
+#: 开关文件名：`<root>/.autoresearch/intent_monitor_policy.json`，**只认顶层 JSON 布尔**
+#: `{"enabled": true}`。缺文件 / 坏 JSON / 非对象 / 非布尔 ⇒ 关闭（默认 off）。
+POLICY_NAME = "intent_monitor_policy.json"
+POLICY_KEY = "enabled"
+#: 关闭时 `check_start` 返回的状态值（不是四态之一：四态只在启用后存在）。
+DISABLED = "disabled"
 
 GENESIS = "sha256:" + "0" * 64
 
@@ -341,7 +366,50 @@ HOST_PROTOCOL = {
         "maps_to": "Monitor(workspace, host=…).check_start(owner_session, exp_id, action=action)",
         "returns": "ok / allow / problems / diagnostics / state / pending / issues / hook_gaps …",
     },
+    "policy": {
+        "default": "off（缺文件即关闭；2026-11-09 同步上游裁定）",
+        "file": f"{STATE_DIR}/{POLICY_NAME}（相对工作区根）",
+        "shape": '{"enabled": true} —— 只认顶层 JSON 布尔 true',
+        "off_when": "缺文件 / 读不动 / 坏 JSON / 非对象 / 非布尔（字符串 \"true\"、1、缺键）",
+        "read_only_call": "enabled(root) -> bool（零写；结果 hook 与启动闸共用）",
+        "disabled_check_start": 'ok=true / allow=true / state="disabled" / problems=[]；不要求 register、'
+                                "不评估用户原话、历史 active 账不拦起跑",
+        "disabled_event": "no-op（不登记触发、不产生待审）",
+        "disabled_writes": "register / sync / intent / assess / prepare / record / respond / waive / close 拒写；"
+                           "status / diagnose / protocol / ledger 仍只读可用",
+        "enabled": "一律沿用原判据（四态 · 三触发 · 两水位 · 报告过期 · hook 缺口 · resolves 闭合都不放宽）",
+        "safety": "关闭不等于绕过用户停止 / 预算 / 安全停机：取包、停跑、故障停机、预算耗尽停机本来就不受监控阻断",
+    },
 }
+
+
+def enabled(root) -> bool:
+    """意图监控开关（**默认关闭**）。只读一个小文件，不建目录、不写盘、不读宿主日志。
+
+    判定口径（与 `kernel/contracts/intent_monitor.md` §0 一致）：
+
+    * 读 `<root>/.autoresearch/intent_monitor_policy.json`；
+    * 只有**顶层 JSON 对象**里的 `"enabled"` **恰好是布尔 `true`** 才算启用；
+    * 缺文件 / 读不动 / 坏 JSON / 非对象 / 字符串 `"true"` / `1` / 缺键 ⇒ **False**（默认 off，
+      ⛔ 不静默回退旧行为）。
+
+    结果 hook（`event`）与启动闸（`check_start`）共用同一个判定，所以「关」在两处同时成立。
+    """
+    try:
+        path = Path(root).resolve() / STATE_DIR / POLICY_NAME
+        if not path.is_file():
+            return False
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return payload.get(POLICY_KEY) is True
+
+
+def policy_path(root) -> Path:
+    """开关文件位置（只用于报告 / 提示，不创建）。"""
+    return Path(root).resolve() / STATE_DIR / POLICY_NAME
 
 
 class MonitoringError(ValueError):
@@ -2061,11 +2129,21 @@ class Monitor:
                     problems.append(f"监控缺口（{gap['kind']}）：{gap['detail']}")
         return problems
 
-    # -- 写命令：登记 / 同步 / 意图 / 评估 ---------------------------------
+    # -- 写命令：默认关闭时一律拒写 -----------------------------------------
+
+    def _require_enabled(self, command: str) -> None:
+        """默认关闭时写命令拒写（不是 no-op）：不建账、不覆盖历史事件。"""
+        if enabled(self.root):
+            return
+        raise MonitoringError(
+            f"意图监控默认关闭（缺 {STATE_DIR}/{POLICY_NAME} 的 "
+            '{"enabled": true}' + f"）：{command} 拒写。关闭时不要求登记 / 评估 / 派工，"
+            "历史事件与 active 账保留不删；用户明确要求启用后才恢复原机制")
 
     def register(self, owner, *, state="none", intent="", sources=None, reason, note="", exp="",
                  intent_id="") -> dict:
         """登记负责人会话的监控状态（一次性）。**none 不是默认值，而是一次显式评估**。"""
+        self._require_enabled("register")
         owner = _safe_name(owner)
         if state not in STATES:
             raise MonitoringError("state 须为 " + "|".join(STATES))
@@ -2115,6 +2193,7 @@ class Monitor:
 
     def sync(self, owner, *, exp="") -> dict:
         """从会话按高水位登记新用户原话。**只抬同步水位，不抬评估水位**。"""
+        self._require_enabled("sync")
         owner = _safe_name(owner)
         events = self._read(owner)
         self._registered(events)
@@ -2159,6 +2238,7 @@ class Monitor:
     def intent(self, owner, *, text, sources, quote=None, replace=False, exp="", note="",
                intent_id="") -> dict:
         """登记 / 替换专项意图：必须指到一句真实用户原话（L2 替换要有新原话）。"""
+        self._require_enabled("intent")
         owner = _safe_name(owner)
         events = self._read(owner)
         self._registered(events)
@@ -2198,6 +2278,7 @@ class Monitor:
     def assess(self, owner, *, decision, covers_through_seq, answer_seq=None, rationale, sources,
                exp="", note="") -> dict:
         """对用户原话的一次**显式判断**：`decision="none"`（只此一种；`intent` 请用 intent()）。"""
+        self._require_enabled("assess")
         owner = _safe_name(owner)
         if decision != "none":
             raise MonitoringError("assess 只处理 decision=none；要立意图请用 intent()")
@@ -2254,8 +2335,16 @@ class Monitor:
 
     def event(self, owner, kind, *, exp="", stage=None, note="", sources=None, seq=None,
               issue_ids=None, text="") -> dict:
-        """登记一条事件：三触发 / block / unblock。`heartbeat` 显式拒绝。"""
+        """登记一条事件：三触发 / block / unblock。`heartbeat` 显式拒绝。
+
+        **默认关闭时 no-op**：不读日志、不写事件、不产生待审触发（三触发派工义务也一并消失）。
+        """
         owner = _safe_name(owner)
+        if not enabled(self.root):
+            return {"ok": True, "enabled": False, "created": False, "event_id": None,
+                    "kind": kind,
+                    "note": ("意图监控默认关闭（缺 " + f"{STATE_DIR}/{POLICY_NAME} 的 "
+                             '{"enabled": true}' + "）：event 不登记、不产生待审触发")}
         events = self._read(owner)
         self._registered(events)
         state = self._state(events)
@@ -2348,6 +2437,7 @@ class Monitor:
 
     def prepare(self, owner, *, exp="", sources=None, direction=None, note="") -> dict:
         """固定截止快照 + 派工材料包。**只在确有要审的东西时可用**；不派工、不调模型。"""
+        self._require_enabled("prepare")
         owner = _safe_name(owner)
         events = self._read(owner)
         self._registered(events)
@@ -2468,6 +2558,7 @@ class Monitor:
 
     def record(self, owner, *, report_bytes=None, report_path=None, proof=None) -> dict:
         """登记一份**已核验**的独立监控报告。自造 JSON / fork / 父子关系不符一律拒。"""
+        self._require_enabled("record")
         owner = _safe_name(owner)
         events = self._read(owner)
         self._registered(events)
@@ -2535,6 +2626,7 @@ class Monitor:
 
     def respond(self, owner, responses, *, actor=None) -> dict:
         """负责人逐条处理监控意见（必须给理由与来源）。**declined 不消除阻断**。"""
+        self._require_enabled("respond")
         owner = _safe_name(owner)
         events = self._read(owner)
         self._registered(events)
@@ -2581,6 +2673,7 @@ class Monitor:
         核验（proof 只允许两键）。⛔ 不接受「另一条无关用户消息里恰好出现同样字眼」：
         动作、报告、问题三者必须同时被绑定；`expected` 若由调用方给出，必须与本次动作完全相等。
         """
+        self._require_enabled("waive")
         owner = _safe_name(owner)
         events = self._read(owner)
         self._registered(events)
@@ -2710,6 +2803,7 @@ class Monitor:
 
         `achieved` / `unsatisfiable` 不需要用户命令：必须有仍有效独立报告（verdict 对得上）。
         """
+        self._require_enabled("close")
         owner = _safe_name(owner)
         events = self._read(owner)
         self._registered(events)
@@ -2857,6 +2951,7 @@ class Monitor:
     def _check_base(self, owner, exp, action) -> dict:
         return {
             "ok": False, "allow": False, "action": action, "exempt": False, "state": "unknown",
+            "enabled": True, "history_state": None,
             "owner_session": owner, "exp": exp, "undecidable": False, "registered": False,
             "intent_id": None,
             "pending": [], "unseen_user_messages": [],
@@ -2871,15 +2966,31 @@ class Monitor:
         }
 
     def check_start(self, owner, exp, *, action="launch") -> dict:
-        """进下一轮之前的闸（**零写**）。`action` 是安全动作时豁免（L10），否则 fail closed。"""
+        """进下一轮之前的闸（**零写**）。`action` 是安全动作时豁免（L10），否则 fail closed。
+
+        **默认关闭**：`enabled(root)` 为假时这里立刻放行（`ok=True` / `state="disabled"`），
+        ⛔ 不读宿主日志、⛔ 不要求 `register`、⛔ 不要求评估用户原话、⛔ 历史 `active` 账不拦起跑。
+        启用后才按原判据检查。
+        """
         owner = _safe_name(owner)
-        if not _text(exp):
-            raise MonitoringError("check_start 需要实验编号")
         action = str(action or "").strip().lower()
         if action not in SAFE_ACTIONS + ENFORCED_ACTIONS:
             raise MonitoringError(
                 "未知 action：" + action + "；安全动作=" + "|".join(SAFE_ACTIONS)
                 + "，需要监控闸的动作=" + "|".join(ENFORCED_ACTIONS))
+        if not enabled(self.root):
+            base = self._check_base(owner, exp, action)
+            base.update({
+                "ok": True, "allow": True, "enabled": False, "state": DISABLED,
+                "exempt": action in SAFE_ACTIONS, "registered": False, "intent_id": None,
+                "problems": [], "diagnostics": [], "writes": 0,
+                "note": ("意图监控默认关闭（缺 " + f"{STATE_DIR}/{POLICY_NAME} 的 "
+                         '{"enabled": true}' + "）：不要求登记 / 不评估用户原话 / 不派监控；"
+                         "历史 active 账保留但不拦起跑。关闭不等于绕过用户停止、预算或安全停机。"),
+            })
+            return base
+        if not _text(exp):
+            raise MonitoringError("check_start 需要实验编号")
         base = self._check_base(owner, exp, action)
         exempt = action in SAFE_ACTIONS
         base["exempt"] = exempt
@@ -2952,10 +3063,31 @@ class Monitor:
         return base
 
     def status(self, owner, *, exp="") -> dict:
-        """零写查看：状态、两个水位、待审、意见、过期报告、hook 缺口。"""
+        """零写查看：状态、两个水位、待审、意见、过期报告、hook 缺口。
+
+        默认关闭时**只读账本**：给 `enabled=False` / `state="disabled"` 与 `history_state`
+        （历史四态），⛔ 不读宿主日志、不评估、不拦。
+        """
         owner = _safe_name(owner)
         out = self._check_base(owner, exp, "status")
         out["exempt"] = True
+        if not enabled(self.root):
+            events = []
+            try:
+                events = self._read(owner)
+            except MonitoringError as exc:  # 账本坏了也只诊断，不改变「关闭即不拦」
+                out["problems"] = [f"历史事件账不可核（只诊断）：{exc}"]
+            out.update({
+                "ok": True, "enabled": False, "state": DISABLED, "registered": bool(events),
+                "history_state": self._state(events) if events else None,
+                "intent": self._intent_text(events) if events else None,
+                "heartbeat_triggers": False, "writes": 0,
+                "source": f"{STATE_DIR}/{EVENTS_DIR}/{owner}",
+                "note": ("意图监控默认关闭（缺 " + f"{STATE_DIR}/{POLICY_NAME} 的 "
+                         '{"enabled": true}' + "）：不要求登记 / 评估 / 派工；历史账只读展示，"
+                         "不拦起跑。关闭不等于绕过用户停止、预算或安全停机。"),
+            })
+            return out
         try:
             analysis = self._analyze(owner, exp)
         except Undecidable as exc:
@@ -2986,10 +3118,16 @@ class Monitor:
         return out
 
     def diagnose(self, owner) -> dict:
-        """零写诊断：账本级 + 会话级（没有 host 时会话级不可判）。"""
+        """零写诊断：账本级 + 会话级（没有 host 时会话级不可判）。
+
+        默认关闭时**仍可显式调用**（只读诊断）：输出多一个 `enabled=False` 与 `state="disabled"`，
+        ⛔ 不因此产生任何登记 / 评估 / 派工义务。
+        """
         owner = _safe_name(owner)
+        policy_on = enabled(self.root)
         out = {"ok": True, "owner_session": owner, "db": str(self.db_path),
                "db_exists": self.db_path.is_file(), "writes": 0,
+               "enabled": policy_on, "state": "unknown" if policy_on else DISABLED,
                "host_configured": self.host is not None, "problems": [], "ledger": None,
                "session": None,
                "note": "只读诊断；没有 host adapter 时会话层不可判，不能当成通过。"
@@ -3003,10 +3141,21 @@ class Monitor:
             return out
         out["ledger"]["events"] = len(events)
         out["registered"] = bool(events)
+        off = not out["enabled"]
         if events:
-            out["state"] = self._state(events)
+            if off:
+                out["history_state"] = self._state(events)
+            else:
+                out["state"] = self._state(events)
             out["sync_watermark"] = self._sync_watermark(events)
             out["intent"] = self._intent_text(events)
+        if off:
+            # 关闭时只读展示历史账：不读会话层，也不因为「没登记 / 没 host」判不可判。
+            out["ok"] = True
+            out["note"] = ("意图监控默认关闭（缺 " + f"{STATE_DIR}/{POLICY_NAME} 的 "
+                           '{"enabled": true}' + "）：这里只读展示历史账，不要求登记 / 评估 / 派工，"
+                           "不拦起跑。" + out["note"])
+            return out
         if self.host is None:
             out["ok"] = False
             out["problems"].append("未配置 host adapter：会话层不可判（不能当成通过）")
@@ -3434,6 +3583,10 @@ __all__ = [
     "Monitoring",
     "MonitoringError",
     "Undecidable",
+    "enabled",
+    "policy_path",
+    "POLICY_NAME",
+    "DISABLED",
     "HOST_PROTOCOL",
     "SAFE_ACTIONS",
     "ENFORCED_ACTIONS",

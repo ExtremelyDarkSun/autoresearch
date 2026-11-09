@@ -25,8 +25,8 @@
       "role": "researcher",
       "phase": "plan",
       "path": "kernel/contracts/plan_audit.md",
-      "anchor": "## 5 版本绑定",
-      "why": "判「这次要不要重新审计、还剩几次额度」。绑定面只到关键字段。",
+      "anchor": "## 10 版本绑定与复审",
+      "why": "绑定核心设计与实现实际字节，普通文字修正按correct自查，不需逐字段审计者授权。",
       "scope": "full_document"
     },
     {
@@ -35,7 +35,7 @@
       "phase": "round",
       "path": "kernel/contracts/intent_monitor.md",
       "anchor": "## 7 进下一轮之前",
-      "why": "进下一轮前要跑 check_start。不读它就不知道被拦时该补什么。",
+      "why": "仅用户显式启用监控后，进下一轮前查check_start。默认关闭，不要求读取监控契约或派工。",
       "scope": "full_document"
     },
     {
@@ -52,8 +52,8 @@
       "role": "independent-reviewer",
       "phase": "review",
       "path": "kernel/contracts/plan_audit.md",
-      "anchor": "## 3 审哪七项",
-      "why": "整份读取三态审计与小修边界。unknown 写明为何阻断或不阻断。",
+      "anchor": "## 3 审什么：三件事",
+      "why": "整份读取三项审计重点与小修边界，不要求七项coverage。",
       "scope": "full_document"
     },
     {
@@ -61,8 +61,8 @@
       "role": "independent-reviewer",
       "phase": "review",
       "path": "kernel/contracts/plan_audit.md",
-      "anchor": "## 4 报告字段",
-      "why": "报告字段形状错会被拒；sources 非空是 I3 的要求。",
+      "anchor": "## 7 报告：最小集 + 完整分析写文件",
+      "why": "报告最小集为三态决定、理由、三项focus及实质意见。unknown不必建issue。",
       "scope": "full_document"
     },
     {
@@ -71,7 +71,7 @@
       "phase": "monitor",
       "path": "kernel/contracts/intent_monitor.md",
       "anchor": "## 5 两个水位",
-      "why": "同步 ≠ 评估。不读它会拿「已同步」当「已核过」。",
+      "why": "仅用户显式启用监控后适用。同步 ≠ 评估。不读它会拿「已同步」当「已核过」。",
       "scope": "full_document"
     },
     {
@@ -80,7 +80,7 @@
       "phase": "monitor",
       "path": "kernel/contracts/intent_monitor.md",
       "anchor": "## 6 报告字段",
-      "why": "报告不覆盖全部未处理触发会被拒。",
+      "why": "仅用户显式启用监控后适用。报告不覆盖全部未处理触发会被拒。",
       "scope": "full_document"
     },
     {

@@ -3,7 +3,7 @@ GENERATED-BY: full expectations migration audit
 LAST-EDIT: 2026-11-09 通用补项整库验收：复盘v2、普通提问、16项检查与本地/远端下一轮预检；109编号与顺序保留，现场未验另列
 PURPOSE: 保留全部预期编号并作为迁移功能验收依据。
 ORIGIN: upstream FRAMEWORK_EXPECTATIONS_2026-10-10.md, current working content
-CUMULATIVE-DELTA: 2026-11-09 依据当前源码与实测复核逐项状态：workflow/reporting/monitoring/decisions/progress/progress_host/issues/admission/workspace/lifecycle/host_evidence/channels/backends
+CUMULATIVE-DELTA: 2026-11-09 监控默认关闭、三项重点审计、判据source可选及文档骨架生成；109编号顺序保留。2026-11-09 依据当前源码与实测复核逐项状态：workflow/reporting/monitoring/decisions/progress/progress_host/issues/admission/workspace/lifecycle/host_evidence/channels/backends
 已有可调用入口（含 CLI 与专项测试）；把「旧双账统一 / 事务内复核 / 审批绑执行规范 / goal 持久事件」从在途改为已接；
 新增「部分验收」与「待验」两种说法；不恢复旧终点闸；不把合成语义核或单次探针写成完整真实云实验。
 -->
@@ -18,7 +18,9 @@ CUMULATIVE-DELTA: 2026-11-09 依据当前源码与实测复核逐项状态：wor
 
 操作命令见[怎么跑](<RUNNING.md>)；拆分落点见[迁移说明](<migration.md>)。验收依据是[中性化完整预期](<../kernel/contracts/framework_expectations.md>)，本文逐项保留 109 个编号与其顺序。
 
-源工作文件 SHA256：`dd937baa9254c956613ad9bff80132682140933c54493adce376c798b2623e35`。编号覆盖不代表功能覆盖；本轮重审覆盖 109 个编号，未漏号、未重号。
+源工作文件 SHA256：`07ee2c49ddd9568ef5dcee4e0d24ced924e47a1697699363e6ba611d3a11e9a7`。编号覆盖不代表功能覆盖；本轮重审覆盖 109 个编号，未漏号、未重号。
+
+L2–L14、V1–V3按用户显式启用监控后的条件解释。默认关闭不恢复监控义务。本次增量验证与源文档版本见[同步记录](<FRAMEWORK_SYNC.md>)。
 
 ## 如何读状态
 
@@ -130,7 +132,7 @@ CUMULATIVE-DELTA: 2026-11-09 依据当前源码与实测复核逐项状态：wor
 | I8 | 本地实现 | 机器流程状态写 `.autoresearch/state/reporting/<专题>/` 与 `process_status/`，与人读页分开；心跳不算研究进展。 |
 | I9 | 本地实现 | 八节内容与四段来源由 `validate_status_page` 校验；页面是否真的易读仍靠写页者与人。 |
 | I10 | 本地实现 | 旧流程字段不再是新页必填，旧页按 `legacy` 只读兼容。 |
-| J1 | 本地实现 | `workflow prepare` 核四锚点（假设/判据出处/实现五项+files/显式 argv），确认性要阈值+理由，探索性要停止条件，占位词一律拒。生产计划样例见 `kernel/templates/workflow.plan.template.json`（预算不预填）；通用治理模板 `plan.template.json` 不含 argv/实现/授权，不能当可起跑样例。 |
+| J1 | 本地实现 | `workflow prepare`核假设、判据、实现五项+files和显式argv；source可选，新模板默认exploratory并含停止条件；确认性保留阈值+理由。探索性无source正例已走准备主链。 |
 | J2 | 本地实现 | 来源按 sha256 判过期（专题目标 / 主文档 / 用户原话 / 旧复盘来源）；只 `touch` 不改内容不失效。 |
 | J3 | 本地实现 | `check` 与 `launch` 都用实际 argv 与事前声明逐项比对；不符时零子进程。 |
 | J4 | 本地实现 | 真实启动记录（`wf_runs`）+ 有证据的复盘（`wf_reviews`）必须存在；旧终点闸不恢复为必跑。 |
@@ -143,28 +145,28 @@ CUMULATIVE-DELTA: 2026-11-09 依据当前源码与实测复核逐项状态：wor
 | K2 | 本地实现 | 关闭审计要宿主核过的用户命令，且必须晚于最后一次 `prepare_audit`；关闭后不能再准备。 |
 | K3 | 本地实现 | 只接受 `{session_id, seq}` 的 proof，命令由本层构造并逐键比对；`DSHHost` 读真实日志，宿主绑定正例在专项测试里（计数以测试为准）。真实通道未验。 |
 | K4 | 本地实现 | 审计者≠负责人，且必须是宿主证明的新 spawn 子会话；fork / 继承被判拒。 |
-| K5 | 本地实现 | `coverage` 恰好七项，各有合法 verdict、说明与非空来源。 |
-| K6 | 本地实现 | `unknown` 不再隐式通过：按 K13 写清为何阻断或不阻断。`blocked` 必须带 blocking 问题。 |
-| K7 | 本地实现 | 每条意见必须有 accepted / declined / needs_user 及理由来源；小修走 `correct`，硬实质不许授权。 |
+| K5 | 本地实现 | coverage可省或partial，不再强制七键、固定三组检索与ok逐项举证。focus恰三项、三态决定和实质意见仍核验。 |
+| K6 | 本地实现 | unknown可写一句说明，不必建issue。blocking须实质理由且只能是跑完判不了假设或结论必然说不清。 |
+| K7 | 本地实现 | 意见逐条处置；小修correct主会话自查，sources可空，不占审计次数，不需minor_fix_paths授权。绑定字段的纯文字修正显式wording_only并核before/after。 |
 | K8 | 本地实现 | 阻断只由后续报告的 `resolves` 或宿主核过的用户 `waive` 关闭；`correct` 不能关阻断。 |
-| K9 | 本地实现 | `authorization` 已进入 `KEY_FIELDS`，与执行参数、实现和预算共同绑定版本；任意授权叶子不能当小修。完整计划另由启动主链按规范化内容复核。 |
+| K9 | 本地实现 | 核心设计、执行参数、题单、实现身份或实际字节变更使审计过期。主链及只读预检已传workspace；普通证据路径、定位和措辞可自查，不能掩盖真实变化。 |
 | K10 | 本地实现 | 审计超时 / 失败 / 损坏 / 不可判都不放行；`workflow` 侧遇不可判直接拒。 |
 | K12 | 本地实现 | 每实验默认首审 + 最多一次增量复审；扩额要宿主核过的用户 `extend`，不能自扩。 |
 | K13 | 本地实现 | 三态 `proceed / minor_fix / blocked` + 三项审查重点 + 阻断/非阻断理由。 |
-| K14 | 本地实现 | 完整报告落文件、短回传恰六键；`record_audit_file` 核字节 SHA256 与声明一致。真实宿主消息可见性另验。 |
-| L1 | 部分 | 没登记意图是**显式**状态，未登记会话与未评估原话都拦；生产启动链已把 Monitoring 作为**唯一**意图权威，并在占用事务内复核（旧 gov 双账不再参与生产拦截）。剩下的缺口是语义：哪句原话算专项意图仍由用户回答决定，工具判不了。 |
+| K14 | 本地实现 | `governance audit-declaration`从报告文件生成六键短声明，`record_audit_file`核字节SHA256与决定问题一致；声明入口只读。真实宿主消息可见性另验。 |
+| L1 | 本地实现 | 默认关闭；缺开关、坏JSON、非布尔不启用。只有用户明确要求后顶层enabled=true启用；关闭时不要求登记、评估、派工，保留历史active/blocked账且不拦起跑。启用后的语义判定仍需用户/agent。 |
 | L2 | 部分 | 四态与替换 / 撤回 API 有，替换或撤回必须带新原话来源；「新原话到了就该触发状态变更」仍由 agent 显式登记，真实多轮宿主未验。 |
 | L3 | 部分 | `monitoring prepare` 固定截止快照与派工材料，`record` 核 `evidence_reads`；宿主层「先读原话再读结果」的读序核验未端到端。 |
 | L4 | 部分 | 报告要求逐轮 trajectory 字段；跨轮偏移定位未做独立验收。 |
 | L5 | 本地实现 | `monitoring respond` 逐条处置意见（理由 + 来源），declined 不消除阻断。 |
-| L6 | 本地实现 | 仅三类事件触发；心跳会被拒；`prepare` 只在确有待审事项时可用。 |
-| L7 | 部分 | 报告绑定 `owner_session`、截止 seq 与证据版本；材料包 / 会话快照 / 来源 / 报告字节任一变化都使报告过期（`stale_reports`），旧报告未闭合问题继续追。真实宿主的多轮跨报告继承未验。 |
+| L6 | 本地实现 | 关闭时三类事件no-op且零账新增；启用后才按结果分析、用户更新、重大偏差触发，心跳不触发，prepare仅在有待审事项时可用。 |
+| L7 | 部分 | 关闭时不因监控过期拦起跑。启用后继续核owner/seq及原始证据版本，过期不抹掉未闭合问题；真实多轮宿主继承未验。 |
 | L8 | 本地实现 | 单轮失败仍可 active；`blocked` 与 `closed` 分开；退出只认四条理由。 |
 | L9 | 本地实现 | 完整监控 JSON 校验（prepared_id / intent / trajectory / findings / issues / next_direction / closure / covers / evidence_reads / direction_sha256），并逐字核用户引文。 |
 | L10 | 部分 | 安全动作（collect / stop / package / rollback / halt / checkpoint）豁免；缺监控不阻停机已在 `check` 侧体现，端到端未验。 |
 | L11 | 语义纪律 | 新证据支持且仍连着目标的合理换方向可推进；判断靠人/agent。 |
 | L12 | 语义纪律 | 证据是否支持解释由独立会话判；本层不代替。 |
-| L13 | 本地实现 | `monitoring check --action launch` 是起跑闸：遗漏 / 过期 / 未处置意见 / hook 缺口都拦；安全动作豁免。生产启动链已统一权威监控，并在真实起跑前再次核状态。 |
+| L13 | 本地实现 | 缺策略直接disabled放行，不读会话日志。启用后启动入口核遗漏、过期、未处理意见与hook，并在占用事务内复核；安全停机不拦。 |
 | L14 | 本地实现 | 报告建议闭合 ≠ 已闭合；只有带可信证据的 `close` 改变状态。两路都可：旧 `--proof` / `--proof-seq` 与自然语言 `--user-quote`（内联 JSON / `@文件` / `--user-quote-file`，`{session,seq,text}`）互斥；独立报告必须 current + 新 spawn，且 `closure.user_command` 的 expected 与用户原话同条绑定。`withdrawn` / `replaced` 可用，`achieved` / `unsatisfiable` 不能靠原话绕过。 |
 | V1 | 部分验收 | 已用 3 个合成案例（`tests/fixtures/monitoring_semantic_cases.json` + `monitoring_semantic_review.json`）由**新 spawn 的独立会话**读并裁决。V1 首次报告虽 `cited_seq` 未越界，却在 assessment 里提到截止后的数据，被父会话拒收后改为只用 seq 1–4 才通过——**修订后通过，不是一次通过**；也不能据此宣称机械隔离成立。 |
 | V2 | 部分验收 | 同一轮合成语义核中，独立会话指出主分析把候选 7/10 写成 9/10、并把「更快」当成成功证据（目标偏移），给出阻断。仍不是完整 Monitoring 生产 JSON 端到端。 |

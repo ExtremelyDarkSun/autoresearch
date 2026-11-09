@@ -78,6 +78,17 @@ def audit_state(gov, plan_id):
         return state
 
     problems, open_blocking = [], []
+    # 实现文件的实际字节：准备时绑过、现在磁盘变了 ⇒ 旧审计不再覆盖当前实现（不是小修）。
+    if current:
+        try:
+            with gov.store.transaction() as conn:
+                prepared_row = gov._row(
+                    conn, 'SELECT * FROM gov_audits WHERE prepared_id=?',
+                    (current[-1]['prepared_id'],))
+                if prepared_row is not None:
+                    gov._assert_implementation_current(conn, prepared_row)
+        except Exception as exc:  # 任何不可核都当问题，不放行
+            problems.append(f'实现文件不可核或已变：{exc}')
     unresolved_minor = False
     if not current:
         problems.append('当前版本没有审计，请 prepare_audit + record_audit'

@@ -35,6 +35,10 @@ class ColdStartTests(lifecycle_fixtures.ProvisionedDeliveryTests):
             self.user(1, '只验证一次合成机制，不连接真实比赛与云机。'),
             self.user(2, '这句不立为跨轮意图，只是本轮目标。')]
         self.refresh_host()
+        # 本文件测「显式启用监控后」的既有行为：开关文件必须存在（默认关闭时 register 会拒写）。
+        (self.ws / '.autoresearch').mkdir(parents=True, exist_ok=True)
+        (self.ws / '.autoresearch' / 'intent_monitor_policy.json').write_text(
+            json.dumps({'enabled': True}), encoding='utf-8')
         self.monitor = Monitoring(self.ws, host=self.host)
         self.monitor.register(SESSION, state='none', reason='用户回答不立为跨轮意图',
                               sources=[{'session': SESSION, 'seq': 2}])

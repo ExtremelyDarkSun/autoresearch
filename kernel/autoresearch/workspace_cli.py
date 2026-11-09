@@ -2,7 +2,7 @@
 # LAST-EDIT: 2026-11-09
 # PURPOSE: Explicit CLI for topic provisioning and research snapshots.
 # ORIGIN: none
-# CUMULATIVE-DELTA: Actual Git worktrees and Python environments, separately from metadata registration.
+# CUMULATIVE-DELTA: 2026-11-09 documents只补缺失文档，不覆写；Actual Git worktrees and Python environments, separately from metadata registration.
 import argparse
 import json
 from pathlib import Path
@@ -21,6 +21,9 @@ def main(argv=None):
     p.add_argument('--code-repo', help='明确指定代码源仓库；不指定则建立空的独立Git仓库')
     p.add_argument('--revision', default='HEAD')
     p.add_argument('--no-environment', action='store_true', help='只建代码与文档；回执明确未创建环境')
+    p = sub.add_parser('documents', help='只补建缺失的TOPIC、EVIDENCE、STATUS骨架，不覆盖已有同类文档')
+    p.add_argument('--workspace', required=True)
+    p.add_argument('--topic', required=True)
     p = sub.add_parser('snapshot', help='实验前后保留专题主文档原始字节快照')
     p.add_argument('--workspace', required=True)
     p.add_argument('--topic', required=True)
@@ -34,6 +37,14 @@ def main(argv=None):
                                      requirements=requirements, owner_session=args.owner_session,
                                      code_repo=args.code_repo, revision=args.revision,
                                      create_environment=not args.no_environment)
+        elif args.command == 'documents':
+            from .workspace import _id, _inside
+            from .topic_documents import ensure_topic_documents
+            root = Path(args.workspace).resolve()
+            directory = _inside(root, 'topics/' + _id(args.topic))
+            if not (root / '.autoresearch').is_dir() or not directory.is_dir():
+                raise ValueError('只允许为现有工作区中的专题补建文档')
+            result = ensure_topic_documents(directory, topic=args.topic)
         else:
             result = snapshot_topic(args.workspace, topic=args.topic, exp_id=args.exp_id, stage=args.stage)
     except (ValueError, OSError, RuntimeError) as error:

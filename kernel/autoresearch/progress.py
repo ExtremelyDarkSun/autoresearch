@@ -4,7 +4,7 @@
 #          并在该叫醒负责人时叫一次、退出、留 needs_rearm 与结构化判词；不内置任何比赛、机器或结论。
 # ORIGIN: 上游单文件推进器（963 行）与通用进度探针（478 行）的机制；契约见 kernel/contracts/context_budget.md §4；
 #         行为预期 A1–A7 / D2 / H1–H9 见 kernel/contracts/framework_expectations.md。
-# CUMULATIVE-DELTA: 首版。与上游的刻意差异：① 命令探针不用管道采集，stdout/stderr 直接落到私有工作区的
+# CUMULATIVE-DELTA: 2026-11-09 默认关闭监控时接受无意图声明，不伪造none状态； 首版。与上游的刻意差异：① 命令探针不用管道采集，stdout/stderr 直接落到私有工作区的
 #          文件句柄（不截断），回传路径 + sha256，原文同时进事件账；② 采集失败 fail-closed，连续三次形成
 #          progress_unavailable 事件，单次失败也不许当成「没有变化」；③ goal 为主来源，外部推进器只在
 #          goal 覆盖状态**确切**为空位时补足，未知/部分覆盖一律不可判、不许假绿；④ 入向超期由一个可注入
@@ -608,8 +608,12 @@ def _load_plan_metadata(workspace, next_plan):
     return payload, "file", digest
 
 
-def _intent_declaration(intents) -> dict:
+def _intent_declaration(intents, *, root=None) -> dict:
     """归一显式意图声明：`{"intent_id": "..."}` 与 `{"none": True}` 二选一，⛔ 省略不默认放行。"""
+    if root is not None and (intents is None or intents == {"intent_id": None, "none": False}):
+        from .monitoring import enabled
+        if not enabled(root):
+            return {"intent_id": None, "none": False}
     if not isinstance(intents, dict):
         raise SpecError("intents 必须是对象：{\"intent_id\": ...} 或 {\"none\": true}")
     extra = set(intents) - {"intent_id", "none"}
@@ -1173,7 +1177,7 @@ def _remote_check_fallback(*, workspace, db_path, plan, topic, owner, intents, a
                     "--owner-session", owner]
         if intents["none"]:
             command.append("--intent-none")
-        else:
+        elif intents["intent_id"]:
             command += ["--intent-id", intents["intent_id"]]
         for key in sorted({str(item) for item in (resources or []) if _text(item)}):
             command += ["--resource", key]
@@ -3205,7 +3209,7 @@ class Progress:
                 "声明下一轮必须同时给 next_plan / topic / owner / intents / argv（五件，缺一不可）")
         topic_value = _need_name(topic, "topic")
         owner_value = _need_name(owner, "owner")
-        intent_value = _intent_declaration(intents)
+        intent_value = _intent_declaration(intents, root=self.root)
         argv_value = _argv_list(argv)
         if isinstance(next_plan, dict):
             plan_value = json.loads(json.dumps(next_plan))
@@ -3401,7 +3405,7 @@ class Progress:
         parts += ["--topic", topic, "--plan", plan_rel, "--owner-session", owner]
         if intents["none"]:
             parts.append("--intent-none")
-        else:
+        elif intents["intent_id"]:
             parts += ["--intent-id", intents["intent_id"]]
         parts += ["--", *argv]
         return parts
@@ -3459,7 +3463,7 @@ class Progress:
         except ProgressError as exc:
             declarations.append(str(exc))
         try:
-            intent_value = _intent_declaration(intents)
+            intent_value = _intent_declaration(intents, root=root)
         except ProgressError as exc:
             declarations.append(str(exc))
         try:
@@ -3860,7 +3864,7 @@ class Progress:
                    assurance_services=None, clock=None) -> dict:
         """跨轮下一轮：preflight + 出口/下一动作/停止的跨轮条件；一次只推进一轮。"""
         try:
-            normalized_intents = _intent_declaration(intents)
+            normalized_intents = _intent_declaration(intents, root=workspace or self.root)
         except ProgressError:
             normalized_intents = None
         normalized_argv = list(argv) if isinstance(argv, (list, tuple)) else None
