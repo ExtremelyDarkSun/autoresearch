@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: framework synchronization
-LAST-EDIT: 2026-11-09
+LAST-EDIT: 2026-11-09 本批：review v2、issues exp、questions、assurance、progress 跨轮预检与 D2 回复绑定
 PURPOSE: 当前框架升级的迁移范围与边界。
 ORIGIN: current source mechanisms, neutral extraction
-CUMULATIVE-DELTA: 研究、审计、读取与报告同步。
+CUMULATIVE-DELTA: 研究、审计、读取、报告、继续交接、普通提问、检查清单与进度推进同步；通用补项与部署未验分开。
 -->
 # 框架升级同步
 
@@ -42,6 +42,19 @@ CUMULATIVE-DELTA: 研究、审计、读取与报告同步。
 - 内核增加上下文纪律：交付一次、例外复核、规则集中发布、单一推进来源、核实停止工作的理由。没有增加生产守护程序或自动日志审查器。
 - agent 配置补齐工具替换要求：保留桩或同步移除宣传，检查替代路径成本和结果。特定比赛的历史实验数据不进入通用规则。
 - 主会话指令明确：有有效专项意图时才派监控，执行被拦时继续不依赖该执行的已授权工作。
+
+## 本批补齐（2026-11-09）
+
+| 能力 | 落点 | 边界 |
+|---|---|---|
+| E5 复盘继续交接 | `review_continuation.py` + `workflow.review` schema2 | 要求下一步判据/证据、`cost_scope`、`next_owner`、`needs_approval`；公开 review 默认 require2，旧格式 `--legacy-record` 且缺字段 unknown；等待批准是合法交接，不等于已批 |
+| E2 证据关联实验 | `issues.py --exp` / `status --exp` / `link`，`assurance` | `exp` 进查重键；旧无 exp 记录 unknown、显式空 unlinked；`link` 追加事件不改写 |
+| E4 统一检查清单 | `assurance.checklist` / CLI | 只读聚合 workflow/monitoring/decisions/issues/questions/reporting/review.continuation；含 audit / budget reservation / remote lease，共16项；未启动复用共享准入与资源投影，已启动展示历史绑定；检查不替代启动事务 |
+| E7 普通主动提问 | `questions.py` / CLI | 独立于审批；答复只认 Inbox 认证事件；默认 `blocking=false`，不是 D2；真实租户未验 |
+| D2 入向超期闸 | `progress.outcome advance` + `decisions.reply_status` / `progress_host.read_overdue` | 超期或不可判拒绝 advance；回复按 `source + event_id` 配对，同号异源不串，未指定 source 旧回执不算回复，非有限时间/grace 判不可判 |
+| A1 / §0.6 下一轮与阶段 | `progress preflight` / `next-round` / `schedule` | 只读给真实命令，不自动起进程、不新增 daemon；候选与 stage 显式或取冻结计划字段，不扫描生成计划；真实宿主唤醒/激活与机器空闲未验 |
+
+专项测试已过：E5 review v2 14 项、workflow 63、lifecycle 13、冷启动 6（已升 require_version2）、Questions 39、Issues 34、assurance 39（含冻结预算绑定与租约阶段）、progress advancement 29 + 原 progress 32、remote helper 17 + 原 47、D2 回复绑定 5 + decisions 47 + progress_host 34。这些不是最终聚合总数；完整计数以[验收记录](<VERIFICATION.md>)为准。真实租户、SSH/POSIX worker、AutoDL/比赛、模型输入注入与 goal activation 仍未验。
 
 ## 验证范围
 

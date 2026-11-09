@@ -1,6 +1,6 @@
 <!--
 GENERATED-BY: full expectations migration audit
-LAST-EDIT: 2026-11-09 主链与语义验收复核：宿主 goal 已实读、通道适配层已随仓库提供、冷启动集成与 V1–V3 合成语义核已跑；109 编号与顺序全部保留
+LAST-EDIT: 2026-11-09 通用补项整库验收：复盘v2、普通提问、16项检查与本地/远端下一轮预检；109编号与顺序保留，现场未验另列
 PURPOSE: 保留全部预期编号并作为迁移功能验收依据。
 ORIGIN: upstream FRAMEWORK_EXPECTATIONS_2026-10-10.md, current working content
 CUMULATIVE-DELTA: 2026-11-09 依据当前源码与实测复核逐项状态：workflow/reporting/monitoring/decisions/progress/progress_host/issues/admission/workspace/lifecycle/host_evidence/channels/backends
@@ -9,11 +9,12 @@ CUMULATIVE-DELTA: 2026-11-09 依据当前源码与实测复核逐项状态：wor
 -->
 # 按行为预期检查迁移完整性
 
-**结论：迁移仍未完成，但「没有模块」的差额已基本不存在。** 现在仓库里有**可调用的主入口与主链**：工作区初始化、专题真实隔离、共享预算、研究执行主链（含真实 cwd/venv 与自动生命周期投影）、人读页供料与验收、意图与过程监控、审批与入向、通道配置与收件、受管远端执行（协议 v2）、进度采集与受管推进器、宿主侧只读联动、问题台账、DSH 宿主证据核验。剩下的差额分三类：
+**结论：本次逐项复核发现的通用功能缺口已补齐，真实部署与语义验收仍未完成。** 现在仓库里有**可调用的主入口与主链**：工作区初始化、专题真实隔离、共享预算、研究执行主链（含真实 cwd/venv 与自动生命周期投影）、人读页供料与验收、意图与过程监控、审批与入向、通道配置与收件、受管远端执行（协议 v2）、进度采集与受管推进器、宿主侧只读联动、问题台账、普通提问台账、统一检查清单、DSH 宿主证据核验。验收证据分四类记录：
 
-1. **真实部署未验**：真实 SSH/POSIX 停止与机器空闲、远端代码/题单上传步骤、真实通道租户送达与收件、真实云机与平台提交——仓库不提供私有凭据与机器；
-2. **只有一次或合成证据的部分验收**：V1–V3 语义核（3 个合成案例、新 spawn 独立会话，V1 修订后通过）、冷启动集成 6 项、真实 DSH 独立审计与 scribe 单次探针；
-3. **语义纪律**：结论对不对、页面是否易读、审查是否有质量，机械检查证明不了。
+1. **通用补项已本地验收**：复盘交接、普通提问、实验关联、16项统一检查及本地/远端下一轮预检已落地；progress CLI 固定读真实 Inbox 超期源。这里的通过不代表真实部署完成；
+2. **真实部署未验**：真实 SSH/POSIX 停止与机器空闲、远端代码/题单上传步骤、真实通道租户送达与收件、真实云机与平台提交——仓库不提供私有凭据与机器；
+3. **只有一次或合成证据的部分验收**：V1–V3 语义核（3 个合成案例、新 spawn 独立会话，V1 修订后通过）、冷启动集成 6 项、真实 DSH 独立审计与 scribe 单次探针；
+4. **语义纪律**：结论对不对、页面是否易读、审查是否有质量，机械检查证明不了。
 
 操作命令见[怎么跑](<RUNNING.md>)；拆分落点见[迁移说明](<migration.md>)。验收依据是[中性化完整预期](<../kernel/contracts/framework_expectations.md>)，本文逐项保留 109 个编号与其顺序。
 
@@ -37,19 +38,21 @@ CUMULATIVE-DELTA: 2026-11-09 依据当前源码与实测复核逐项状态：wor
 | 简称 | 源码与当前能力 | 不能据此宣称什么 |
 |---|---|---|
 | G | [治理](<../kernel/autoresearch/governance.py>)、[审计状态](<../kernel/autoresearch/audit_state.py>)、[文件绑定](<../kernel/autoresearch/audit_support.py>) | 审查独立性、豁免、关闭策略只认宿主核过的证据；`declared` 不等于 verified |
-| W | [研究执行主链](<../kernel/autoresearch/workflow.py>)、[CLI](<../kernel/autoresearch/workflow_cli.py>)、[执行落点](<../kernel/autoresearch/execution_target.py>)、[生命周期投影](<../kernel/autoresearch/lifecycle.py>) | 闸绿只说明登记走了；生产 CLI 固定接 `Monitoring`/`DSHHost`/`Admission`/`ExecutionTarget`，不代表真实远端或真实评测器成本 |
+| W | [研究执行主链](<../kernel/autoresearch/workflow.py>)、[CLI](<../kernel/autoresearch/workflow_cli.py>)、[执行落点](<../kernel/autoresearch/execution_target.py>)、[生命周期投影](<../kernel/autoresearch/lifecycle.py>)、[review v2 交接](<../kernel/autoresearch/review_continuation.py>) | 闸绿只说明登记走了；生产 CLI 固定接 `Monitoring`/`DSHHost`/`Admission`/`ExecutionTarget`，不代表真实远端或真实评测器成本；review v2 的 `needs_approval=true` 只是交接声明 |
 | R | [人读页供料与验收](<../kernel/autoresearch/reporting.py>)、[CLI](<../kernel/autoresearch/reporting_cli.py>) | 页面八节/四段可校验；结论易读性与科学性仍靠写页者与人 |
 | N | [意图与过程监控](<../kernel/autoresearch/monitoring.py>)、[CLI](<../kernel/autoresearch/monitoring_cli.py>) | 没有宿主适配器时会话层不可判；报告形状合格不证明分析正确；V1–V3 只做过一次合成语义核 |
-| D | [审批与入向](<../kernel/autoresearch/decisions.py>)、[CLI](<../kernel/autoresearch/decisions_cli.py>)、[飞书适配层](<../kernel/autoresearch/channels/feishu.py>)、[通道 CLI](<../kernel/autoresearch/channels_cli.py>) | 双回执按台账重算；`doctor` 只读、`status`/`overdue`/`authorize-check` 走 `DecisionService.readonly`（不建表、不建目录）；`channels doctor/listen/poll` 与 `decisions --channel-config` 已可用，真实租户送达仍要有部署 |
-| P | [进度采集与推进器](<../kernel/autoresearch/progress.py>)、[宿主联动](<../kernel/autoresearch/progress_host.py>) | spec 与租约可核；goal 从会话事件只读重放，进程内 `activation` 仍未知；远端命令真实输出未验 |
-| I | [问题台账](<../kernel/autoresearch/issues.py>)、[CLI](<../kernel/autoresearch/issues_cli.py>) | 台账只证明完成记录；命令是否真跑过仍靠 agent / 人核 |
+| D | [审批与入向](<../kernel/autoresearch/decisions.py>)、[CLI](<../kernel/autoresearch/decisions_cli.py>)、[飞书适配层](<../kernel/autoresearch/channels/feishu.py>)、[通道 CLI](<../kernel/autoresearch/channels_cli.py>) | 双回执按台账重算；`doctor` 只读、`status`/`overdue`/`authorize-check` 走 `DecisionService.readonly`；`reply_status` / `read_overdue` 按 source+event_id 配对；真实租户送达仍要有部署 |
+| P | [进度采集与推进器](<../kernel/autoresearch/progress.py>)、[宿主联动](<../kernel/autoresearch/progress_host.py>)、[远端预检](<../kernel/autoresearch/progress_remote.py>) | 租约、D2 出口闸、preflight/next-round/schedule 可核；goal 从会话事件只读重放，`activation` 仍未知；远端分支已复用 RemoteWorkflow.check；完整资源检查器不可用时保持 unknown，不生成命令 |
+| I | [问题台账](<../kernel/autoresearch/issues.py>)、[CLI](<../kernel/autoresearch/issues_cli.py>) | 台账只证明完成记录；`--exp` 进查重并做 unlinked/unknown 投影；命令是否真跑过仍靠 agent / 人核 |
 | A | [执行准入](<../kernel/autoresearch/admission.py>) | 复用 `Accounts` 预算账本并核 `large`/`submission` 决策；**不含**远端资源租约 |
 | V | [宿主证据](<../kernel/autoresearch/host_evidence.py>)、[专题隔离](<../kernel/autoresearch/workspace.py>)、[Runtime](<../kernel/autoresearch/runtime/service.py>) | 仓库自带只读 DSH 核验器；单次探针不等于完整真实链路；隔离单元建好不等于依赖已装、评测已通 |
 | T | [专题协调](<../kernel/autoresearch/runtime/topics.py>)、[专题 CLI](<../kernel/autoresearch/runtime/topic_cli.py>) | 登记目录与分支不等于创建 worktree / 独立环境（那一步在 `workspace.py`） |
 | C | [统一 CLI](<../kernel/autoresearch/cli.py>)、[治理 CLI](<../kernel/autoresearch/governance_cli.py>) | `init` 只建指令与空库；子命令转发不等于端到端可用 |
 | S | [SSH 适配器](<../kernel/autoresearch/backends/ssh.py>)、[远端 worker](<../kernel/autoresearch/backends/ssh_worker.py>)、[受管远端](<../kernel/autoresearch/remote_workflow.py>)、[远端 CLI](<../kernel/autoresearch/remote_cli.py>) | 默认 `enabled=False`；`provision/submit/query/collect/cancel`、真实字节指纹与协议 v2 停止证据（`stop_verified` + `stop_evidence` + request/token/attempt 绑定 + `argv_sha256` 核冻结命令）已实现；本地 `start`、remote `claim` 与紧邻 `send` 用同一套事务内判据，TOCTOU 负例零 adapter 调用；`claim` 提交后、`send` 前调同一 `_lifecycle_call sync`，`running` / reporting / `AI_WORK` 立即生成，`unknown` 也保留投影，投影失败不伪终态也不阻 `cancel`。**真实 SSH / POSIX / 平台未验**；代码 / 题单 scp 上传到 `unit/code|input` 仍属独立部署步骤。⚠️ **停止边界**：worker 只核本 job 的进程组，不覆盖子进程主动 `setsid` 逃逸；更强隔离要部署 cgroup / namespace。Windows worker 无可靠组枚举 ⇒ `unknown`；Windows 本机安全用例是假 process + 真跨进程锁，真实 POSIX 仍 11 项 skip。⛔ 不能把 group-stop 等价成整台云机停止 |
+| Z | [统一检查清单](<../kernel/autoresearch/assurance.py>)、[CLI](<../kernel/autoresearch/assurance_cli.py>) | 只读汇总 workflow/monitoring/decisions/issues/questions/reporting/review.continuation；每项带 required/applicable/exp_link/source，未知不记绿。含 workflow.audit / budget.reservation / remote.lease；预算复用 Admission.check_budget，远端未启动核本地可用资源、已启动核实际租约；起跑仍由原事务闸相邻复核 |
+| Q | [普通提问台账](<../kernel/autoresearch/questions.py>)、[CLI](<../kernel/autoresearch/questions_cli.py>) | 普通提问独立于审批；入向答复只认 Inbox 已认证事件；默认 `blocking=false`；旧无 `exp_id` 记录投影 `unknown`，不改写、不猜关联 |
 
-关键调用点（读源码）：`workflow.launch` 在**同一个写事务**里复核计划版本、来源哈希、审计状态、监控状态与执行准入，并复核 before 快照收据，通过后才占用 `wf_runs` 并起子进程；`workflow` 的意图闸**只认** `Monitoring.check_start`（旧 `Governance.check_start` 不接生产双重拦截），执行落点由 `ExecutionTarget` 解析出专题真实 `cwd` 与独立 venv，`Lifecycle` 在 prepare/起跑/复盘时自动写快照、AI_WORK、收据与 reporting 事件。`reporting.ack` 只有带 `--proof-json` 才可能出现 `verified`，否则只记 `declared`。`decisions.status` 按台账重算双回执，手写 `success` 不被承认；`decisions.authorization_check` 用 `execution_core` 对**这一份实际 plan** 重算指纹（argv / implementation / budget / case_sets 全保留）。`budget` 的 grant 在 `authorize` 的同一个 `BEGIN IMMEDIATE` 事务里先核 `trusted_ordering`（可信 session / seq / 宿主时间）再建实验，被拒整体回滚、零副作用；较新的 revoke 不能被迟到的旧 renew 复活。`issues` 的每次写都在 `BEGIN IMMEDIATE` 里重算哈希链。`admission` 与远端 Runtime 共用同一张 `budget_reservations`；`remote_workflow` 按计划 `authorization.scope` 构造 `Runtime(budget_scopes=(scope,))`，执行层核的就是授权那笔预留。`progress_host` 的 goal 来自 DSH 会话 `goal/change` 事件只读重放（projcache 只作诊断），`activation` 是进程内状态、从不落盘。
+关键调用点（读源码）：`workflow.launch` 在**同一个写事务**里复核计划版本、来源哈希、审计状态、监控状态与执行准入，并复核 before 快照收据，通过后才占用 `wf_runs` 并起子进程；`workflow` 的意图闸**只认** `Monitoring.check_start`（旧 `Governance.check_start` 不接生产双重拦截），执行落点由 `ExecutionTarget` 解析出专题真实 `cwd` 与独立 venv，`Lifecycle` 在 prepare/起跑/复盘时自动写快照、AI_WORK、收据与 reporting 事件。公开 `workflow review` CLI 默认要求 schema2 的 `continuation`（判据证据、cost_scope、next_owner、needs_approval），旧格式 `--legacy-record` 只投影 unknown。`reporting.ack` 只有带 `--proof-json` 才可能出现 `verified`，否则只记 `declared`。`decisions.status` 按台账重算双回执，手写 `success` 不被承认；`decisions.authorization_check` 用 `execution_core` 对**这一份实际 plan** 重算指纹（argv / implementation / budget / case_sets 全保留）。`budget` 的 grant 在 `authorize` 的同一个 `BEGIN IMMEDIATE` 事务里先核 `trusted_ordering`（可信 session / seq / 宿主时间）再建实验，被拒整体回滚、零副作用；较新的 revoke 不能被迟到的旧 renew 复活。`issues` 的每次写都在 `BEGIN IMMEDIATE` 里重算哈希链，`--exp` 进查重键。`progress.outcome` 的 `advance` 先核只读 `read_overdue`（source + event_id 配对），超期或不可判即拒；`preflight`/`next-round`/`schedule` 只读给命令。`assurance.checklist` 只读聚合各层，未知不记绿。`admission` 与远端 Runtime 共用同一张 `budget_reservations`；`remote_workflow` 按计划 `authorization.scope` 构造 `Runtime(budget_scopes=(scope,))`，执行层核的就是授权那笔预留。`progress_host` 的 goal 来自 DSH 会话 `goal/change` 事件只读重放（projcache 只作诊断），`activation` 是进程内状态、从不落盘。
 
 ## 逐项验收
 
@@ -57,7 +60,7 @@ CUMULATIVE-DELTA: 2026-11-09 依据当前源码与实测复核逐项状态：wor
 
 | 编号 | 状态 | 实际能力与缺口 |
 |---|---|---|
-| A1 | 部分 | `progress tick/watch/rearm/outcome` 已能跑一轮并在需要时唤醒；「一轮结束后自动开下一轮」仍要靠负责人显式 `rearm`，没有常驻循环。 |
+| A1 | 部分 | 本轮完成后有只读 `preflight` / `next_round`：复用 `Workflow.check` 同判据，返回真实 launch 命令；**不自动起进程、不新增常驻 daemon**，主会话/宿主执行。真实宿主唤醒与推进激活未验。 |
 | A2 | 本地实现 | `progress status` 显示阻塞项与恢复命令；缺推进来源时写 `progress_unavailable` 事件，并给出 `rearm` 动作。 |
 | A3 | 本地实现 | `watch` 不设固定寿命：叫醒一次就退出并写 `needs_rearm`，不会到点静默退出。 |
 | A4 | 部分 | 静默窗口（`spec.quiet.window_sec`）与唤醒事件已实现；「受管作业真的叫醒负责人」要宿主登记（`progress-host register`），宿主回传未验。 |
@@ -81,17 +84,17 @@ CUMULATIVE-DELTA: 2026-11-09 依据当前源码与实测复核逐项状态：wor
 | C5 | 已退役 | 专门联络子会话已取消。 |
 | C6 | 已退役 | 专门联络子会话已取消。 |
 | D1 | 部分 | `decisions overdue` 给 300 s + 4 s 的回复窗口诊断，并可按事件定位；「自动回复」不是本层职责。 |
-| D2 | 部分 | 超期入向会让 `progress` 的 `overdue` 维度优先触发唤醒；「持续推进拒绝假绿」在 `hook` 侧只有判词，缺统一入口强制。 |
+| D2 | 本地实现 | 超期入向让 `progress` 的 `overdue` 维度优先；`outcome advance` 落账前核只读 Inbox（`_require_no_overdue`），超期或不可判即拒并指明先回复用户；安全收尾用显式 `safe_action`。回复按 `source + event_id` 配对，同号异源不串，未指定 source 的旧回执不算已回复；`event_time/now/grace` 非有限或非正判不可判。普通提问（我们→用户）默认 `blocking=false`，不是 D2。真实通道入向未验。 |
 | D3 | 部分 | `inbox` 台账 + 受管 `watch` 能承载投递；`channels doctor/listen/poll` 与 `decisions --channel-config` 已提供，验签与加密入向可离线跑通，真实通道订阅与叫醒未验。 |
 | D4 | 本地实现 | 卡点击按执行/拒绝处理并留回执，不再排队等文本回复（`CARD_CLICK_INTENTS`）。 |
 | D5 | 宿主相关 | 群聊触达条件（@、白名单等）属通道适配；适配层可离线核验签、允许列表与加密事件，真实群聊触达仍须部署实测。 |
 | E1 | 部分 | 页面更新、整轮回执、原始证据保存都有入口（`reporting`）；「聊天结论可单独理解」仍是语义判断。 |
-| E2 | 部分 | 运行事件与实验号关联；证据检查的**统一台账汇总**仍未收口。 |
+| E2 | 本地实现 | 运行事件带实验号；`issues record --exp` 进查重键，旧无 `exp_id` 记录投影 `unknown`、显式空为 `unlinked`，`link` 追加关联不改写；`assurance.checklist` 汇总 reporting/monitoring/decisions/issues 的 exp 关联并列出 `unlinked`。assurance 的 audit/budget/remote 三项补丁另计（见 E4）。 |
 | E3 | 部分 | 计划要求 `baseline`，比较检查同题同条件；缺旧阶段统一入口（旧闸不恢复）。 |
-| E4 | 部分 | 事件追加与 `process-status` 投影可用；「当前必需检查清单」尚无统一汇总视图。 |
-| E5 | 部分 | `progress outcome` 要求写明下一动作与下一条件，`reporting round-check` 要求整轮终态与负责人判断；成本作用域与「是否需批准」缺统一字段。 |
+| E4 | 本地实现 | `assurance.checklist` + CLI 已按 exp 汇总 workflow/monitoring/decisions/issues/questions/reporting/review.continuation 的 ok/blocked/unknown、required/applicable 与 source，未知不记绿；另含 workflow.audit、budget.reservation、remote.lease：预算与实际起跑复用同一判据，远端按未启动/已启动/已结束分阶段投影；未知不算通过，检查不签发授权或占资源。 |
+| E5 | 本地实现 | `workflow review` schema2 必须填 continuation：下一步判据 + 证据、`cost_scope`、`next_owner`、`needs_approval` + 理由；公开 review 默认 `require_version=2`，旧格式需显式 `--legacy-record` 且缺失字段投影 `unknown`。下一步写「等待批准」是合法交接，不代表已批；执行前仍由 `Admission` / decisions 核真实批准。 |
 | E6 | 仅规则 | 计划契约含研究设计要求；「从判据反推要改变的量」没有强制材料。 |
-| E7 | 部分 | `reporting input` 登记用户要求与整轮判断，`decisions inbox` 关联回复；主动提问仍缺统一落盘入口。 |
+| E7 | 本地实现 | `questions ask/open/answer/declare/enqueue/link/expire/cancel` 独立于审批；答复只认 Inbox `authenticate` 过的入向事件，并要求问题号或已送达消息绑定；默认 `blocking=false`，不是 D2。专项含本地 FeishuChannel 认证与公开 CLI 子进程，无出网；真实租户与真实用户回复未验。 |
 | E8 | 部分 | `decisions prepare` 有 `needs_user` 与 `hook` 判词；显式表态的语义仍靠人或 agent。 |
 | F1 | 语义纪律 | 已有正式审批链入口；「不许只在会话界面提问」仍要人/agent 遵守。 |
 | F2 | 语义纪律 | 编号校验可做，内容归属仍须读内容。 |
@@ -173,7 +176,7 @@ CUMULATIVE-DELTA: 2026-11-09 依据当前源码与实测复核逐项状态：wor
 |---|---|
 | §0 | 事前材料 → 起跑 → 结束 → 分析 → 报告 → 下一步**已有入口**（`workflow` + `reporting` + `progress`）；冷启动集成 6 项已在**同一个空工作区**跑通：公开 `init` → 真实 Git/venv → 真实 Monitoring → `Accounts`/`Admission` → `DSHHost` 解析合成日志的独立审计 → 真实子进程 → 复盘 → 生命周期快照与报告投影 → scribe 字节回演 `ack verified`；随后第二轮在同一 `series-small` 上另预留 3（`budget.max_cost_units=3`）真实跑通，账户 `reserved_units=6`、`spent_units=0`，两笔 unknown 成本都保持 `reserved` 不结算；第三轮因未复盘被拒。真实云机 / 平台 / 通道的端到端冷启动未做。 |
 | §0.5 | 有 `declared` / `verified` 两级与纪律边界；「代码 / agent / 人三层自动」的自进化闭环仍只有局部工具（问题台账 + 文档冷件 + 经验确认）。 |
-| §0.6 | 有预算预留、同题比较与调度器资源租约；远端主链已完成代码与专项验收（同一笔 `authorization` 预留、协议 v2 停止证据、事务内 TOCTOU 复核），但真实 SSH / POSIX / 机器空闲与代码 / 题单上传步骤未验；`ExecutionTarget` 对本地入口的 `scope!=local` 与 `resource_kind!=cpu` 直接拒。四阶段节奏、并行五边界与单机退让仍靠人判断，没有统一入口。 |
+| §0.6 | 部分 | `progress preflight` / `next_round` / `schedule`：候选与 stage 由调用方显式给，或取冻结计划的 `research.stage` / `stage` / `execution.stage`；**不扫描生成计划、不猜科学计划**。每个候选只读核审计/监控/准入/预算/资源租约并按阶段排序；真实机器空闲、五边界与单机让位仍属部署/人工判断。 |
 | §8 | 事务停止、起跑核材料、审批页先行都有入口；「304 秒内接住用户」「先 HTML 后卡」的真实送达与 12 小时整批成本仍未端到端验收。 |
 | §9 | **问题台账已实现**（首错登记、精确查重、显式负责人、修复、复验 argv+退出码、冷件不覆盖、失败可诊断）；语义判断（这个错算不算同一个、修得对不对）仍由 agent / 人核。 |
 | 专题 | 有真实隔离单元（worktree + venv + 文档 + 前后快照）与归属/世代/交接；「远端隔离与依赖装好」仍需实验适配器核查。 |
@@ -181,10 +184,11 @@ CUMULATIVE-DELTA: 2026-11-09 依据当前源码与实测复核逐项状态：wor
 
 ## 补齐顺序与完成判据
 
-1. **本地夹具已验的接线**：统一监控（唯一意图权威）、占用事务内复核、执行规范全对象审批绑定、宿主 goal 持久事件重放、独立 cwd/venv、自动生命周期 / 报告投影、通道 `doctor/listen/poll` 与 `decisions --channel-config`、预算可信时序 / fence、自然语言 close 两路、受管远端（同一笔预算、协议 v2 停止证据、`argv_sha256`、事务内 TOCTOU）都有专项测试与合成夹具证据。
-2. **真实部署待现场验收**：真实通道租户送达 / 收件与回复；真实 SSH / POSIX 停止、机器空闲与远端代码 / 题单上传步骤；真实云机 / 平台提交。这些仍须部署方提供凭据、机器与现场证据。
-3. **完整冷启动的真实版本**：合成冷启动 6 项已过；还需从 clone + 空工作区跑真实云机 / 平台 / 通道，并区分合成离线 / 真实宿主 / 真实远端 / 真实通道四种证据。
-4. **语义纪律的执行记录**：结论条件、页面可读性、审查质量由 agent 主动完成并留原始材料；V1–V3 只是 3 个合成案例的一次独立核，不是生产 JSON 端到端。
+1. **本批通用补项已验收**：统一检查已补审计、共享预算与远端租约，progress CLI 超期源固定只读真实 Inbox，远端预检与真实 assurance 组合通过；仍需执行前的事务复核与部署验收。
+2. **本地夹具已验的接线**：统一监控（唯一意图权威）、占用事务内复核、执行规范全对象审批绑定、宿主 goal 持久事件重放、独立 cwd/venv、自动生命周期 / 报告投影、通道 `doctor/listen/poll` 与 `decisions --channel-config`、预算可信时序 / fence、自然语言 close 两路、受管远端（同一笔预算、协议 v2 停止证据、`argv_sha256`、事务内 TOCTOU）、review v2 交接、普通提问、问题 exp 关联、D2 出口闸、progress preflight/next-round/schedule 均有专项测试与合成夹具证据。
+3. **真实部署待现场验收**：真实通道租户送达 / 收件与回复；真实 SSH / POSIX 停止、机器空闲与远端代码 / 题单上传步骤；真实云机 / 平台提交。这些仍须部署方提供凭据、机器与现场证据。
+4. **完整冷启动的真实版本**：合成冷启动 6 项已过；还需从 clone + 空工作区跑真实云机 / 平台 / 通道，并区分合成离线 / 真实宿主 / 真实远端 / 真实通道四种证据。
+5. **语义纪律的执行记录**：结论条件、页面可读性、审查质量由 agent 主动完成并留原始材料；V1–V3 只是 3 个合成案例的一次独立核，不是生产 JSON 端到端。
 
 **「功能迁移完整」的判据**：全部适用要求都有证据。个人配置（通道、机器、比赛资料）缺失本身合理；**通用功能缺失不能归为「只需填配置」**，也不能靠「让 agent 补一段代码」把首次可用性补圆。
 
@@ -192,18 +196,19 @@ CUMULATIVE-DELTA: 2026-11-09 依据当前源码与实测复核逐项状态：wor
 
 - 【实测】`python -X utf8 -B tools/check_repository.py`：UTF-8、语法、已知私人值签名与文档链接检查**无错误**。它不证明不存在未列入规则的私人信息。
 - 【自查】验收表 109 个编号、顺序与预期表一致，无漏号/重号。
-- 【实测】`python -X utf8 -B research.py selftest --plugins` 通过：运行时、其余 unittest 与三个插件自检全部通过；POSIX 远端用例在 Windows 跳过。具体计数以[验收记录](<VERIFICATION.md>)为准。
-- 【实测】冷启动 6 项：同一空工作区经公开 `init`、真实 Git/venv、真实 Monitoring、`Accounts`/`Admission`、`DSHHost` 解析合成日志的独立审计、真实子进程、复盘、自动快照/报告投影与 scribe 字节回演 `ack verified`；第二轮在同一 `series-small` 另预留 3 并真实运行，账户 `reserved_units=6`、`spent_units=0`，两笔 unknown 成本都保持 `reserved`，第三轮因未复盘被拒。夹具是合成的，不当作生产授权。
+- 【历史】`python -X utf8 -B research.py selftest --plugins` 曾全绿；本批新增专项见下，未把新旧测试合成最终总数。具体计数以[验收记录](<VERIFICATION.md>)为准。
+- 【本批专项】E5 的 review v2（schema2：criterion/evidence/cost_scope/next_owner/needs_approval；公开 review 默认 require2、`--legacy-record` 保 unknown）、workflow、lifecycle、冷启动（已升 `require_version2`）专项通过；Questions 39 项（本地 FeishuChannel 认证 + 公开 `questions answer --channel-config` 子进程，无出网）、Issues 34 项（旧无 exp 兼容、exp 查重、append link）通过；assurance 39 项、progress advancement 29 项（含真实远端 helper + assurance 组合与 CLI 静态快照拒绝）、原 progress 32、remote helper 17 + 原 remote 47、D2 回复绑定 5 + decisions 47 + progress_host 34 通过。各模块计数不是最终聚合，总数以[验收记录](<VERIFICATION.md>)为准。
+- 【实测】冷启动 6 项：同一空工作区经公开 `init`、真实 Git/venv、真实 Monitoring、`Accounts`/`Admission`、`DSHHost` 解析合成日志的独立审计、真实子进程、**review v2**、自动快照/报告投影与 scribe 字节回演 `ack verified`；第二轮在同一 `series-small` 另预留 3 并真实运行，账户 `reserved_units=6`、`spent_units=0`，两笔 unknown 成本都保持 `reserved`，第三轮因未复盘被拒。夹具是合成的，不当作生产授权。
 - 【实测】V1–V3 合成语义核：新 spawn 独立会话读 3 个案例；V2 识别 7/10 被写成 9/10 并阻断，V3 合理探索负例放行；V1 **修订后**通过（首次报告在 assessment 提到截止后数据）。不是生产 JSON 端到端，也不证明一次通过或机械隔离。
 - 【已实测的真实宿主探针】① 独立子会话：固定 JSON 报告的 spawn / 父子绑定 / 原文逐字相等均 `verified`；② 实际 scribe 从空工作区经 init + provision + prepare 写到 `functions.write` 整页，`DSHHost.ack` 回 `verified=true`、`session_verified=true`、`delivery_verified=false`，八节校验无错。**单次探针不等于完整真实云实验。**
 - 【已实测的真实宿主探针】③ `HostAdapter.verify_job`：真实 `DSHHost` 读持久日志，对实际后台测试命令 + jobId 做精确唯一绑定，返回 `verified=true`、来源为宿主持久日志、工具为 pwsh。它只证明**作业登记所需的来源绑定**，不证明 watch 真叫醒负责人或作业仍存活；输出只有聚合，不含日志 / 会话正文。
 - 【已实测】自然语言 close：`monitoring close --user-quote`（内联 JSON / `@文件` / `--user-quote-file`，`{session,seq,text}`）与旧 `--proof` / `--proof-seq` 互斥，已用真实 `DSHHost` 读合成 spawn / 用户日志核过；独立报告要 current + 新 spawn，`closure.user_command` 与用户原话同条绑定；`withdrawn` / `replaced` 可用，`achieved` / `unsatisfiable` 不能靠原话绕过。日志是合成夹具。
-- 【未验】真实通道租户送达与收件、真实 SSH / POSIX 停止与机器空闲、远端代码 / 题单上传步骤、真实云机与平台提交、`progress-host` 的 activation 语义（进程内仍标 unknown）、受管 job 的真叫醒与存活。⚠️ 停止只到**本 job 进程组**：子进程主动 `setsid` 逃逸不在覆盖内，更强隔离要部署 cgroup / namespace；Windows 无可靠组枚举判 `unknown`，不能把 group-stop 当成整台云机停止。本文没有宣称这些通过。
+- 【未验】真实通道租户送达与收件、真实 SSH / POSIX 停止与机器空闲、远端代码 / 题单上传步骤、真实云机与平台提交、当前模型请求的实际完整注入、`progress-host` 的 activation 语义（进程内仍标 unknown）、受管 job 的真叫醒与存活。⚠️ 停止只到**本 job 进程组**：子进程主动 `setsid` 逃逸不在覆盖内，更强隔离要部署 cgroup / namespace；Windows 无可靠组枚举判 `unknown`，不能把 group-stop 当成整台云机停止。本文没有宣称这些通过。
 
 ## 本轮范围
 
-本轮迁移把研究执行主链、执行准入与共享预算、意图与过程监控、人读页供料与验收、通道配置与收件、受管远端执行（含协议 v2 与事务内 TOCTOU 复核）、生命周期投影、宿主证据核验和问题台账接成可调用入口，并保留 109 个编号的逐项验收。
+本轮迁移把研究执行主链、执行准入与共享预算、意图与过程监控、人读页供料与验收、通道配置与收件、受管远端执行（含协议 v2 与事务内 TOCTOU 复核）、生命周期投影、宿主证据核验、问题台账、普通提问台账和统一检查清单接成可调用入口，并保留 109 个编号的逐项验收。
 
-**通用实现仍有缺口**：E2/E4 的实验关联检查汇总、E5 的成本与下一步审批统一字段、E7 的普通主动提问记录，以及 D2/A1/§0.6 的统一推进检查与跨专题阶段排序尚未形成完整入口。这些不能归为部署配置缺失，也不能因本轮测试通过改判为完整迁移。
+**本次逐项复核发现的通用实现缺口已补齐并通过整库回归**：统一检查、复盘交接、普通提问、D2 继续推进检查、本地/远端预检和显式阶段排序都有实际入口。E2/E5/E7/D2/A1/§0.6 已有实际入口与专项测试，但真实部署、真实宿主唤醒/激活、真实租户与部分验收仍按上表记待验，不因本轮测试通过改判为完整迁移。
 
 **真实部署仍待验收**：真实通道租户、真实 SSH / POSIX 停止与机器空闲、远端代码 / 题单上传步骤、真实云机与平台提交。部分验收项已在上面逐条标注。合成夹具和单次探针不替代现场验收；旧终点闸也不恢复为必跑条件。

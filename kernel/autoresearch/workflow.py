@@ -1,10 +1,11 @@
 # GENERATED-BY: research execution main chain migration, 2026-11-09
-# LAST-EDIT: 2026-11-09 18:10 只读连接（_ReadOnlyStore / _read_conn）改走 runtime.store.ReadonlyStore
+# LAST-EDIT: 2026-11-09，schema_version=2 复盘交接；历史复盘保留 unknown，不改写旧记录
 # PURPOSE: 一次研究执行的主链 —— 事前四锚点与冻结、来源哈希过期、统一起跑闸（审计 / 意图 / 监控 / 实际 argv）、
 #          append-only 生命周期、真实结束原因与退出码、复盘验收与前轮阻断。本地 runner 只用显式 argv 数组、无 shell。
 # ORIGIN: 抽取自 AutoDL实验/tool/ai_work.py（prepare / check_start / start / finish / review 的通用逻辑）
 #         与 AutoDL实验/tool/exp_launch.py（先检查后起跑、传递真实退出码）；⛔ 不含专题号、机器、读数、渠道、预算值。
-# CUMULATIVE-DELTA: 首版。竞争无关：比赛语义留给 profile 与调用方的 argv/来源清单。
+# CUMULATIVE-DELTA: 2026-11-09 增加复盘v2下一步信息与真实判据来源；旧复盘兼容但缺项明确 unknown。
+#   首版竞争无关：比赛语义留给 profile 与调用方的 argv/来源清单。
 #   2026-11-09：`_ReadOnlyStore` 与 `_read_conn` 不再自己拼 `?mode=ro`，委托 `runtime.store.ReadonlyStore`
 #   （WAL 库按 sidecar 实况选 mode=ro / immutable=1，只读不创建 -shm/-wal；-wal 有 -shm 缺判不可判）。
 
@@ -153,6 +154,7 @@ from kernel.autoresearch.governance import (  # noqa: E402  (先补 sys.path 再
     GovernanceError,
     validate_plan,
 )
+from kernel.autoresearch.review_continuation import project as project_continuation, validate as validate_continuation
 from kernel.autoresearch.execution_target import ExecutionTarget  # noqa: E402
 from kernel.autoresearch.runtime.store import ReadonlyStore, Store, canonical_json  # noqa: E402
 from kernel.autoresearch.runtime.topics import Topics, TopicsError  # noqa: E402
@@ -1796,7 +1798,7 @@ class Workflow:
         if reason == "launch_error" and exitcode == 0:
             raise WorkflowError("reason=launch_error 的退出码不能是 0", code=2)
 
-    def review(self, *, run_id, record=None, actor="main", **fields):
+    def review(self, *, run_id, record=None, actor="main", require_version=None, **fields):
         """复盘验收：必须已有结束记录；事前计划未被改写；证据哈希；判决落账到专题主文档。"""
         self._require_write()
         if not _filled(run_id):
@@ -1824,6 +1826,10 @@ class Workflow:
             raise WorkflowError("review 需要 record（JSON 路径或 dict）", code=2)
         if not isinstance(payload, dict):
             raise WorkflowError("复盘记录必须是 JSON 对象", code=2)
+        if require_version is not None and (type(require_version) is not int or require_version != 2):
+            raise WorkflowError('require_version 只支持 2 或 None', code=2)
+        if require_version == 2 and (type(payload.get('schema_version')) is not int or payload.get('schema_version') != 2):
+            raise WorkflowError('新复盘必须使用 schema_version=2，填写下一步判据、成本、负责人及审批需要；历史导入请显式选择兼容模式', code=2)
 
         problems = []
         for key in ("result_summary", "verdict", "branch", "next_action", "deviations"):
@@ -1843,8 +1849,17 @@ class Workflow:
                     evidence_refs.append(self._file_ref(ref, f"review.evidence[{index}]"))
                 except WorkflowError as exc:
                     problems.append(str(exc))
+        continuation_refs = []
+
+        def continuation_source(ref, label):
+            checked = self._file_ref(ref, label)
+            continuation_refs.append(dict(checked, purpose='next_action_criterion'))
+            return checked
+
+        problems.extend(validate_continuation(payload, file_ref=continuation_source))
         if problems:
             raise WorkflowError("复盘记录不合规：" + "；".join(problems), problems, code=2)
+        evidence_refs.extend(continuation_refs)
 
         with self._with_conn() as conn:
             run = self._one(conn, "SELECT * FROM wf_runs WHERE run_id=?", (run_id,))
@@ -1914,7 +1929,8 @@ class Workflow:
                   "verdict": payload["verdict"], "branch": payload["branch"],
                   "next_action": payload["next_action"], "evidence": evidence_refs,
                   "record_source": record_source, "record_sha256": record_sha,
-                  "hypothesis_update": update_ref}
+                  "hypothesis_update": update_ref,
+                  "continuation": project_continuation(payload)}
         # 复盘已落库后才发事件：**通知失败不回滚复盘、也不改退出码**。
         context = {'topic': run['topic'], 'plan_id': run['plan_id'], 'run_id': run_id}
         result['lifecycle_after'] = self._lifecycle_call('after', 'after', context, run_id)
@@ -2017,7 +2033,8 @@ class Workflow:
                         "reviewed": review is not None,
                         "review": (None if review is None else {
                             "verdict": review["verdict"], "branch": review["branch"],
-                            "next_action": review["next_action"]})}
+                            "next_action": review["next_action"],
+                            "continuation": project_continuation(json.loads(review["record_json"]))})}
                 rows_out["runs"].append(item)
                 if finish is not None and review is None:
                     rows_out["pending_reports"].append(run["run_id"])

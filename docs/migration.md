@@ -1,16 +1,16 @@
 <!--
 GENERATED-BY: repository bootstrap, 2026-11-09 +08:00
-LAST-EDIT: 2026-11-09 主链复核：补 lifecycle / execution_target / channels / SSH 后端落点；把已接线的三项移出在途表，保留远端、资源租约与通道入口的待验边界
+LAST-EDIT: 2026-11-09 本批落点：补 review v2、issues exp、questions、assurance、progress 跨轮预检/阶段排序与 D2 回复绑定；通用补项与真实部署分开
 PURPOSE: 说明实际拆分落点、保留机制和运行边界。
 ORIGIN: extraction inventory and direct source inspection
-CUMULATIVE-DELTA: 2026-11-09 补主链新模块（workflow/reporting/monitoring/decisions/progress/progress_host/issues/host_evidence/workspace/admission/lifecycle/execution_target/channels/backends）
-的落点与真实边界；不再用「在途」表述已接通的接线；只剩真实部署待验：通道租户、SSH/POSIX/机器空闲/上传、云机/平台、真实冷启动；保留实例内容不进仓库的口径。
+CUMULATIVE-DELTA: 2026-11-09 补主链新模块（workflow/reporting/monitoring/decisions/channels/progress/progress_host/issues/assurance/questions/review_continuation/host_evidence/workspace/admission/lifecycle/execution_target/backends/remote）
+的落点与真实边界；assurance 的审计/预算/租约三项与 progress CLI 可信超期源已组合验收；真实部署待验单独列；保留实例内容不进仓库的口径。
 -->
 # 迁移与拆分说明
 
 这次交付是独立的新 Git 项目。原项目继续保留，新项目不读取原项目的数据库、实验目录、当前比赛配置或凭据文件。
 
-**按完整行为预期验收，功能迁移仍未完成。** 本地执行、预算、审计、监控、报告、消息通道和受管远端已形成实际入口，并有专项测试。但统一检查汇总、成本与审批复盘字段、普通主动提问记录、下一轮统一检查和跨专题阶段排序仍需补齐。它们属于通用实现缺口，不能算作填配置即可解决。真实部署、语义判断和单次探针的局限也单独保留。逐项见[109 项功能迁移验收](<EXPECTATIONS_ACCEPTANCE.md>)；验收依据见[中性化完整预期](<../kernel/contracts/framework_expectations.md>)。
+**按完整行为预期逐项验收，本批发现的通用功能缺口已补齐。** 本地执行、预算、审计、监控、报告、消息通道、受管远端、复盘交接、普通提问、问题 exp 关联和进度推进已形成实际入口，并有专项测试。统一检查已含审计、共享预算和远端租约，progress CLI 固定读可信 Inbox 超期源；远端预检已与真实 assurance 组合通过。真实部署、语义判断和单次探针的局限也单独保留。逐项见[109 项功能迁移验收](<EXPECTATIONS_ACCEPTANCE.md>)；验收依据见[中性化完整预期](<../kernel/contracts/framework_expectations.md>)。
 
 ## 内核、agent 比赛配置、其他
 
@@ -32,11 +32,14 @@ CUMULATIVE-DELTA: 2026-11-09 补主链新模块（workflow/reporting/monitoring/
 | **只读服务构造** | `runtime/store.py`、`decisions.py`、`decisions_cli.py` | **新实现**：`DecisionService.readonly(db)` / `ReadonlyStore` 用 `mode=ro` + `query_only`，不建表、不建目录、不装通道台账；缺库 / 旧 schema 判不可判，不冒充通过 |
 | **人读页供料与验收** | `reporting.py`、`reporting_cli.py` | **新实现**：完整供料包（来源正文 + 旧页全文 + 缺项补读）、八节/四段校验、scribe 回执、整轮交付、checkpoint 时效、流程状态投影；回执分 `declared` / `verified` |
 | **意图与过程监控（完整报告形状）** | `monitoring.py`、`monitoring_cli.py` | **新实现**：四态、三触发、两水位、独立子会话报告核验（fork / 自造 JSON 拒）、意见逐条处置、跨报告阻断、四理由闭合、启动前只读检查；close 两路（旧 proof / 自然语言 `--user-quote`）都可用，原话与独立报告同条绑定，`achieved` / `unsatisfiable` 不能靠原话绕过 |
-| **审批与入向** | `decisions.py`、`decisions_cli.py` | **新实现**：自包含审批页（六块 + 每方案 13 字段 + 执行规范全对象绑定）、先页后卡、双回执按台账重算、两小时未批准取消、文字回复 300 s 窗口、入向 `inbox`/`reply`/`hook`；`status`/`overdue`/`authorize-check` 只读 |
+| **审批与入向** | `decisions.py`、`decisions_cli.py` | **新实现**：自包含审批页（六块 + 每方案 13 字段 + 执行规范全对象绑定）、先页后卡、双回执按台账重算、两小时未批准取消、文字回复 300 s 窗口、入向 `inbox`/`reply`/`hook`；`status`/`overdue`/`authorize-check` 只读；`reply_status` / `read_overdue` 按 `source + event_id` 配对，同号异源不串，未指定 source 的旧回执不算已回复，非有限时间/grace 判不可判 |
 | **真实 HTTP 通道 + 命令行** | `channels/feishu.py`、`channels/crypto.py`、`channels_cli.py`、`requirements-feishu.txt`、`decisions_cli.py --channel-config` | **新实现**：飞书发送 / 回执 GET 复核 / 验签 / 入向标准化；`doctor` 只读不建库、`listen` 缺解密后端时起服务前 exit 2 且不建库、`poll` 一次性；AES-256-CBC 解密是可选依赖（`cryptography`），缺它不降级；**真实租户未验** |
-| **进度采集与受管推进器** | `progress.py`、`progress_cli.py` | **新实现**：声明式闭集 spec、采集/比较、租约 fencing、静默窗口、一次唤醒即退出并写 `needs_rearm`、三出口 `outcome`、采集失败 fail-closed |
+| **进度采集与受管推进器** | `progress.py`、`progress_cli.py` | **新实现**：声明式闭集 spec、采集/比较、租约 fencing、静默窗口、一次唤醒即退出并写 `needs_rearm`、三出口 `outcome`、采集失败 fail-closed；`outcome advance` 有 D2 入向超期闸（回复按 source + event_id 配对，未指定 source 的旧回执不算回复）；`preflight` / `next-round` / `schedule` 只读给命令、排序显式候选，不自动起进程或新增 daemon |
+| **跨轮交接与检查清单** | `review_continuation.py`、`assurance.py`、`assurance_cli.py` | **新实现**：review v2 要求下一步判据/证据、cost_scope、next_owner、needs_approval（旧记录 legacy unknown）；assurance 只读聚合 workflow/monitoring/decisions/issues/questions/reporting/review.continuation。**另含 audit/budget/remote lease，按未启动/已启动阶段复用真实预算与本地资源投影** |
+| **普通提问台账（E7）** | `questions.py`、`questions_cli.py` | **新实现**：普通提问独立于审批；答复只认 Inbox 已认证事件；默认 `blocking=false`；旧无 exp 记录 unknown、不迁移改写 |
+| **远端进度预检** | `progress_remote.py` | **新实现**：`progress.preflight` 远端分支复用 `RemoteWorkflow.check`；真实预算/治理/统一检查组合通过，命令固定 remote start，完整检查器缺失时不降级生成命令 |
 | **宿主侧联动（goal / 超期 / job）** | `progress_host.py`、`progress_host_cli.py` | **新实现**：DSH goal 重放、超期只读库、受管 job 登记（先核 exact 命令 + jobId）；固定 deployment 配置；只读宿主 |
-| **问题台账（§9）** | `issues.py`、`issues_cli.py` | **新实现**：哈希链 append-only、`command+scope` 精确查重（可选显式 `dedupe_key`，⛔ 不模糊合并）、显式 owner、修复/复验（argv + 退出码）、冷件不覆盖、失败留诊断 |
+| **问题台账（§9）** | `issues.py`、`issues_cli.py` | **新实现**：哈希链 append-only、`command+scope+exp` 精确查重（可选显式 `dedupe_key`，⛔ 不模糊合并）、旧无 exp 记录投影 unknown、`link` 追加关联、显式 owner、修复/复验（argv + 退出码）、冷件不覆盖、失败留诊断 |
 | **宿主证据核验（DSH 会话日志）** | `host_evidence.py` | **新实现**：只读真实日志根（默认 `~/.dsh`，⛔ 不接受调用方自带路径）、核用户命令逐键相等、核独立子会话 spawn/父子谱系、拒绝 fork 继承 |
 | 交付重试、回执、入向来源和回复任务 | `runtime/delivery.py`、`runtime/inbox.py` | 保留通用账本；真实消息通道默认关闭 |
 | 可选委派、真实宿主验证接口 | `runtime/delegation.py`、`orchestration/delegation.py` | 保留注册、派出、结束与验收的区别；无可信宿主不冒充已派出 |
@@ -53,13 +56,15 @@ CUMULATIVE-DELTA: 2026-11-09 补主链新模块（workflow/reporting/monitoring/
 
 | 事项 | 当前状态 | 影响 |
 |---|---|---|
+| 真实远端资源核验 | 本地只读清单不证明远端机器空闲 | 真实 SSH / POSIX / 云机仍需现场验收 |
+| progress CLI 超期源 | `preflight` / `next-round` / `schedule` / `outcome advance` 已固定接 workspace 只读 Inbox | 机制与公开 CLI 本地已测；静态 `--overdue-json` 不能放行，真实租户仍未验 |
 | 真实 SSH / POSIX / 平台验收 | 代码侧已完成（协议 v2、同一笔预算、事务内 TOCTOU、`argv_sha256`、claim 后 send 前 lifecycle 投影）；真实 SSH / POSIX 停止、机器空闲与平台未验；代码 / 题单 scp 上传是独立部署步骤。⚠️ 停止只覆盖本 job 进程组，不覆盖子进程 `setsid` 逃逸，需 cgroup / namespace 才能更强隔离；Windows 无组枚举判 `unknown` | H3 的「真实远端产物」与 §0.6 的机器空闲不能算完成；group-stop ≠ 整机停止 |
 | 真实通道租户 | `doctor/listen/poll`、`--channel-config`、可选 AES 解密均已接；离线 challenge / 文字 / 卡点击可走到认证入账与真实批准 | B9 / D3 / D5 只能记「待验」；真实租户送达、收件与群 @ 未验 |
 | 真实机器空闲 | 未验 | 资源租约走调度器，但默认 `idle_verifier` 只证明受管作业停了；远端明确拒启动时保持 quarantine 需人工核 |
 | 真实云机 / 平台提交 | 未验 | 仓库只有 AutoDL 查询、事件与参数化 argv；没有提交动作 |
 | 完整真实冷启动 | 未验 | 合成冷启动 6 项已过；真实云机 / 平台 / 通道版本未做；V1–V3 只是 3 个合成语义案例 |
 
-以下接线已有源码与本地夹具 / 专项测试证据：① 监控统一为生产唯一意图权威，并在占用事务内复核；② 审批侧用 `execution_core` 绑定完整实际执行规范（`authorization` 已进 `KEY_FIELDS`）；③ 宿主 goal 已从 `goal/change` 持久事件只读重放（`activation` 仍 unknown，coverage 不冒充 full）；④ 通道 `doctor/listen/poll` 与 `decisions --channel-config` 已可用；⑤ 远端执行预算已统一为计划 `authorization` 的同一笔预留，远端 CLI 已存在，协议 v2 停止证据与事务内 TOCTOU 复核已落地；⑥ 自然语言 close 的两路（旧 proof / `--user-quote`）都可用，契约 4.1 已同步。
+以下接线已有源码与本地夹具 / 专项测试证据：① 监控统一为生产唯一意图权威，并在占用事务内复核；② 审批侧用 `execution_core` 绑定完整实际执行规范（`authorization` 已进 `KEY_FIELDS`）；③ 宿主 goal 已从 `goal/change` 持久事件只读重放（`activation` 仍 unknown，coverage 不冒充 full）；④ 通道 `doctor/listen/poll` 与 `decisions --channel-config` 已可用；⑤ 远端执行预算已统一为计划 `authorization` 的同一笔预留，远端 CLI 已存在，协议 v2 停止证据与事务内 TOCTOU 复核已落地；⑥ 自然语言 close 的两路（旧 proof / `--user-quote`）都可用，契约 4.1 已同步；⑦ review v2 交接、issues exp 关联、普通提问、D2 出口闸、progress preflight/next-round/schedule 已有专项测试；assurance 共16项（含 audit/budget/remote lease），当前预算复用 Admission.check_budget，远端资源区分启动阶段。
 
 ## 为什么没有逐文件复制旧框架
 
@@ -96,6 +101,9 @@ agent profile 的缺口逐项列在 `profiles/agent-harness/EXTRACTION.md`。例
 | goal 从 `goal/change` 事件重放 | `activation` 只存在于宿主进程内，coverage 不能冒充 full |
 | 受管 job 的 exact 命令 + jobId 绑定（`verify_job`） | watch 是否真的叫醒负责人、作业当前是否存活 |
 | 只读服务构造（`DecisionService.readonly` / `ReadonlyStore`） | 只读连接之外的并发写、真实部署的权限与文件锁 |
+| D2 回复绑定（`source + event_id`；未指定 source 旧回执不算回复；非有限 event_time/now/grace 不可判） | 真实通道入向与真实用户回复 |
+| review v2 交接字段（criterion/evidence/cost_scope/next_owner/needs_approval） | 真实批准仍由 Admission/decisions 核；旧记录 legacy unknown |
+| assurance 检查清单（16项只读聚合、required/applicable、exp_link） | 实际起跑继续走共享事务闸，真实远端资源需现场核验 |
 | 通道加密解密与验签顺序（先验原 body 再解密） | 真实租户的加密推送、权限与群 @ |
 | 预算可信时序 / fence、拒绝时零副作用 | 真实宿主日志的跨会话序与时钟 |
 | 远端环境指纹（`importlib.metadata` 真实包清单） | 真实远端机器上装了什么、是否与声明一致 |

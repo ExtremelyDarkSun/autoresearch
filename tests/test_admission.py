@@ -103,6 +103,30 @@ class AdmissionTests(unittest.TestCase):
         self.plan['authorization']['series_id'] = 'missing'
         self.assertFalse(Admission(self.root).check(self.plan, 'owner', 'P1')['ok'])
 
+    def test_shared_budget_check_does_not_claim_large_approval(self):
+        self.grant('large')
+        self.plan['authorization'] = {'scope': 'large', 'series_id': 'series-large',
+                                      'reservation_id': 'reservation-large', 'decision_id': 'D1'}
+        admission = Admission(self.root)
+        budget = admission.check_budget(self.plan, 'owner', 'P1')
+        self.assertTrue(budget['ok'], budget)
+        self.assertIsNone(budget['decision'])
+        self.assertFalse(admission.check(self.plan, 'owner', 'P1')['ok'])
+        self.plan['budget']['max_cost_units'] = 4
+        self.assertFalse(admission.check_budget(self.plan, 'owner', 'P1')['ok'])
+
+    def test_shared_budget_check_is_the_small_execution_gate(self):
+        admission = Admission(self.root)
+        self.assertEqual(admission.check_budget(self.plan, 'owner', 'P1'),
+                         admission.check(self.plan, 'owner', 'P1'))
+        for key, value in (('reservation_id', 'wrong'), ('series_id', 'wrong'), ('scope', 'large')):
+            changed = copy.deepcopy(self.plan)
+            changed['authorization'][key] = value
+            with self.subTest(key=key):
+                self.assertFalse(admission.check_budget(changed, 'owner', 'P1')['ok'])
+        later = Admission(self.root, clock=lambda: time.time() + 7200)
+        self.assertFalse(later.check_budget(self.plan, 'owner', 'P1')['ok'])
+
     def test_large_requires_actual_decision_adapter(self):
         self.grant('large')
         self.plan['authorization'] = {'scope': 'large', 'series_id': 'series-large', 'reservation_id': 'reservation-large', 'decision_id': 'D1'}

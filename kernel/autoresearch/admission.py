@@ -1,8 +1,8 @@
 # GENERATED-BY: portable functional migration
-# LAST-EDIT: 2026-11-09 18:30 Admission.check 只读连接改为共享 runtime.store.ReadonlyStore
+# LAST-EDIT: 2026-11-09 check_budget供统一视图复用原预算判据；check继续另核真实专项批准
 # PURPOSE: Connect shared runtime budget reservations and decision approval to real workflow launch.
 # ORIGIN: existing runtime Accounts and full behavior expectations
-# CUMULATIVE-DELTA: 2026-11-09 只读连接零副作用：Admission.check 不再自己拼 `?mode=ro`，委托 `runtime.store.ReadonlyStore`（WAL 库按 sidecar 实况选 mode=ro / immutable=1，读不创建 -shm/-wal；WAL 歧义态 StoreError 按「共享预算不可判」fail-closed）。此前：2026-11-09 可信时序收紧：HostBudgetSource 增加只读 trusted_ordering，返回宿主日志核验过的 session/seq/host_time，供 Accounts 在同一事务里判定新旧；跨会话不拿 seq 当全局序，时序不可判 fail-closed。此前：2026-11-09 预算准入收紧：HostBudgetSource 逐键核真实用户命令，并核 verify 返回的 source/proof/session/seq/rpc/created_at；Admission.check 保持只读、缺表/坏计划 fail-closed。此前：Read-only admission; no caller self-approval or budget fabrication.
+# CUMULATIVE-DELTA: 2026-11-09 抽出check_budget供统一检查复用，原check继续组合真实决策；支持同一now复现，非有限时钟拒绝。此前只读连接零副作用：Admission.check 不再自己拼 `?mode=ro`，委托 `runtime.store.ReadonlyStore`（WAL 库按 sidecar 实况选 mode=ro / immutable=1，读不创建 -shm/-wal；WAL 歧义态 StoreError 按「共享预算不可判」fail-closed）。此前：2026-11-09 可信时序收紧：HostBudgetSource 增加只读 trusted_ordering，返回宿主日志核验过的 session/seq/host_time，供 Accounts 在同一事务里判定新旧；跨会话不拿 seq 当全局序，时序不可判 fail-closed。此前：2026-11-09 预算准入收紧：HostBudgetSource 逐键核真实用户命令，并核 verify 返回的 source/proof/session/seq/rpc/created_at；Admission.check 保持只读、缺表/坏计划 fail-closed。此前：Read-only admission; no caller self-approval or budget fabrication.
 from __future__ import annotations
 import hashlib
 import json
@@ -46,8 +46,8 @@ class Admission:
         self.decisions = decisions
         self.clock = clock
 
-    def check(self, plan, owner_session, exp_id):
-        """只读执行准入：Workflow 在 `BEGIN IMMEDIATE` 里再核一次，绝不能写库。"""
+    def check_budget(self, plan, owner_session, exp_id, *, now=None):
+        """只读核对冻结计划所指账号、预留、范围和金额；不核决策、不签发额度。"""
         problems = []
         result = {'ok': False, 'problems': problems, 'budget': None, 'decision': None}
         if not isinstance(plan, dict) or not isinstance(owner_session, str) or not owner_session.strip():
@@ -88,8 +88,13 @@ class Admission:
                 if not reservation or not account:
                     problems.append('预算账号或预留不存在')
                 else:
-                    now = self.clock()
-                    if not account['active'] or account['expires_at'] <= now:
+                    moment = self.clock() if now is None else now
+                    if type(moment) not in (int, float) or not math.isfinite(moment) or moment <= 0:
+                        raise ValueError('预算时钟不可判，必须是有限正时间')
+                    expires = account['expires_at']
+                    if type(expires) not in (int, float) or not math.isfinite(expires) or expires <= 0:
+                        raise ValueError('预算到期时间不可判')
+                    if not account['active'] or expires <= moment:
                         problems.append('预算已撤回或过期')
                     if account['scope'] != auth['scope'] or reservation['scope'] != auth['scope']:
                         problems.append('执行范围超出已授权预算作用域')
@@ -101,7 +106,17 @@ class Admission:
                         problems.append('预算预留未覆盖事前声明的最大成本')
         except (sqlite3.Error, OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
             problems.append('共享预算不可判：' + str(exc))
-        if auth['scope'] in ('large', 'submission'):
+        result['ok'] = not problems
+        return result
+
+    def check(self, plan, owner_session, exp_id):
+        """只读执行准入：复用预算判据，再核真实专项批准。"""
+        result = self.check_budget(plan, owner_session, exp_id)
+        problems = result['problems']
+        auth = plan.get('authorization') if isinstance(plan, dict) else None
+        if not isinstance(auth, dict):
+            return result
+        if auth.get('scope') in ('large', 'submission'):
             decision_id = auth.get('decision_id')
             if not isinstance(decision_id, str) or not decision_id.strip():
                 problems.append('扩大测试或线上提交缺少同实验的已批准决策')

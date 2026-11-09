@@ -1,8 +1,9 @@
 # GENERATED-BY: portable extraction / neutral decision layer, 2026-11-09 +08:00
-# LAST-EDIT: 2026-11-09 17:10 +08:00（只读构造：DecisionService.readonly(db) / readonly=True）
+# LAST-EDIT: 2026-11-09 +08:00（回复窗口按source+event_id绑定；非有限时间不可判）
 # PURPOSE: 中性决策审批链 —— 先页后卡、同决策双回执、两小时未批准自动取消、入向文字回复窗口与阻断
 # ORIGIN: none（新文件）。机制取自上游「审批页 / 决策登记 / 入向回复诊断」三处通用实现，去掉具体平台与个人配置
-# CUMULATIVE-DELTA: 首版把 B1–B10 / D1–D5 / E7–E8 的通用部分落成可调用机制；本轮补 ① authorization_check 默认
+# CUMULATIVE-DELTA: 2026-11-09 回复窗口补source+event_id精确绑定、无来源旧回执不认与有限正时间边界。
+#   首版把 B1–B10 / D1–D5 / E7–E8 的通用部分落成可调用机制；本轮补 ① authorization_check 默认
 #   纯只读（可在 BEGIN IMMEDIATE 内调用）② 版本绑定改用单一 research_core 指纹（不信调用方自填哈希、不回写）
 #   ③ 完整 Channel 协议（describe/health/send_*/query/verify_receipt/authenticate/poll/subscribe）与发送方指纹
 #   ④ 选择卡 wire metadata（short_code / card_options / card_action_template，不改 payload hash）
@@ -2603,6 +2604,8 @@ class DecisionService:
             return out
         now = float(now if now is not None else self.clock())
         grace = float(grace)
+        if not math.isfinite(now) or now <= 0 or not math.isfinite(grace) or grace <= 0:
+            raise DecisionError('回复窗口 now/grace 必须是有限正数，不可判不能继续')
         conn = self.store.connect()
         try:
             events = [dict(r) for r in conn.execute(
@@ -2617,8 +2620,9 @@ class DecisionService:
                 payload = json.loads(row['payload_json'])
                 binding = payload.get('event_reply_to') or {}
                 eid = str(binding.get('event_id') or '')
-                if eid:
-                    replies.setdefault(eid, []).append(dict(row))
+                source = binding.get('source')
+                if eid and _nonempty_str(source):
+                    replies.setdefault((source, eid), []).append(dict(row))
         finally:
             conn.close()
         out = {'exp_id': exp_id, 'grace_sec': grace, 'now': _iso(now),
@@ -2631,11 +2635,12 @@ class DecisionService:
                 continue
             out['text_events'] += 1
             event_id = str(row['event_id'])
-            if replies.get(event_id):
+            reply_key = (row['source'], event_id)
+            if replies.get(reply_key):
                 out['replied'] += 1
                 out['replied_events'].append({'event_id': event_id,
                                               'source': row['source'],
-                                              'deliveries': [item['id'] for item in replies[event_id]]})
+                                              'deliveries': [item['id'] for item in replies[reply_key]]})
                 continue
             excerpt = str(payload.get('body') or payload.get('content') or '').replace('\n', ' ')
             excerpt = excerpt[:80] + ('…' if len(excerpt) > 80 else '') or '（内容空 / 不是文本）'
@@ -2649,7 +2654,8 @@ class DecisionService:
                 out['unanswerable'].append(item)
                 out['overdue'].append(item)
                 continue
-            if event_time is None:
+            if isinstance(event_time, bool) or not isinstance(event_time, (int, float)) \
+                    or not math.isfinite(event_time) or event_time <= 0:
                 item['why'] = '事件发生时间不可核 ⇒ 按超期算（不放行）'
                 item['age_sec'] = None
                 out['overdue'].append(item)

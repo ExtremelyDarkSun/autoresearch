@@ -74,6 +74,19 @@ class ColdStartTests(lifecycle_fixtures.ProvisionedDeliveryTests):
                         authorization_check=self.admission.check,
                         execution_target=ExecutionTarget(self.ws, require_provision=True))
 
+    def review_record(self, **kwargs):
+        record = super().review_record(**kwargs)
+        record['schema_version'] = 2
+        record['continuation'] = {
+            'criterion': '同题单复核机制是否稳定，保持结论的适用范围',
+            'criterion_evidence': [{'path': 'evidence/readings.md', 'locator': 'L1'}],
+            'cost_scope': {'scope': 'small', 'max_cost_units': 3,
+                           'series_id': 'series-small',
+                           'basis': '只覆盖下一轮合成小样本，未知实际费用继续保留预留'},
+            'next_owner': SESSION, 'needs_approval': False,
+            'approval_reason': '真实共享预算内的小样本验证，下一次执行仍核预留和授权'}
+        return record
+
     def audit(self, plan_id='P1', *, flow=None):
         flow = flow or self.flow
         prepared = flow.gov.prepare_audit(plan_id, actor=SESSION)
@@ -107,7 +120,9 @@ class ColdStartTests(lifecycle_fixtures.ProvisionedDeliveryTests):
         with self.assertRaises(WorkflowError):
             flow.prepare(topic=TOPIC, plan=self.plan('P2'), owner_session=SESSION)
         self.append_doc('supported')
-        review = flow.review(run_id=run['run_id'], record=self.review_record())
+        review = flow.review(run_id=run['run_id'], record=self.review_record(), require_version=2)
+        self.assertEqual(review['continuation']['status'], 'recorded')
+        self.assertEqual(review['continuation']['next_owner'], SESSION)
         self.assertTrue(review['lifecycle_after']['ok'], review)
         reporting.record_input(self.ws, TOPIC, 'user_requirement',
             '只验证合成机制，不连接真实比赛与云机',

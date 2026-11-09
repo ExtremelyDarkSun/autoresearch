@@ -1,11 +1,14 @@
 # GENERATED-BY: portable functional migration
-# LAST-EDIT: 2026-11-09 问题台账 §9：显式 dedupe_key、assign 真改 owner、复验绑 argv+exitcode、归档不重复/不覆盖/失败可诊断
+# LAST-EDIT: 2026-11-09 E2/E4：问题与证据检查关联 exp_id；旧记录不改写；显式 linked_exp 事件
 # PURPOSE: Persist first failures, deduplication, ownership, fixes and verification before resuming work.
-# ORIGIN: framework expectations section 9
+# ORIGIN: framework expectations section 9 + E2/E4
 # CUMULATIVE-DELTA: 2026-11-09 修四个语义洞 —— ① `assigned` 必须带显式 `owner` 字段（说明文字不算负责人）；
 #   ② `verified` 必须给可核 argv + 退出码 + 证据（`passed` 由退出码推出，不是自述布尔）；
 #   ③ 归档只认「这次结案」一次，重复归档拒；同名不同内容换名，⛔ 不静默覆盖；写失败留 `archive_failed` 诊断事件；
 #   ④ 查重可给显式 `dedupe_key`（不做模糊合并），并把追加链校验放进同一个写事务。
+#   本轮（E2/E4）：⑤ `record` 收 `exp_id` 并把它**纳入查重范围**（同命令不同实验不再糊成一个）；
+#   ⑥ 旧记录（payload 里没有 `exp_id` 键）明确投影成 `exp_link='unknown'`、显式 None 投影成 `unlinked`，
+#       ⛔ 不猜、⛔ 不改写历史；关联只用追加 `linked_exp` 事件（允许显式跨 exp 链接）。
 """问题台账（框架行为预期 §9）。
 
 这一层只回答四件事：**同一个错有没有被重复登记**、**现在归谁**、**改了什么**、**复验跑的是哪条命令、
@@ -28,9 +31,26 @@
 查重
 ====
 
-默认按 `{command, scope}` **精确**哈希查重：同一条命令 + 同一个受影响范围 ⇒ 同一个 issue。
+默认按 `{command, scope, exp_id}` **精确**哈希查重：同一条命令 + 同一个受影响范围 + 同一个实验 ⇒ 同一个 issue。
 命令里带临时路径（`temp/xxx/`、`/tmp/...`）会让精确查重失效 —— 这时**显式**给 `dedupe_key`。
 ⛔ 不做模糊/相似合并：那会把两个不同的错并成一个，比漏合并更坏。
+⛔ `exp_id` 在查重键里：同一个命令在两个实验里各崩一次是**两个** issue，不能糊成一个。
+
+⚠️ **不给 `exp_id` 时仍是旧版的 canonical**（只有 `{command, scope}`，或不带 exp 的
+`{dedupe_key, scope}`）：历史记录的哈希与查重键一个都不变，旧 `opened` 同命令复现仍然命中
+同一个 issue。只有真的给了 `exp_id` 才把它加进 canonical。
+
+实验关联（E2/E4）
+=================
+
+每条事件都可以带 `exp_id`（登记时给）。读取时投影出：
+
+    exp_id       本次登记时写下的实验号（旧记录没有 ⇒ None）
+    exp_link     'linked'（有实验号）/ 'unlinked'（显式没给）/ 'unknown'（旧记录，键都没有）
+    exp_links    后续显式 `linked_exp` 事件（跨实验链接），每条带 actor / reason / 源码证据
+    effective_exps  exp_id 与所有链接目标的并集
+
+⛔ 旧记录一条都不改写：要把它算进某个实验，就追加一条 `linked_exp`，并留证据和理由。
 
 状态
 ====
@@ -50,8 +70,12 @@ from pathlib import Path
 import sqlite3
 import time
 
-KINDS = ('opened', 'recurred', 'assigned', 'fixed', 'verified', 'reopened', 'archived', 'archive_failed')
+KINDS = ('opened', 'recurred', 'assigned', 'fixed', 'verified', 'reopened', 'archived',
+         'archive_failed', 'linked_exp')
 UPDATE_KINDS = ('assigned', 'fixed', 'verified', 'reopened')
+
+#: 实验关联的三种投影。⛔ 缺关联不许读成「不限实验」。
+EXP_LINKS = ('linked', 'unlinked', 'unknown')
 
 #: 复验结论的出处只有这一个：命令本身跑出来的退出码。
 VERIFICATION_NOTE = ('台账只记录这次复验的命令与退出码（完成记录），不代表科学结论成立；'
@@ -72,6 +96,27 @@ def canonical(value):
 
 def _text(value):
     return isinstance(value, str) and bool(value.strip())
+
+
+def _exp_ref(value):
+    """实验号：`None` / 空串 ⇒ `None`（明确没关联）；否则必须是**单个非空词**。
+
+    ⛔ 不接受带空白的串（那会把说明文字塞进查重键），⛔ 不做大小写折叠之外的改写。
+    """
+    if value is None:
+        return None
+    if isinstance(value, Path):
+        value = str(value)
+    if not isinstance(value, str):
+        raise ValueError(f'exp_id 必须是非空字符串或 None，实际 {value!r}')
+    text = value.strip()
+    if not text:
+        return None
+    if any(char.isspace() for char in text):
+        raise ValueError('exp_id 不能含空白（只写实验号本身，不要塞说明）')
+    if len(text) > 128:
+        raise ValueError('exp_id 过长（>128 字符）')
+    return text
 
 
 def _argv(value, label='command'):
@@ -176,21 +221,65 @@ class Issues:
 
     # -- 只读投影 -----------------------------------------------------------
 
-    def status(self, issue_id=None):
+    def status(self, issue_id=None, *, exp_id=None):
+        """问题当前状态（只读投影）。
+
+        每条多出四个实验关联字段（E2/E4）：
+
+        * `exp_id` / `exp_link`：登记时写下的实验号与三种投影（`linked`/`unlinked`/`unknown`）；
+          ⛔ 旧记录没有 `exp_id` 键 ⇒ `unknown`，**不猜**它属于哪个实验；
+        * `exp_links`：后续显式 `linked_exp` 事件（跨实验链接，带 actor / reason / 证据）；
+        * `effective_exps`：`exp_id` 与所有链接目标的并集（`exp_id=` 过滤按它判）。
+
+        给了 `exp_id` ⇒ 只返回**明确关联**到该实验的问题；⛔ 不把 `unlinked`/`unknown` 算进来
+        （那些是「未入台账」，调用方要另外点名）。
+        """
         states = {}
+        links = {}
         for row in self.events():
-            item = states.setdefault(row['issue_id'], {'issue_id': row['issue_id'], 'history': []})
+            item = states.setdefault(row['issue_id'],
+                                     {'issue_id': row['issue_id'], 'history': [],
+                                      '_has_exp_key': False})
             item['history'].append(row)
+            if 'exp_id' in row['payload']:
+                item['_has_exp_key'] = True
             item.update(row['payload'])
             item['last_kind'] = row['kind']
-        for item in states.values():
+            if row['kind'] == 'linked_exp':
+                links.setdefault(row['issue_id'], []).append({
+                    'seq': row['seq'], 'exp_id': row['payload'].get('linked_exp'),
+                    'actor': row['payload'].get('actor'),
+                    'reason': row['payload'].get('text'),
+                    'sources': row['payload'].get('sources'),
+                    'at': row['payload'].get('time')})
+        wanted = _exp_ref(exp_id)
+        out = []
+        for identity, item in states.items():
+            primary = item.get('exp_id')
+            primary = primary.strip() if isinstance(primary, str) and primary.strip() else None
+            if item.pop('_has_exp_key'):
+                exp_link = 'linked' if primary else 'unlinked'
+            else:
+                exp_link = 'unknown'
+            item['exp_id'] = primary
+            item['exp_link'] = exp_link
+            item['exp_links'] = links.get(identity, [])
+            effective = {value for value in [primary] + [link['exp_id'] for link in item['exp_links']]
+                         if isinstance(value, str) and value.strip()}
+            item['effective_exps'] = sorted(effective)
             item['resume_allowed'] = item.get('state') == 'closed'
             item['event_count'] = len(item['history'])
+            out.append(item)
         if issue_id is not None:
-            if issue_id not in states:
-                raise ValueError('问题不存在')
-            return states[issue_id]
-        return list(states.values())
+            for item in out:
+                if item['issue_id'] == issue_id:
+                    if wanted is not None and wanted not in item['effective_exps']:
+                        raise ValueError(f'问题 {issue_id} 没有关联到实验 {wanted}')
+                    return item
+            raise ValueError('问题不存在')
+        if wanted is not None:
+            return [item for item in out if wanted in item['effective_exps']]
+        return out
 
     def archive_index(self):
         """冷件索引 = 台账里的 `archived` 事件（append-only，不会被后一次写覆盖）。"""
@@ -208,11 +297,15 @@ class Issues:
 
     # -- 首错登记 -----------------------------------------------------------
 
-    def record(self, *, summary, owner, command, exitcode, sources, scope, actor='agent', dedupe_key=None):
-        """登记首错。同一 `{command, scope}`（或同一显式 `dedupe_key` + scope）复现 ⇒ 同一个 issue。
+    def record(self, *, summary, owner, command, exitcode, sources, scope, actor='agent',
+               dedupe_key=None, exp_id=None):
+        """登记首错。同一 `{command, scope, exp_id}`（或同一显式 `dedupe_key` + scope + exp_id）复现 ⇒ 同一个 issue。
 
         `dedupe_key` 是给「命令里带临时路径、精确查重必然漏」的场景用的**显式**归并键；
         ⛔ 不给就不猜、不做模糊合并。
+
+        `exp_id` 是这条证据/检查所属的实验号（E2）。它**进查重键**：同一个命令在两个实验
+        里各崩一次是**两个** issue。`None` 明确表示「没关联」（`exp_link='unlinked'`）。
         """
         for label, value in (('问题', summary), ('负责人', owner), ('受影响范围', scope), ('登记者', actor)):
             if not _text(value):
@@ -221,13 +314,22 @@ class Issues:
         code = _exitcode(exitcode)
         if dedupe_key is not None and not _text(dedupe_key):
             raise ValueError('dedupe_key 必须是非空字符串（不给就按 command+scope 精确查重）')
+        experiment = _exp_ref(exp_id)
         evidence = self._evidence(sources)
+        # 查重键要**向后兼容**：不给 exp_id 时仍是旧的 `{command, scope}` canonical（旧哈希不变），
+        # 只在确实给了 exp 时才把 exp_id 加进 canonical。⛔ 不许给历史记录换哈希。
         if dedupe_key is None:
-            key = hashlib.sha256(canonical({'command': argv, 'scope': scope}).encode()).hexdigest()
-            key_source = 'command+scope'
+            core = {'command': argv, 'scope': scope}
+            if experiment is not None:
+                core['exp_id'] = experiment
+            key = hashlib.sha256(canonical(core).encode()).hexdigest()
+            key_source = 'command+scope+exp_id' if experiment else 'command+scope'
         else:
-            key = hashlib.sha256(canonical({'dedupe_key': dedupe_key.strip(), 'scope': scope}).encode()).hexdigest()
-            key_source = 'explicit'
+            core = {'dedupe_key': dedupe_key.strip(), 'scope': scope}
+            if experiment is not None:
+                core['exp_id'] = experiment
+            key = hashlib.sha256(canonical(core).encode()).hexdigest()
+            key_source = 'explicit+exp_id' if experiment else 'explicit'
 
         def op(conn, rows):
             previous = [(index, r) for index, r in enumerate(rows)
@@ -238,7 +340,7 @@ class Issues:
                        'sources': evidence, 'scope': scope, 'actor': actor,
                        'dedupe_key': key, 'dedupe_source': key_source,
                        'state': 'open', 'time': time.time(), 'resume_allowed': False,
-                       'passed': None, 'verification': None}
+                       'passed': None, 'verification': None, 'exp_id': experiment}
             return self._append(conn, rows, identity, 'recurred' if old else 'opened', payload)
         return self._write(op)
 
@@ -315,6 +417,48 @@ class Issues:
                 payload['verification'] = {'command': emitted_command, 'exitcode': emitted_code,
                                            'passed': derived, 'note': VERIFICATION_NOTE}
             return self._append(conn, rows, issue_id, kind, payload)
+        return self._write(op)
+
+    # -- 实验关联（E2/E4） ---------------------------------------------------
+
+    def link(self, issue_id, *, exp_id, actor, reason, sources):
+        """把一个问题**显式**关联到另一个实验（追加 `linked_exp` 事件）。
+
+        * 旧记录一条都不改写：链接是**新事件**，读的时候由 `status()` 投影成
+          `exp_links` / `effective_exps`；
+        * 必须给理由（`reason`）与源码证据（`sources`）：⛔ 不做「悄悄改归属」；
+        * 已经关联过这个实验（登记时的 `exp_id` 或此前的链接）⇒ 拒，不产生重复事件；
+        * 只追加，不改状态：`open` 的仍是 `open`，`closed` 的仍是 `closed`。
+        """
+        if not _text(actor):
+            raise ValueError('关联实验须给执行者')
+        if not _text(reason):
+            raise ValueError('关联实验须给理由（⛔ 不静默改归属）')
+        if not _text(issue_id):
+            raise ValueError('关联实验须给 issue_id')
+        experiment = _exp_ref(exp_id)
+        if experiment is None:
+            raise ValueError('关联实验必须给非空 exp_id（要取消关联请另开一次显式动作）')
+        evidence = self._evidence(sources)
+
+        def op(conn, rows):
+            history = [r for r in rows if r['issue_id'] == issue_id]
+            if not history:
+                raise ValueError('问题不存在')
+            primary = history[0]['payload'].get('exp_id')
+            primary = primary.strip() if isinstance(primary, str) and primary.strip() else None
+            linked = {row['payload'].get('linked_exp') for row in history
+                      if row['kind'] == 'linked_exp'}
+            if experiment == primary:
+                raise IssueRuleError(f'{issue_id} 登记时就关联在 {experiment}：不用再链接')
+            if experiment in linked:
+                raise IssueRuleError(f'{issue_id} 已经显式关联过 {experiment}：不重复链接')
+            state = history[-1]['payload'].get('state')
+            return self._append(conn, rows, issue_id, 'linked_exp',
+                                {'state': state, 'linked_exp': experiment,
+                                 'actor': actor.strip(), 'text': reason.strip(),
+                                 'sources': evidence, 'time': time.time(),
+                                 'resume_allowed': state == 'closed'})
         return self._write(op)
 
     # -- 归档 ---------------------------------------------------------------

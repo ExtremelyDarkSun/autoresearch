@@ -1,12 +1,13 @@
 # GENERATED-BY: research lifecycle projection migration, 2026-11-09
-# LAST-EDIT: 2026-11-09 18:40 `_read` 只读连接委托 runtime.store.ReadonlyStore（WAL 读不建 sidecar）
+# LAST-EDIT: 2026-11-09，投影复盘v2的下一步判据、费用、负责人及审批需要；保留旧事件字节
 # PURPOSE: 研究执行（workflow）与人读交付（reporting）之间的接线层：
 #          只读 wf_preparations/wf_runs/wf_finishes/wf_reviews + gov_plans，投影出
 #          topics/<topic>/plans/<plan>/{plan.json,AI_WORK.md,receipts/*.json}，
 #          再把 run/round 终态与复盘结论写进 reporting（deterministic id + 真实收据来源），
 #          并提供 before/after 主文档快照（原始字节 + sha，只生成一次）。
 # ORIGIN: 上游 ai_work.py 的「AI 工作材料是投影」与报告交付纪律；只保留机制，无比赛/机器/读数。
-# CUMULATIVE-DELTA: 首版。不启进程、不核宿主、不判科学；缺 before 不补造；hook 失败只记 diagnostic。
+# CUMULATIVE-DELTA: 2026-11-09 复盘v2交接投影到AI_WORK与leader_conclusion；旧输入事件不重写。
+#   首版不启进程、不核宿主、不判科学；缺 before 不补造；hook 失败只记 diagnostic。
 #   2026-11-09 只读零副作用：`_read` 不再拼裸 `?mode=ro`，委托 `ReadonlyStore`（WAL 库按 sidecar 实况选
 #   mode=ro / immutable=1，读不创建 -shm/-wal）；缺库仍是原来的 LifecycleError，WAL 歧义态 StoreError 交上层。
 
@@ -66,6 +67,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from kernel.autoresearch import reporting  # noqa: E402  (复用页面/事件/来源指纹的规则)
 from kernel.autoresearch.runtime.store import ReadonlyStore  # noqa: E402
+from kernel.autoresearch.review_continuation import render as render_continuation  # noqa: E402
 
 SCHEMA = 1
 
@@ -443,6 +445,7 @@ class Lifecycle:
                           f"- 下一步：{review['next_action']}",
                           f"- 复盘记录 sha256：`{review['record_sha256']}`",
                           f"- 复盘证据：`{review['evidence_json']}`"]
+                lines.extend('- ' + part for part in render_continuation(json.loads(review['record_json'])))
             lines.append(f"- 收据：`{_rel(self.root, self.receipt(topic, plan_id, 'run', run_id))}`"
                          + (f" · `{_rel(self.root, self.receipt(topic, plan_id, 'finish', run_id))}`"
                             if finish is not None else "")
@@ -576,6 +579,8 @@ class Lifecycle:
                 f"next_action={review['next_action']}",
                 f"result_summary={body.get('result_summary')}",
             ) if part)
+            if body.get('schema_version') == 2:
+                text += '；' + '；'.join(render_continuation(body))
             result = reporting.record_input(
                 self.root, topic, "leader_conclusion", text,
                 {"path": review_rel, "locator": f"{run_id}:review"},

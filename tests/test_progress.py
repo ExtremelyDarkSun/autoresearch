@@ -1,6 +1,7 @@
 # GENERATED-BY: 完整功能迁移（持续推进 A1–A7 / 远端进度 H1–H9 / 入向超期 D2）
-# LAST-EDIT: 2026-11-09（首版；真实子进程 / 真实文件与目录变化 / 三次失败 / 退避 / 超期优先 /
-#             goal 覆盖防重复 / 租约并发 / needs_rearm / watch 子进程结构化退出）
+# LAST-EDIT: 2026-11-09（定点补丁：D2 出口闸要求 advance 前核 overdue，静默窗口用例显式注入空快照）
+# CUMULATIVE-DELTA: 首版；2026-11-09 仅改一处夹具（不降生产判据）：旧用例在无 overdue 源时记 advance，
+#            现按 D2 给该实例显式注入「已核对、无超期」的真实形状快照；其余断言未改。
 # PURPOSE: progress 机制的离线回归：用合成临时夹具证明采集、fail-closed、判定顺序、租约围栏、
 #          重挂协议与受管监视的退出语义；不连接真实机器、不发消息、不触发外部评测。
 # ORIGIN: kernel/autoresearch/progress.py 的契约；行为预期 A1–A7 / D2 / H1–H9。
@@ -532,8 +533,12 @@ class DecisionTests(unittest.TestCase):
             root = Path(folder)
             clock = Clock()
             spec, _ = self._changed_instance(root, quiet={"window_sec": 10, "max_window_sec": 24})
+            # 2026-11-09（D2 出口闸）：`advance` 落账前要核当前真实 overdue，且只认可信只读源；
+            # 这里注入一个「已核对、没有超期」的**回调**（dict 静态快照属 untrusted，⛔ 不用于生产放行）。
             instance = progress.Progress(root, spec, owner="owner-unit", clock=clock,
-                                         goal={"state": "complete", "coverage": "none"})
+                                         goal={"state": "complete", "coverage": "none"},
+                                         overdue=lambda: {"checked": True, "max_age_sec": 304,
+                                                          "items": [], "count": 0})
             instance.probe()
             self.assertEqual(instance.tick()["verdict"], "sleep")  # 刚有动静
             clock.advance(10)

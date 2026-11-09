@@ -1,20 +1,20 @@
 <!--
 GENERATED-BY: repository creation, 2026-11-09 +08:00
-LAST-EDIT: 2026-11-09 最终依赖与状态统一：Python 标准库 + 可选 cryptography、插件 Node 20+、DSH 压缩日志 Node 24+；状态只写已验与待现场验收，不写编辑过程
+LAST-EDIT: 2026-11-09 本批同步：补 review v2、issues exp、questions、assurance、progress 跨轮预检/阶段排序与 D2 回复绑定；通用补项与真实部署分开
 PURPOSE: 给首次查看项目的人说明用途、边界和可执行检查。
 ORIGIN: reusable research mechanisms and target-specific evaluation adapters
 CUMULATIVE-DELTA: 2026-11-09 新增 [怎么跑](<docs/RUNNING.md>)（工作区 / 专题隔离 / 预算 / 执行主链 / 人读页 / 监控 / 审批 / 通道 / 远端 / 进度 / 问题台账的实际命令）；
 改写迁移状态段：本地独立环境、完整服务链冷启动（含第二轮共享预算与未复盘阻断）及可信宿主探针已验；真实通道租户、真实 SSH/POSIX 停止/机器空闲、远端上传和平台仍待现场验收；
 把只登记 Topics 的首次隔离改成真实 worktree + 独立环境命令（claim 保留）；明确 demo 只是底层事务合成、不代科研主链；109 编号验收表继续保留。
 依赖口径：Python 内核只用标准库，飞书加密收件另需可选 cryptography（requirements-feishu.txt）；插件 Node 20+，可信 DSH 压缩日志 Node 24+。
+本批新增：review v2 交接、issues exp 关联、普通提问、assurance 清单、progress preflight/next-round/schedule 与 D2 回复绑定；assurance 共16个分项，复用真实预算判据；progress CLI 固定只读超期源与远端组合路径均已验。
 -->
 # AutoResearch：可复用研究内核与 agent 比赛配置
 
 这套项目的目标是让 AI 围绕一个研究目标持续工作：先写假设和判断标准，再安排实验，保存原始证据，核查结果，决定下一步。人负责目标、方向和需要批准的动作。
 
-**迁移状态：主链入口已经在仓库里，但不是「全部完成」。** 现在可以按 [怎么跑](<docs/RUNNING.md>) 依次调用工作区初始化、专题隔离、共享预算、研究执行主链（事前材料 → 起跑闸 → 真子进程 → 结束 → 复盘）、人读页供料与验收、意图与过程监控、审批与入向、通道配置与收件、受管远端执行、进度采集与受管推进器、问题台账。以下四类**仍未完成**，逐项写在[迁移功能验收](<docs/EXPECTATIONS_ACCEPTANCE.md>)（109 个编号全部保留）：
+**迁移状态：本次逐项复核发现的通用功能已补齐，现场验收仍未完成。** 现在可以按 [怎么跑](<docs/RUNNING.md>) 依次调用工作区初始化、专题隔离、共享预算、研究执行主链（事前材料 → 起跑闸 → 真子进程 → 结束 → 复盘）、人读页供料与验收、意图与过程监控、审批与入向、通道配置与收件、受管远端执行、进度采集与受管推进器、问题台账。以下三类仍需核验，逐项写在[迁移功能验收](<docs/EXPECTATIONS_ACCEPTANCE.md>)（109 个编号全部保留）：
 
-- **通用功能待补**：跨实验的证据与检查汇总、复盘中的成本和审批信息、普通主动提问记录，以及继续下一轮前的统一检查和跨专题排序。逐项已有缺口记录，不能当成填配置即可完成。
 - **真实部署未验**：真实消息通道租户送达与回复、真实 SSH / POSIX 停止与机器空闲、远端代码 / 题单上传步骤、真实云机与平台提交。空工作区的本地冷启动（含第二轮共享预算与未复盘阻断）已用合成证据跑通，详见[验收记录](<docs/VERIFICATION.md>)。
 - **部分验收**：V1–V3 意图监控语义核只有 3 个合成案例的一次独立核（V1 修订后通过）；真实宿主探针只证明单次绑定，不外推。
 - **需要独立判断的事项**：结论是否成立、页面是否易读、审查是否找对了问题，仍需 agent 或人阅读原始证据。
@@ -66,7 +66,10 @@ python -X utf8 -B research.py selftest --plugins     # 需要 Node.js
 | [kernel/autoresearch/decisions.py](kernel/autoresearch/decisions.py) | 审批与入向 | 自包含审批页、先页后卡、双回执重算、两小时超时、文字回复窗口 |
 | [kernel/autoresearch/progress.py](kernel/autoresearch/progress.py) | 进度采集与推进器 | 声明式 spec、采集比较、租约、静默窗口、一次唤醒即退出、显式重挂 |
 | [kernel/autoresearch/progress_host.py](kernel/autoresearch/progress_host.py) | 宿主侧联动 | DSH goal 重放、超期只读、受管 job 登记台账（只读宿主） |
-| [kernel/autoresearch/issues.py](kernel/autoresearch/issues.py) | 问题台账（§9） | 首错登记、查重、负责人、修复、复验（argv + 退出码）、冷件索引 |
+| [kernel/autoresearch/issues.py](kernel/autoresearch/issues.py) | 问题台账（§9） | 首错登记、查重（含 exp）、负责人、修复、复验（argv + 退出码）、冷件索引 |
+| [kernel/autoresearch/assurance.py](kernel/autoresearch/assurance.py) | 统一检查清单（只读） | 16项只读聚合；含审计、共享预算与远端租约，区分未启动与历史记录 |
+| [kernel/autoresearch/questions.py](kernel/autoresearch/questions.py) | 普通提问台账（E7） | 待答 / 已认证回复 / 默认非 blocking；不建审批页 |
+| [kernel/autoresearch/review_continuation.py](kernel/autoresearch/review_continuation.py) | review v2 交接 | 下一步判据与证据、成本范围、负责人、是否需批准；旧记录 unknown |
 | [kernel/autoresearch/{workflow,reporting,monitoring,decisions,channels,progress,progress_host,remote,budget,workspace,issues}_cli.py](kernel/autoresearch/) | 上面各层的命令行入口 | 由 `research.py <名称>` 转发 |
 | [kernel/autoresearch/channels](kernel/autoresearch/channels/) | 真实通道适配层 | 飞书发送 / 回执复核 / 验签 / AES-256-CBC 解密（`cryptography` 可选） |
 | [kernel/autoresearch/remote_workflow.py](kernel/autoresearch/remote_workflow.py) · [remote_cli.py](kernel/autoresearch/remote_cli.py) | 受管远端执行 | Workflow 闸 → Runtime 预算/租约 → SSHAdapter；默认关闭 |
@@ -132,9 +135,11 @@ python -X utf8 -B research.py workspace snapshot --workspace ../my-research --to
 | 审批与入向 | `research.py decisions prepare/send/status/inbox/overdue/reply/hook/authorize-check` | 决策台账 + 自包含审批页 + 通道回执 |
 | 通道配置与收件 | `research.py channels doctor/listen/poll` + `decisions --channel-config` | 通道台账 + 决策库；`doctor` 只读 |
 | 受管远端执行 | `research.py remote doctor/check/provision/start/query/cancel/collect/release` | Runtime 预算/租约 + 远端 worker 状态；默认关闭 |
-| 进度采集与推进器 | `research.py progress probe/tick/watch/rearm/outcome/status` | 事件库 + 租约 + `needs_rearm` |
+| 进度采集与推进器 | `research.py progress probe/tick/watch/rearm/outcome/status` + `preflight/next-round/schedule` | 事件库 + 租约 + `needs_rearm`；下一轮只读给命令 |
 | 宿主侧联动 | `research.py progress-host doctor/goal/overdue/plan/register/status` | 固定 deployment 配置 + append-only job 台账 |
-| 问题台账（§9） | `research.py issues record/status/assign/fix/verify/reopen/archive/index` | `<工作区>/.autoresearch/issues.sqlite3` |
+| 问题台账（§9） | `research.py issues record/status/assign/fix/verify/reopen/archive/index` | `<工作区>/.autoresearch/issues.sqlite3`；`--exp` 进入查重与关联 |
+| 统一检查清单 | `research.py assurance checklist` | 只读聚合；`assurance` 三项补项未完成 |
+| 普通提问 | `research.py questions ask/open/answer/declare/link/expire/cancel` | `<工作区>/.autoresearch/runtime.sqlite3` 的提问台账 |
 
 三条边界：**起跑闸是 fail-closed 的**（缺审计/监控/准入任一就拒绝启动，且不起来子进程）；**没有可信验证器时授权、豁免、交付确认会拒绝**；**通道、云机、平台凭据属于部署配置**，仓库只放引用。
 
@@ -177,11 +182,11 @@ python research.py instructions --captured path/to/captured-host-request.txt
 
 ## 现在能用什么，部署还要补什么
 
-**本地可直接用（有实际入口 + 专项测试）**：事务状态与追加事件、课题接手与世代、专题真实隔离（worktree + 独立环境 + 主文档快照）、共享预算的授权/预留/释放/结算台账（含可信时序 / fence）、幂等执行与对账、研究执行主链（事前四锚点 → 起跑闸 → 真子进程 → 结束 → 复盘 → 自动快照 / 报告投影）、人读页完整供料与回收回执、意图与过程监控（四态/三触发/两水位/独立报告核验/意见处置）、**自然语言 close（旧 proof 与 `--user-quote` 两路）**、审批页与双回执状态机、入向文字回复窗口、**通道 `doctor/listen/poll` 与 `decisions --channel-config`（含可选 AES 解密）**、**受管远端 CLI（默认关闭，预算用计划授权那笔同一预留）**、只读服务（`DecisionService.readonly`，不建表/目录/通道台账）、通用进度采集与受管推进器（一次唤醒即退出 + 显式重挂）、宿主侧 goal/超期/job 只读联动、问题台账（查重/负责人/修复/复验/冷件索引）、配置与指令测量、插件自检。
+**本地可直接用（有实际入口 + 专项测试）**：事务状态与追加事件、课题接手与世代、专题真实隔离（worktree + 独立环境 + 主文档快照）、共享预算的授权/预留/释放/结算台账（含可信时序 / fence）、幂等执行与对账、研究执行主链（事前四锚点 → 起跑闸 → 真子进程 → 结束 → **review v2** → 自动快照 / 报告投影）、人读页完整供料与回收回执、意图与过程监控（四态/三触发/两水位/独立报告核验/意见处置）、**自然语言 close（旧 proof 与 `--user-quote` 两路）**、审批页与双回执状态机、入向文字回复窗口、**通道 `doctor/listen/poll` 与 `decisions --channel-config`（含可选 AES 解密）**、**受管远端 CLI（默认关闭，预算用计划授权那笔同一预留）**、只读服务（`DecisionService.readonly`，不建表/目录/通道台账）、通用进度采集与受管推进器（一次唤醒即退出 + 显式重挂 + **preflight/next-round/schedule 只读给命令**）、**D2 入向超期闸（回复按 source+event_id）**、宿主侧 goal/超期/job 只读联动、问题台账（查重/负责人/修复/复验/冷件索引 + **exp 关联**）、**普通提问台账（默认非 blocking）**、**统一检查清单（含审计、共享预算与远端租约）**、配置与指令测量、插件自检。
 
 **需要部署适配器（缺配置不等于缺功能，但也不等于已验）**：真实租户的消息送达与收件、真实模型与正式评分环境、真实远端机器与 POSIX 停止 / 机器空闲、真实授权来源（宿主用户消息）。
 
-**已知未完成**（逐项见[迁移功能验收](<docs/EXPECTATIONS_ACCEPTANCE.md>)）：真实通道租户验收；真实 SSH / POSIX 停止与机器空闲；真实云机 / 平台提交；V1–V3 只有合成语义核。⚠️ 远端停止只覆盖本 job 的进程组，不覆盖子进程 `setsid` 逃逸，更强隔离要部署 cgroup / namespace；group-stop 不等于整台机器停止。**这些写成缺口，不当已完成。**
+**已知未完成**（逐项见[迁移功能验收](<docs/EXPECTATIONS_ACCEPTANCE.md>)）：真实通道租户验收；真实 SSH / POSIX 停止与机器空闲；真实云机 / 平台提交；当前模型请求实际注入与宿主 goal activation；V1–V3 只有合成语义核。⚠️ 远端停止只覆盖本 job 的进程组，不覆盖子进程 `setsid` 逃逸，更强隔离要部署 cgroup / namespace；group-stop 不等于整台机器停止。**这些写成缺口，不当已完成。**
 
 需要可信证据的授权、审查豁免、交付确认，在没有可信验证器时**默认拒绝**；普通资料可登记为本地声明（`declared`），但那不等于宿主已验证。离线演示与测试里的签名、审查、通道都是临时夹具，不能拿去给真实动作授权。
 

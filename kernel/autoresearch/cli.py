@@ -32,7 +32,8 @@ def main(argv=None):
                'monitoring': '.monitoring_cli', 'decisions': '.decisions_cli',
                'progress': '.progress_cli', 'workspace': '.workspace_cli', 'budget': '.budget_cli',
                'issues': '.issues_cli', 'progress-host': '.progress_host_cli',
-               'channels': '.channels_cli', 'remote': '.remote_cli'}
+               'channels': '.channels_cli', 'remote': '.remote_cli',
+               'assurance': '.assurance_cli', 'questions': '.questions_cli'}
     if args and args[0] in modules:
         from importlib import import_module
         return import_module(modules[args[0]], __package__).main(args[1:])
@@ -58,6 +59,8 @@ def main(argv=None):
         ('progress-host', '真实宿主goal、入向与受管作业的推进适配'),
         ('channels', '通道配置诊断与认证收件监听'),
         ('remote', '受管远端运行与资源租约'),
+        ('assurance', '按实验汇总当前检查、证据与未解决事项'),
+        ('questions', '保存普通提问并关联已认证的用户回复'),
         ('budget', '真实用户预算授权、共享额度预留、结算和只读状态')):
         sub.add_parser(name, help=help_text)
     a = sub.add_parser('doctor', help='检查代码、配置和实际部署边界')

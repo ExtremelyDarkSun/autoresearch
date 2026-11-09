@@ -1,11 +1,12 @@
 # GENERATED-BY: 完整功能迁移（持续推进 A1–A7 / 远端进度 H1–H9 / 入向超期 D2 的宿主侧联动）
-# LAST-EDIT: 2026-11-09（首版；DSH 真实 goal 重放 + Decisions 只读超期 + 受管 job 登记/核验 + 固定 deployment factory）
+# LAST-EDIT: 2026-11-09（回复按source+event_id匹配，无来源旧回执不作证明，时钟与事件时间须有限正值）
 # PURPOSE: 把 hosting 事实接到通用进度机制上 —— goal 来自 DSH 真实会话事件重放，超期来自 Decisions 同 runtime 库的只读等价查询，
 #          受管 watch 的 job_id 用 DSH 持久 tool_result 的 toolCallId/name/arguments 精确核验；不内置任何比赛/机器/结论。
 # ORIGIN: 宿主源码 @deepseek-ai/dsh-goal（goal/change 事件与 fold 规则）、dsh-tool-goal（get_goal 输出形状）、
 #          dsh-tool-pwsh（background jobId 与渲染文本）、dsh-session（事件/工具结果形状）；
 #          仓库内 host_evidence.DSHHost（只读会话读取，不修改）、decisions.reply_status（超期语义，只读等价 SQL）。
-# CUMULATIVE-DELTA: 首版。与「自己造证据通道」的刻意差异：① 只用 DSHHost.session()（生产默认 DSHHost(root=部署 dsh_home)，
+# CUMULATIVE-DELTA: 2026-11-09 补source+event_id回复绑定、缺来源不认与有限正时间边界；
+#          首版：① 只用 DSHHost.session()（生产默认 DSHHost(root=部署 dsh_home)，
 #          复用已真实验证的 Node 多帧 decoder；CLI 不暴露 decoder / 不接受 caller 选 jsonl）；② goal 以会话事件 goal/change
 #          重放为权威，projcache 只做派生诊断且不参与判定；③ activation 是进程内状态、持久未知 ⇒ coverage 保留 unknown，
 #          只有部署可信模块 goal_coverage() 能给出 full/none 并带 why/source/as_of；④ job 核验要求登记命令**精确相等**
@@ -108,6 +109,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import shlex
@@ -580,6 +582,8 @@ def read_overdue(decisions_db, *, now=None, grace=TEXT_REPLY_GRACE_SECONDS, exp_
         # progress.Progress 只认 `error` 判「不可判」；缺库/缺表/读不动一律走这一支，⛔ 不 0 假绿
         return dict(empty, why=why, error=why)
 
+    if not math.isfinite(clock) or clock <= 0 or not math.isfinite(grace) or grace <= 0:
+        return fail('回复窗口 now/grace 必须是有限正数')
     path = Path(str(decisions_db))
     if not path.is_file():
         return fail(f"runtime 库不存在：{path}（未建 schema，不猜）")
@@ -608,10 +612,9 @@ def read_overdue(decisions_db, *, now=None, grace=TEXT_REPLY_GRACE_SECONDS, exp_
             event_key = str(binding.get("event_id") or "")
             if not event_key:
                 continue
-            replies.setdefault(event_key, []).append(dict(row))
             source_key = binding.get("source")
             if _text(source_key):
-                replies.setdefault(f"{source_key}\u0000{event_key}", []).append(dict(row))
+                replies.setdefault((source_key, event_key), []).append(dict(row))
     except (sqlite3.Error, ValueError, UnicodeError) as exc:
         return fail(f"runtime 库读取失败（不可判）：{type(exc).__name__}: {exc}")
     finally:
@@ -629,7 +632,7 @@ def read_overdue(decisions_db, *, now=None, grace=TEXT_REPLY_GRACE_SECONDS, exp_
             continue
         out["text_events"] += 1
         event_key = str(row["event_id"])
-        if replies.get(event_key) or replies.get(f"{row['source']}\u0000{event_key}"):
+        if replies.get((row['source'], event_key)):
             out["replied"] += 1
             continue
         item = {"id": event_key, "source": row["source"], "why": None}
@@ -637,7 +640,7 @@ def read_overdue(decisions_db, *, now=None, grace=TEXT_REPLY_GRACE_SECONDS, exp_
         if not _text(recipient):
             return fail(f"事件 {event_key} 没有 recipient ⇒ 无法判定能否回复（不可判）")
         event_time = row["event_time"]
-        if event_time is None or not _number(event_time):
+        if not _number(event_time) or not math.isfinite(event_time) or event_time <= 0:
             return fail(f"事件 {event_key} 没有可判定的事件时间（不可判）")
         age = max(0.0, (clock - float(event_time)) / 1000.0 if float(event_time) > 1e11
                   else clock - float(event_time))

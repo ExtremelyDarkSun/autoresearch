@@ -59,12 +59,12 @@ class IssueCase(unittest.TestCase):
         return [{"path": f"results/{name}", "locator": locator}]
 
     def record(self, *, command=None, scope="tests", summary="跑测试崩了", owner="session-a",
-               exitcode=1, sources=None, dedupe_key=None, actor="agent"):
+               exitcode=1, sources=None, dedupe_key=None, actor="agent", exp_id=None):
         return self.issues.record(
             summary=summary, owner=owner,
             command=list(command if command is not None else ["python", "-m", "pytest", "tests"]),
             exitcode=exitcode, sources=sources if sources is not None else self.evidence(),
-            scope=scope, actor=actor, dedupe_key=dedupe_key)
+            scope=scope, actor=actor, dedupe_key=dedupe_key, exp_id=exp_id)
 
     def fixed_and_verified(self, issue_id, *, exitcode=0):
         self.issues.update(issue_id, kind="fixed", actor="agent", text="补了空指针判断",
@@ -432,6 +432,180 @@ class CliTests(IssueCase):
         code, output = self.cli(["index", "--workspace", str(self.ws)])
         self.assertEqual(code, 0, output)
         self.assertEqual(len(json.loads(output)["archive_index"]), 1)
+
+
+class ExpLinkTests(IssueCase):
+    """E2/E4：证据/问题检查关联实验；旧记录不改写；显式跨实验链接。"""
+
+    def test_exp_id_enters_the_dedupe_scope(self):
+        first = self.record(exp_id="exp-01")
+        again = self.record(exp_id="exp-01")
+        other = self.record(exp_id="exp-02")
+        self.assertEqual(first["issue_id"], again["issue_id"])
+        self.assertEqual(again["kind"], "recurred")
+        self.assertNotEqual(first["issue_id"], other["issue_id"],
+                            "同一个命令在两个实验里各崩一次是两个 issue")
+        self.assertEqual(len(self.issues.status()), 2)
+        self.assertEqual(first["payload"]["dedupe_source"], "command+scope+exp_id")
+
+    def test_explicit_dedupe_key_also_scopes_by_exp(self):
+        a = self.record(command=["run.py", "temp/a/task.json"], dedupe_key="crash", exp_id="exp-01")
+        b = self.record(command=["run.py", "temp/b/task.json"], dedupe_key="crash", exp_id="exp-02")
+        self.assertNotEqual(a["issue_id"], b["issue_id"])
+        self.assertEqual(a["payload"]["dedupe_source"], "explicit+exp_id")
+
+    def test_status_projects_linked_unlinked_and_unknown(self):
+        linked = self.record(exp_id="exp-01")["issue_id"]
+        unlinked = self.record(command=["python", "-m", "pyflakes", "."], scope="lint")["issue_id"]
+        self.assertEqual(self.issues.status(linked)["exp_link"], "linked")
+        self.assertEqual(self.issues.status(linked)["exp_id"], "exp-01")
+        self.assertEqual(self.issues.status(linked)["effective_exps"], ["exp-01"])
+        self.assertEqual(self.issues.status(unlinked)["exp_link"], "unlinked")
+        self.assertIsNone(self.issues.status(unlinked)["exp_id"])
+        self.assertEqual(self.issues.status(unlinked)["effective_exps"], [])
+        # 旧记录：payload 里**没有** exp_id 键（这才是历史记录的形状），单独一个 issue 号
+        legacy = self._append_legacy_event("ISSUE-000900")
+        state = self.issues.status(legacy)
+        self.assertEqual(state["exp_link"], "unknown")
+        self.assertIsNone(state["exp_id"])
+        self.assertEqual(state["effective_exps"], [])
+
+    def _append_legacy_event(self, issue_id, *, dedupe_key="legacy-key",
+                             dedupe_source="command+scope", command=None, scope="legacy"):
+        """按旧版 payload 形状追加一条事件（不含 exp_id 键），链仍然自洽。"""
+        import contextlib
+        import hashlib
+        from kernel.autoresearch.issues import canonical
+        events = self.issues.events()
+        seq = len(events) + 1
+        previous = events[-1]["digest"] if events else ""
+        payload = {"summary": "历史记录", "owner": "session-old",
+                   "command": list(command if command is not None else ["old"]),
+                   "exitcode": 1, "sources": [], "scope": scope, "actor": "agent",
+                   "dedupe_key": dedupe_key, "dedupe_source": dedupe_source,
+                   "state": "open", "time": 0.0, "resume_allowed": False,
+                   "passed": None, "verification": None}
+        record = {"seq": seq, "issue_id": issue_id, "kind": "opened",
+                  "payload": payload, "previous": previous}
+        digest = hashlib.sha256(canonical(record).encode()).hexdigest()
+        with contextlib.closing(sqlite3.connect(str(self.issues.db))) as conn:
+            conn.execute("INSERT INTO issue_events VALUES(?,?,?,?,?,?)",
+                         (seq, issue_id, "opened", canonical(payload), previous, digest))
+            conn.commit()
+        return issue_id
+
+    def test_legacy_dedupe_key_still_matches_without_exp(self):
+        """旧版查重键只有 `{command, scope}`：不传 exp 的复现必须仍落到同一个 issue。"""
+        import hashlib
+        from kernel.autoresearch.issues import canonical
+        command = ["python", "-m", "pytest", "tests"]
+        old_key = hashlib.sha256(canonical({"command": command, "scope": "tests"}).encode())
+        legacy = self._append_legacy_event("ISSUE-000900", dedupe_key=old_key.hexdigest(),
+                                           command=command, scope="tests")
+        again = self.record(command=command, scope="tests")
+        self.assertEqual(again["issue_id"], legacy, "旧键必须仍能命中同一个 issue")
+        self.assertEqual(again["kind"], "recurred")
+        self.assertIsNone(again["payload"]["exp_id"])
+        self.assertEqual(again["payload"]["dedupe_source"], "command+scope")
+        self.assertEqual(len(self.issues.status()), 1)
+        first = [row for row in self.issues.events() if row["issue_id"] == legacy][0]
+        self.assertNotIn("exp_id", first["payload"], "旧事件一个字节都不许改写")
+        self.assertEqual(first["digest"], self.issues.events()[0]["digest"])
+
+    def test_filtering_by_exp_never_counts_unlinked(self):
+        linked = self.record(exp_id="exp-01")["issue_id"]
+        unlinked = self.record(command=["python", "-m", "flake8"], scope="lint")["issue_id"]
+        self.assertEqual([row["issue_id"] for row in self.issues.status(exp_id="exp-01")],
+                         [linked])
+        self.assertEqual(self.issues.status(exp_id="exp-02"), [])
+        with self.assertRaises(ValueError):
+            self.issues.status(unlinked, exp_id="exp-01")
+
+    def test_link_appends_an_explicit_cross_exp_event_without_rewriting(self):
+        issue_id = self.record(exp_id="exp-01")["issue_id"]
+        before = self.issues.status(issue_id)
+        linked = self.issues.link(issue_id, exp_id="exp-02", actor="agent",
+                                  reason="同一处崩溃在 02 也复现了",
+                                  sources=self.evidence(name="fix.log", locator="L1"))
+        self.assertEqual(linked["kind"], "linked_exp")
+        state = self.issues.status(issue_id)
+        self.assertEqual(state["exp_id"], "exp-01", "登记时的实验号不许被改写")
+        self.assertEqual(state["exp_link"], "linked")
+        self.assertEqual(state["effective_exps"], ["exp-01", "exp-02"])
+        self.assertEqual(state["exp_links"][0]["exp_id"], "exp-02")
+        self.assertEqual(state["exp_links"][0]["reason"], "同一处崩溃在 02 也复现了")
+        self.assertEqual(state["state"], before["state"], "链接不改状态")
+        self.assertEqual(len(self.issues.status(exp_id="exp-02")), 1)
+        # 旧事件一条不多、一条不改：只有最后一条是新的
+        old_events = [row for row in self.issues.events() if row["kind"] != "linked_exp"]
+        self.assertEqual(old_events[-1]["kind"], "opened")
+        self.assertEqual(self.kinds(issue_id), ["opened", "linked_exp"])
+
+    def test_link_rejections(self):
+        issue_id = self.record(exp_id="exp-01")["issue_id"]
+        with self.assertRaises(IssueRuleError):
+            self.issues.link(issue_id, exp_id="exp-01", actor="agent", reason="重复",
+                             sources=self.evidence())
+        with self.assertRaises(ValueError):
+            self.issues.link(issue_id, exp_id="exp-02", actor="agent", reason="",
+                             sources=self.evidence())
+        with self.assertRaises(ValueError):
+            self.issues.link(issue_id, exp_id="exp-02", actor="agent", reason="有理由",
+                             sources=[])
+        with self.assertRaises(ValueError):
+            self.issues.link(issue_id, exp_id="  ", actor="agent", reason="有理由",
+                             sources=self.evidence())
+        with self.assertRaises(ValueError):
+            self.issues.link("ISSUE-999999", exp_id="exp-02", actor="agent", reason="有理由",
+                             sources=self.evidence())
+        self.issues.link(issue_id, exp_id="exp-02", actor="agent", reason="跨实验复现",
+                         sources=self.evidence())
+        with self.assertRaises(IssueRuleError):
+            self.issues.link(issue_id, exp_id="exp-02", actor="agent", reason="再链一次",
+                             sources=self.evidence())
+
+    def test_linked_issue_can_still_be_closed_and_archived(self):
+        issue_id = self.record(exp_id="exp-01")["issue_id"]
+        self.issues.link(issue_id, exp_id="exp-02", actor="agent", reason="跨实验复现",
+                         sources=self.evidence())
+        self.fixed_and_verified(issue_id)
+        archived = self.issues.archive(issue_id, actor="agent")
+        self.assertEqual(archived["payload"]["state"], "closed")
+        self.assertEqual(self.issues.status(issue_id)["exp_link"], "linked")
+        self.assertEqual(len(self.issues.archive_index()), 1)
+
+    def test_cli_exp_record_status_and_link(self):
+        import contextlib
+        import io
+
+        def cli(argv):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = issues_main(argv)
+            return code, out.getvalue()
+
+        code, output = cli(["--workspace", str(self.ws), "record",
+                            "--summary", "跑测试崩了", "--owner", "session-a",
+                            "--scope", "tests", "--exitcode", "1", "--exp", "exp-01",
+                            "--source", "results/run.log",
+                            "--", "python", "-m", "pytest", "tests"])
+        self.assertEqual(code, 0, output)
+        issue_id = json.loads(output)["event"]["issue_id"]
+        self.assertEqual(json.loads(output)["event"]["payload"]["exp_id"], "exp-01")
+        code, output = cli(["status", "--workspace", str(self.ws), "--exp", "exp-01"])
+        self.assertEqual(code, 0, output)
+        self.assertEqual([row["issue_id"] for row in json.loads(output)["issues"]], [issue_id])
+        code, output = cli(["status", "--workspace", str(self.ws), "--exp", "exp-02"])
+        self.assertEqual(code, 0, output)
+        self.assertEqual(json.loads(output)["issues"], [])
+        code, output = cli(["link", "--workspace", str(self.ws), "--issue", issue_id,
+                            "--exp", "exp-02", "--text", "02 也复现",
+                            "--source", "results/fix.log"])
+        self.assertEqual(code, 0, output)
+        self.assertEqual(json.loads(output)["event"]["kind"], "linked_exp")
+        code, output = cli(["status", "--workspace", str(self.ws), "--issue", issue_id])
+        self.assertEqual(code, 0, output)
+        self.assertEqual(json.loads(output)["issue"]["effective_exps"], ["exp-01", "exp-02"])
 
 
 if __name__ == "__main__":

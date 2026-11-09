@@ -159,8 +159,8 @@ python -X utf8 -B research.py instructions --profile <工作区profile目录> --
 python -X utf8 -B research.py instructions --profile <工作区profile目录> --captured <真实捕获的请求文本>
 ```
 
-本轮完整材料的一次测量（2026-11-09，**仅测量**）：原始来源合计 109,236 B，合并 bundle 111,655 B，
-建议总预算 139,568 B，最大单来源 15,948 B。它不是宿主实际注入证据；配置后仍要捕获真实请求核对。
+本轮完整材料的一次测量（2026-11-09，**仅测量**）：原始来源合计 110,747 B，合并 bundle 113,166 B，
+建议总预算 141,457 B，最大单来源 15,948 B。它不是宿主实际注入证据；配置后仍要捕获真实请求核对。
 
 生成材料后，配置宿主总预算和单文件上限。
 先检查所装宿主版本的配置文档与设置入口。
@@ -248,6 +248,14 @@ before/after 快照与报告投影。生产 CLI 固定接 `Monitoring`（唯一�
 计划样例是[生产计划模板](<../kernel/templates/workflow.plan.template.json>)；通用
 [plan.template.json](<../kernel/templates/plan.template.json>) 通过 `check-plan` **不算**主链可起跑。
 
+收尾用[review v2 模板](<../kernel/templates/workflow.review.template.json>)：除结果、分支与证据外，填下一步判据及来源、
+`cost_scope`、继续推进的负责人、是否需要批准及理由。公开 `workflow review` 默认要求 `schema_version=2`，旧格式需
+`--legacy-record` 且缺字段为 unknown；下一步写「等待批准」是合法交接，不代表已获批。
+需要一张当前检查清单时用 `research.py assurance checklist`；它只读聚合16项，含 audit / budget reservation / remote lease，
+复用真实预算判据，按执行阶段核租约；起跑仍走原事务闸。普通提问用 `research.py questions`，默认 `blocking=false`；
+等待用户答复不是 D2（D2 是用户→我们超期）。下一轮用 `progress preflight` / `next-round` 拿只读命令，
+不自动起进程，由主会话/宿主执行；不新增常驻 daemon。
+
 仓库还带两类**默认关闭**的适配层：
 
 - **受管远端**：`research.py remote doctor/check/provision/start/query/cancel/collect/release`，底层是
@@ -261,8 +269,9 @@ before/after 快照与报告投影。生产 CLI 固定接 `Monitoring`（唯一�
   起服务前 exit 2 且不建库。真实租户送达未验。
 
 仍未完成的是**真实部署验收**：真实 SSH / POSIX 停止与机器空闲、远端代码 / 题单上传、真实通道租户、
-真实云机上的托管执行与平台提交。`research.py profile` 只生成 argv，不执行评测；AutoDL worker 只查询
-状态、生产事件和绑定目标；仓库仍不提供通用 Kaggle 登录和平台提交。
+真实云机上的托管执行与平台提交；当前模型请求是否真的收到完整指令、宿主 goal 的 activation 是否真在推进，
+也必须在现场另核。`research.py profile` 只生成 argv，不执行评测；AutoDL worker 只查询状态、生产事件和绑定目标；
+仓库仍不提供通用 Kaggle 登录和平台提交。
 
 先检查现有入口，不要重复实现已有机制：
 
@@ -385,8 +394,9 @@ python -X utf8 -B research.py compare <对照JSONL> <候选JSONL> --profile <工
 ## 本文件的验证边界
 
 本文件与当前仓库接口做了静态核对，命令参数按当前 `--help` 与 `docs/RUNNING.md` 对齐。
-仓库自身的 `selftest --plugins`、合成冷启动 6 项、V1–V3 合成语义核与真实宿主探针已有记录；
-**它们不等于**这台新机器上的真实云机、平台提交、真实 SSH / POSIX 停止或真实通道租户送达。
+仓库自身的专项测试、合成冷启动 6 项（review 升 schema2）、V1–V3 合成语义核与真实宿主探针已有记录；
+**它们不等于**这台新机器上的真实云机、平台提交、真实 SSH / POSIX 停止、真实通道租户送达，也不证明当前模型请求真的收到完整指令或宿主 goal 已激活。
+V1–V3 只是 3 个合成案例，且 V1 曾在 assessment 泄漏截止后数据、被拒后修订通过，不能宣称一次通过或机械隔离。
 具体计数以[验收记录](<VERIFICATION.md>)为准。
 本次编写没有登录 Kaggle、连接 AutoDL、开机或执行真实评测。
 因此，本文件不是“新机器端到端实测通过”的证明；执行 AI 必须自己补上并实测未验部分。

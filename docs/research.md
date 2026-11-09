@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-LAST-EDIT: 2026-11-09 边界复核：仓库已带只读 DSH 宿主核验器与合成冷启动/V1–V3 语义记录；改掉「没有任何 verifier 实现」的旧说法
+LAST-EDIT: 2026-11-09 本批同步：review v2、普通提问、assurance 清单、D2 回复绑定与跨轮只读预检；通用补项与部署未验分开
 PURPOSE: 研究治理层的说明书 —— 每个能力对应哪个机械判据、装在哪、真实边界是什么（不声称生产宿主已验证）
 ORIGIN: none（新文件）
-CUMULATIVE-DELTA: 2026-11-09 同步 host_evidence 的 verified/declared 边界、合成冷启动与语义核的记录口径。
+CUMULATIVE-DELTA: 2026-11-09 同步 host_evidence、复盘交接 v2、普通提问、检查清单、D2 超期与合成冷启动/语义核的记录口径。
 -->
 
 # 研究治理层
@@ -42,6 +42,10 @@ CUMULATIVE-DELTA: 2026-11-09 同步 host_evidence 的 verified/declared 边界�
 | 独立方案审计 + 版本绑定 | `prepare_audit` / `record_audit` / `audit_state` | 独立性靠宿主日志核（`host_evidence.DSHHost`，默认读 `~/.dsh`）；不注入或读不到就只记 `declared`，`verified` 要真读过新 spawn 子会话 |
 | 每个计划跨版本最多 2 次、措辞不重审 | `prepare_audit` 按 `plan_id` 累计计数；超限直接拒 | 扩额没有自我通道（这是设计） |
 | 用户专项意图 + 节点监控 | `create_intent`（原话 + 会话 + seq）· `record_monitor_report`（覆盖全部触发）· `check_start` · `close`（旧 proof / 自然语言 `--user-quote` 两路） | 判不了「这句话算不算专项意图」，那是语义判断；`achieved` / `unsatisfiable` 不能靠原话绕过，必须有 current 独立报告绑定同一句 |
+| 复盘继续交接 | `review_continuation.validate`（schema2：criterion + evidence、cost_scope、next_owner、needs_approval + reason） | 旧复盘只读兼容并投影 unknown；「等待批准」是研究交接，不等于已获批，执行前仍核真实预算与批准 |
+| 普通提问 | `Questions.ask/answer/declare/link/expire`；答复只认 Inbox `authenticate` 事件 | 默认 `blocking=false`：问用户不等于停等；旧无 exp 记录 unknown，不猜关联；真实租户未验 |
+| 入向超期（D2） | `progress.outcome` advance 调 `_require_no_overdue`；`decisions.reply_status` / `progress_host.read_overdue` 按 `source + event_id` 配对 | 同号异源不串；未指定 source 的旧回执不算回复；`event_time/now/grace` 非有限或非正判不可判；真实通道未验 |
+| 统一检查清单 | `assurance.checklist` 聚合 workflow/monitoring/decisions/issues/questions/reporting/review.continuation | `unknown` 永不记绿；含审计、共享预算和远端租约，共16项；预算复用真实 Admission 判据，按执行阶段区分当前可用与历史绑定；不写库、不造 verified |
 | 预算可信时序 / 防复活 | `HostBudgetSource.trusted_ordering`（只读返回宿主核过的 session / seq / host_time）+ `Accounts.authorize` 在同一个 `BEGIN IMMEDIATE` 里判新旧 | 真实宿主日志的跨会话序与时钟仍由部署保证；不可判就 fail-closed |
 | 复盘 / 经验候选四处置 | `add_lesson_candidate` · `confirm_lesson`（`REV` + `method` 绑定） | 判不了人是不是真心保留 |
 | 修订使旧确认失效 | `revise_lesson`（`REV+1`）· `lesson_state`（列失效确认） | 判不了修订后的正文是不是更对 |
@@ -116,6 +120,7 @@ if not state["ok"]:
    （`verified=true`、`session_verified=true`、`delivery_verified=false`）与一次受管 job 的精确命令 + jobId
    绑定（只证明登记来源，不证明叫醒或存活）。**单次探针不等于完整真实链路**；
    真实 SSH / POSIX 停止、真实云机、平台提交、真实通道租户与完整冷启动未验。
+   当前模型请求是否真的收到完整指令、宿主 goal 是否真的在推进（activation），也仍未验。
    停止只覆盖本 job 进程组：子进程主动 `setsid` 逃逸不在内，更强隔离要部署 cgroup / namespace；Windows 无可靠组枚举判 `unknown`，group-stop 不等于整台机器停止。
 2. **通道默认关闭，未做真实租户验证。** 审批机制在核心里；`channels/feishu.py` + `channels_cli.py` 是可离线驱动的真实 HTTP 适配层与命令入口：`doctor` 只读、`listen` 缺 AES 解密后端时起服务前 exit 2 且不建库、`poll` 一次性；加密事件用可选 `cryptography`（`requirements-feishu.txt`），先对原 body 验签再解密。官方 AES-256-CBC 的 challenge / 文字 / 卡点击可离线走到认证入账与真实 `DecisionService` 批准；**真实租户送达、收件与群 @ 未验**。
 3. **不联网、不起进程、不读凭据。** 治理层只碰调用方给的 `Store`；通道与远端适配层各自有显式开关。`decisions status` / `overdue` / `authorize-check` 与 `channels doctor` 用只读构造，不建表、不建目录、不装通道台账；缺库或旧 schema 判「不可判」。
@@ -123,6 +128,7 @@ if not state["ok"]:
    不说明假设对、也不构成实验授权。
 5. **语义判断仍在人 / 主会话。** 什么算专项意图、什么算执行偏差、这次该不该滚动文档，
    都没有自动判据。V1–V3 的合成语义核也只是 3 个案例的一次独立核。
+   继续下一轮只有只读 `preflight` / `next-round` 给真实命令，不自动起进程；`schedule` 只排序调用方显式给或冻结计划里的 stage，不扫描生成计划。
 6. **`validate_plan` 不读文件。** CLI 的 `check-plan <path>` 负责读文件与解析 JSON；
    本函数只接 dict。生产主链的计划样例是 [workflow.plan.template.json](<../kernel/templates/workflow.plan.template.json>)；
    通用治理模板 [plan.template.json](<../kernel/templates/plan.template.json>) 通过 `check-plan` 不代表主链可起跑。
@@ -135,11 +141,15 @@ if not state["ok"]:
 python -m unittest discover -s tests -p 'test_governance.py' -v
 python -m unittest discover -s tests -p 'test_audit_host_binding.py' -v
 python -m unittest discover -s tests -p 'test_cold_start.py' -v
+python -m unittest discover -s tests -p 'test_review_continuation.py' -v
+python -m unittest discover -s tests -p 'test_questions.py' -v
+python -m unittest discover -s tests -p 'test_assurance.py' -v
+python -m unittest discover -s tests -p 'test_progress_advancement.py' -v
 ```
 
 `test_audit_host_binding.py` 用合成宿主日志核独立性与绑定；`test_cold_start.py` 在同一个空工作区跑
-init → Git/venv → Monitoring → Accounts/Admission → DSHHost → 真实子进程 → 复盘 → 报告投影 → scribe
-字节回演。两者都用合成夹具，不接触真实会话。
+init → Git/venv → Monitoring → Accounts/Admission → DSHHost → 真实子进程 → **review v2** → 报告投影 → scribe
+字节回演。新增测试覆盖 review v2 / 普通提问 / 检查清单 / D2 出口与跨轮预检；全部合成夹具，不接触真实会话。
 
 覆盖的**拒绝路径**（不是只测通过）：
 

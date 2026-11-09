@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "result_summary": "<实际观察与解释边界>",
+  "verdict": "inconclusive",
+  "branch": "inconclusive",
+  "next_action": "<事前分支对应行动或说明偏离原因>",
+  "deviations": "<与事前设计的偏差；没有偏差时明确写没有>",
+  "evidence": [{"path": "<结果证据文件>", "locator": "<行号或逐字片段>"}],
+  "hypothesis_update": {"path": "<专题主文档>", "locator": "<本轮判决落账位置>"},
+  "continuation": {
+    "criterion": "<约束下一步行动的研究判据>",
+    "criterion_evidence": [{"path": "<判据来源文件>", "locator": "<行号或逐字片段>"}],
+    "cost_scope": {
+      "scope": "small",
+      "max_cost_units": 1,
+      "basis": "<费用估计覆盖哪些任务与动作、上限依据；未知不得填0>"
+    },
+    "next_owner": "<继续推进的负责人>",
+    "needs_approval": false,
+    "approval_reason": "<为何需要或不需要专项批准；large/submission须true，执行另核真实授权>"
+  }
+}

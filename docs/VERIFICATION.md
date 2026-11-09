@@ -1,6 +1,6 @@
 <!--
 GENERATED-BY: repository bootstrap and integration acceptance, 2026-11-09 +08:00
-LAST-EDIT: 2026-11-09，研究主链、通道、远端与只读接线统一验收
+LAST-EDIT: 2026-11-09，复盘v2、普通提问、统一检查与下一轮组合完成整库验收
 PURPOSE: 记录公开仓库已实测的行为、证据种类和真实部署未验边界。
 ORIGIN: isolated offline tests, direct CLI checks and private host probes
 CUMULATIVE-DELTA: 用最终集成验收替换早期批次数；保留宿主实测与合成日志的区别。
@@ -16,7 +16,7 @@ python -X utf8 -B research.py selftest --plugins
 python -X utf8 -B tools/check_repository.py
 ```
 
-【实测】最后一次完整回归退出码 0：事务运行时 272 项通过；其余 unittest 共 972 项，其中 961 项通过、11 项跳过。Python 合计 **1,233 项通过、11 项跳过**。三个插件另有 **221 条断言通过**。这次回归已覆盖 WAL 只读连接和远端起跑投影的最终修改。
+【实测】最后一次完整回归退出码 0：事务运行时 272 项通过；其余 unittest 共 1,126 项，其中 1,115 项通过、11 项跳过。Python 合计 **1,387 项通过、11 项跳过**。三个插件另有 **221 条断言通过**。本次包含复盘v2、普通提问、16项统一检查、可信超期闸、本地/远端下一轮预检与显式阶段排序的组合验证。
 
 跳过的 11 项属于 [SSH 后端测试](<../tests/test_ssh_backend.py>)的真实 POSIX worker、硬超时与进程组停止。本机为 Windows；这些用例尚未在 POSIX 机器现场运行。
 
@@ -34,7 +34,12 @@ python -X utf8 -B tools/check_repository.py
 | 受管远端执行 | [远端集成](<../tests/test_remote_workflow.py>)47 项：本地与远端共用起跑复核；claim 和发送前复核授权、来源、审计与监控；失败不发送；共享同笔预算、真实 Runtime/Scheduler 资源租约；unknown 保留预算与资源；起跑立即生成 reporting/AI_WORK 投影，投影失败不阻安全取消 |
 | 远端停止判定 | [停止安全测试](<../tests/test_ssh_safety.py>)41 项：假进程与假进程组覆盖晚启动、超时、残留子进程、错 token/request/attempt；两个真实本地进程验证锁排他；没有把这些用例称为真实 POSIX 停止 |
 | 实际环境指纹 | [环境测试](<../tests/test_ssh_environment.py>)：真实临时 venv 的安装包元数据改变会改变环境指纹，声明包列表不能替代实际探测 |
-| 完整指令 | 全文材料生成、逐来源 SHA256 与范围核对；source 109,236 B、bundle 111,655 B、最大来源15,948 B、建议总上限139,568 B；这组数只是测量，不证明模型实际收到全文 |
+| 完整指令 | 全文材料生成、逐来源 SHA256 与范围核对；source 110,747 B、bundle 113,166 B、最大来源15,948 B、建议总上限141,457 B；这组数只是测量，不证明模型实际收到全文 |
+| 复盘下一轮交接 | [复盘v2测试](<../tests/test_review_continuation.py>)14项：判据与原始证据、成本范围、负责人、是否需批准；旧记录保持 legacy unknown；待批准的交接不签发执行批准；冷启动已使用 require_version2 |
+| 普通提问与可信回复 | [问题测试](<../tests/test_questions.py>)39项：真实 Store/Inbox/Delivery、FeishuChannel本地认证及公开CLI；错问题号、歧义、旧时间、非有限时间拒绝；普通待答默认非阻断，enqueue仅排入交付队列 |
+| 当前检查与实验关联 | [统一检查](<../tests/test_assurance.py>)39项与[工程问题](<../tests/test_issues.py>)34项：16项清单、旧哈希查重兼容、追加关联、实际冻结预算绑定、阶段正确的远端租约；缺表只读零写，费用未知不假结算 |
+| 下一轮与跨专题排序 | [推进组合](<../tests/test_progress_advancement.py>)29项与[远端预检](<../tests/test_progress_remote.py>)17项：真实 Workflow/Admission/Runtime/assurance 组合；静态空超期快照不能绕过可信Inbox，远端用 remote start 命令，检查器缺失不降级；显式候选按冻结阶段和正式资源键排序，不自动启动 |
+| 回复来源与时间边界 | [回复绑定](<../tests/test_reply_binding.py>)5项：同号异源需分别实际回复、无来源旧回执不算证明、无效时间不可判、真实只读查询不改库或产生sidecar |
 | 公开源文件 | Python AST、JSON、Markdown 本地链接与已知私人模式检查；不声称识别所有可能的私有值 |
 
 三个插件位于内核；插件断言计数与 Python unittest 分列。Python 内核使用标准库；加密收件测试另使用可选 `cryptography`，本次环境已安装。插件需要 Node.js 20+，真实 DSH 压缩日志解码需要 Node.js 24+。

@@ -1290,7 +1290,12 @@ class CliTests(FlowCase):
         built, run = self.finished_run()
         self.append_doc("supported")
         record = self.ws / "review.json"
-        record.write_text(json.dumps(self.review_record(), ensure_ascii=False), encoding="utf-8")
+        record.write_text(json.dumps(self.review_record(schema_version=2, continuation={
+            'criterion': '同装置逐题复核收益',
+            'criterion_evidence': [{'path': 'evidence/readings.md', 'locator': 'L1'}],
+            'cost_scope': {'scope': 'small', 'max_cost_units': 1, 'basis': '仅一轮小样本费用上限'},
+            'next_owner': SESSION, 'needs_approval': False,
+            'approval_reason': '机制验证无需专项批准，实际执行仍核共享预算'}), ensure_ascii=False), encoding="utf-8")
         code, output = self.cli(["review", "--workspace", str(self.ws), "--run-id", run["run_id"],
                                  "--file", "review.json"])
         self.assertEqual(code, 0, output)

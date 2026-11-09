@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: operations manual migration, 2026-11-09
-LAST-EDIT: 2026-11-09 主链复核：删掉已修好的 progress 子命令 --help 缺陷与已接线的在途项；补生产计划模板、自动生命周期投影与待验边界
-PURPOSE: 主入口操作说明 —— 工作区、专题隔离、预算准入、研究执行主链、人读页供料、意图监控、审批入向、进度推进器、问题台账
-ORIGIN: kernel/autoresearch/{workspace,budget,workflow,reporting,monitoring,decisions,progress,progress_host,issues}_cli.py 的实际参数
-CUMULATIVE-DELTA: 2026-11-09 复核版。命令取自当前 `--help`；未实测的写"未验"，⛔ 不把待配置写成待写代码。
+LAST-EDIT: 2026-11-09 本批同步：补 review v2、issues exp、questions、assurance、progress preflight/next-round/schedule 与 D2 回复绑定；通用补项与真实部署分别标
+PURPOSE: 主入口操作说明 —— 工作区、专题隔离、预算准入、研究执行主链、人读页供料、意图监控、审批入向、通道、远端、进度推进器、问题台账、检查清单、提问
+ORIGIN: kernel/autoresearch/{workspace,budget,workflow,reporting,monitoring,decisions,channels,progress,progress_host,remote,issues,assurance,questions}_cli.py 的实际参数
+CUMULATIVE-DELTA: 2026-11-09 复核版。命令取自当前 `--help`；已验/待现网/在补分别写清，⛔ 不把待配置或在补写成已验。
 -->
 
 # 怎么跑：主入口操作说明
@@ -63,7 +63,7 @@ python -X utf8 -B research.py instructions --bundle .local/required-instructions
 python -X utf8 -B research.py instructions --captured 宿主实际请求.txt
 ```
 
-- 本轮测量（2026-11-09，**仅测量**）：来源合计 109,236 B，合并 bundle 111,655 B，建议总预算 139,568 B，最大单来源 15,948 B。它不是宿主实际注入证据；文档或 profile 一改就要重新测量。
+- 本轮测量（2026-11-09，**仅测量**）：来源合计 110,747 B，合并 bundle 113,166 B，建议总预算 141,457 B，最大单来源 15,948 B。它不是宿主实际注入证据；文档或 profile 一改就要重新测量。
 - 第二条只检查「你给的这段宿主请求」是否含完整正文；它**不**证明宿主真注入了。
 
 ## 2 专题隔离：`research.py workspace`
@@ -169,6 +169,8 @@ python -X utf8 -B research.py workflow finish --workspace ../my-research --run-i
 python -X utf8 -B research.py workflow review --workspace ../my-research --run-id RUN-… --file review.json
 python -X utf8 -B research.py workflow status --workspace ../my-research --topic demo
 ```
+
+新复盘用[版本2模板](<../kernel/templates/workflow.review.template.json>)：除实际结果、分支和证据外，填写下一步判据与来源、费用范围、继续推进的负责人、是否需要批准及原因。公开 `workflow review` 默认要求 `schema_version=2`；显式 `--legacy-record` 可导入旧格式，缺失字段仍为 unknown。下一步写「等待批准」是合法研究交接，不能当作执行已经获批。字段进入 `AI_WORK` 和报告供料，执行前仍另核真实预算与批准。
 
 判据（都是实测过的拒绝路径）：
 
@@ -311,11 +313,27 @@ python -X utf8 -B research.py progress --root ../my-research --spec progress.spe
 python -X utf8 -B research.py progress --root ../my-research --spec progress.spec.json rearm --note "处理完"
 python -X utf8 -B research.py progress --root ../my-research --spec progress.spec.json outcome --kind advance --action "做了X"
 python -X utf8 -B research.py progress --root ../my-research --spec progress.spec.json status
+
+# 下一轮只读预检：全过才给真实 launch 命令；不写盘、不起进程
+python -X utf8 -B research.py progress --root ../my-research --spec progress.spec.json preflight \
+    --workspace ../my-research --next-plan plans/P2.json --topic demo \
+    --owner-session session-owner --intent-none -- <argv...>
+python -X utf8 -B research.py progress --root ../my-research --spec progress.spec.json next-round \
+    --workspace ../my-research --next-plan plans/P2.json --topic demo \
+    --owner-session session-owner --intent-none -- <argv...>
+
+# 跨专题排序：候选显式给出；stage 取显式或冻结计划字段
+python -X utf8 -B research.py progress --root ../my-research --spec progress.spec.json schedule \
+    --entries schedule.json [--stage-order mechanism,composition,large,paired] [--user-stop]
 ```
 
 - `spec` 是**闭集** JSON（`version/name/owner/state/poll_sec/quiet/round/goal/overdue/collectors/events`）；不认识的键、非 argv 命令、缺 `round.kind` 一律拒。
-- `watch` 是受管后台作业本体：**叫醒一次就退出并写 `needs_rearm`**，不设固定寿命（A3/A4/A6）；重挂必须显式 `rearm`。
-- `outcome` 是唤醒出口三选一：`advance` / `nothing`（必须给下一条件）/ `problem`（登记新问题）。
+- `watch` 是受管后台作业本体：**叫醒一次就退出并写 `needs_rearm`**，不设固定寿命（A3/A4/A6）；重挂必须显式 `rearm`。⛔ 不新增常驻 daemon。
+- `outcome` 是唤醒出口三选一：`advance` / `nothing`（必须给下一条件）/ `problem`（登记新问题）。`advance` 在落账前核**当前真实**入向超期（D2）：超期或不可判即拒并指明先回复用户；安全收尾用显式 `--safe-action`，但它不能声明下一轮。
+- D2 的超期源在 `preflight` / `next-round` / `schedule` / `outcome advance` 固定读 workspace 库的只读 Inbox（`read_overdue`）；`--overdue-json` / adapter 的 `overdue()` 只作 probe/tick/status 诊断，**静态快照不能当 D2 放行依据**。回复按 `source + event_id` 配对，同号异源不串；未指定 source 的旧回执不算已回复；`event_time/now/grace` 非有限或非正判不可判。公开 CLI 静态空快照不能绕过真实超期记录的本地测试已通过。
+- `preflight` / `next-round` **只读**：复用 `Workflow.check` 同判据，返回真实 launch 命令；**不执行、不起进程、不自动开下一轮**，由主会话/宿主执行。真实宿主唤醒与推进激活未验。
+- `schedule` 只排序**显式候选**（`--entries` / `--entry-json`），stage 取显式 `--stage` 或冻结计划里的 `research.stage` / `stage` / `execution.stage`；**不扫描生成计划、不猜科学计划**。每个候选只读核审计/监控/准入/预算/资源租约，按阶段与优先级稳定排序；`--user-stop` 时不排序、不给命令。
+- 普通提问（我们→用户）默认 `blocking=false`，不算 D2 超期；只有明确 `blocking=true` 且关联本实验的问题才挡依赖它的下一步（见 §10）。
 - 采集失败 fail-closed：连续失败会形成 `progress_unavailable` 事件；租约带 fencing，第二个推进器拿不到。
 - goal 维度来自 `progress-host` 对 DSH 会话 `goal/change` 事件的只读重放；没有 goal / paused / blocked / complete 可判成 coverage `none`，但 `phase=active` 且没有部署可信模块时 `activation` 不可判 ⇒ coverage 是 `unknown`（不冒充 full / none）。
 - 子命令 `--help` 与顶层 `--help` 都正常（此前 `KeyError: 'default'` 的格式化缺陷已修）；参数仍以 `--help` 为准。
@@ -334,15 +352,18 @@ python -X utf8 -B research.py progress-host --deployment deployment.json status
 
 - `--deployment` 是**固定**配置（`version/name/dsh_home/session_id/workspace/progress_spec/decisions_db/state_root/owner/overdue_grace_sec/trusted_module/host_module` 等闭集键）；证据路径只能来自它，**不听 CLI 临时参数**。
 - `plan` 生成受管 `watch` 的确切命令与登记命令；`register` 先核「exact 命令 + jobId」再落 append-only 台账（省略 `--command` 时用 `watch` 写的 pending 标记）；`verify` 只核不登记。
+- 超期/回复判定按 `source + event_id` 配对：同号异源不串；未指定 source 的旧回执**不算已回复**；`event_time`、`now`、`grace` 非有限或非正一律判不可判（fail-closed，不记 0 超期）。
 - 它**只读宿主、不改宿主**：不写 goal、不改 profile、不叫醒会话。
 
 ## 10 问题台账：`research.py issues`
 
 ```powershell
 python -X utf8 -B research.py issues --workspace ../my-research record \
-    --summary "…" --owner session-owner --scope "单题评测" --exitcode 1 \
+    --summary "…" --owner session-owner --scope "单题评测" --exp P1 --exitcode 1 \
     --source results/run.log [--dedupe-key 逻辑名] -- python -m pytest tests -q
-python -X utf8 -B research.py issues --workspace ../my-research status [--issue ISSUE-000001]
+python -X utf8 -B research.py issues --workspace ../my-research status [--issue ISSUE-000001] [--exp P1]
+python -X utf8 -B research.py issues --workspace ../my-research link --issue ISSUE-000001 --exp P2 \
+    --text "为什么也算这个实验" --source results/run.log
 python -X utf8 -B research.py issues --workspace ../my-research assign --issue ISSUE-000001 \
     --owner session-b --text "换人负责" --source results/run.log
 python -X utf8 -B research.py issues --workspace ../my-research fix --issue ISSUE-000001 \
@@ -353,10 +374,40 @@ python -X utf8 -B research.py issues --workspace ../my-research archive --issue 
 python -X utf8 -B research.py issues --workspace ../my-research index
 ```
 
-- 同一 `command + scope`（或同一显式 `--dedupe-key`）只算一个 issue；⛔ 不做模糊合并。
+- 同一 `{command, scope, exp_id}`（或同一显式 `--dedupe-key` + scope + exp）只算一个 issue；⛔ 不做模糊合并。`--exp` 进查重键：同一命令在两个实验各崩一次是两个 issue。
+- 旧记录没有 `exp_id` 键 ⇒ `exp_link=unknown`，显式不给 ⇒ `unlinked`；`link` 追加 `linked_exp` 事件，不改写旧行。
 - `verify` 必须给**可核 argv + 真实退出码 + 证据**；`passed` 由退出码推出，不一致会被拒。
 - 归档只认**这次结案**一次；同名不同内容换名、⛔ 不覆盖；写失败留 `archive_failed` 诊断。
 - 台账只证明**完成记录**；命令是否真跑过、是否针对这个错，仍由 agent / 人核。
+
+### 检查清单：`research.py assurance`
+
+```powershell
+python -X utf8 -B research.py assurance --workspace ../my-research --topic demo --exp P1 \
+    --owner-session session-owner checklist
+```
+
+- 只读聚合 workflow / monitoring / decisions / issues / questions / reporting / review.continuation，每项给 `ok|blocked|unknown`、`required`、`applicable`、`exp_link`、来源与证据；`unknown` 永不记绿，未关联项列在 `unlinked_items`。
+- 检查共16项，含 `workflow.audit`、`budget.reservation`、`remote.lease`。未启动预算直接复用 `Admission.check_budget`，必须匹配冻结计划的账号、预留、作用域、金额与有效期；已启动但实际费用未知时只列诊断，不假结算、不阻安全收尾。远端未启动核声明资源的本地占用/隔离状态，不要求提前 claim；启动后核实际绑定，结束后仍持有/隔离保持 unknown。检查不签发批准、不占资源，执行时仍走原事务闸。
+- 它不写文件、不建库、不执行任何动作；语义结论仍由人/主会话判断。
+
+### 普通提问：`research.py questions`
+
+```powershell
+python -X utf8 -B research.py questions --workspace ../my-research ask \
+    --exp P1 --body "这个方向要不要继续？" --owner session-owner [--blocking]
+python -X utf8 -B research.py questions --workspace ../my-research open [--exp P1]
+python -X utf8 -B research.py questions --workspace ../my-research answer Q-000001 \
+    --source feishu --event-id <入向事件> --channel-config channel.json
+python -X utf8 -B research.py questions --workspace ../my-research declare Q-000001 \
+    --body "用户口头说继续" --actor session-owner
+```
+
+- 普通提问独立于审批：不生成审批页、不发选择卡、不消费短码、不自动批准执行。
+- 答复只认 Inbox 已认证内容中明确指向本问题的编号（如 `[question:Q-000001]`）或已送达消息线程；事件时间须有限且不早于发问。无编号、错编号或多个编号歧义均拒。`declare` 只记声明，不改状态。
+- 外发先 `ask --recipient <收件人>`，再 `questions enqueue Q-000001` 排入现有 Delivery 队列，由部署发送端实际发送；入队不代表送达。正文带可复制的问题编号，便于用户回复。
+- 默认 `blocking=false`：问用户不等于实验停等；只有明确依赖答复才 `--blocking`。
+- 等待用户答复**不是** D2（D2 是用户→我们超期）；问题超期只进诊断，除非 `blocking=true` 且关联本实验。真实租户与真实用户回复未验。
 
 ---
 
@@ -391,6 +442,10 @@ python -X utf8 -B research.py issues --workspace ../my-research index
 | 受管 job 的来源绑定 / 叫醒 | `verify_job` 已用真实宿主持久日志核过一次精确命令 + jobId 绑定（`verified=true`）；**watch 是否真的叫醒负责人、作业是否仍存活**未验 | progress-host + 部署 |
 | 完整冷启动（真实版） | 合成冷启动 6 项已过：同一空工作区、公开 init、Git/venv、真实 Monitoring、Accounts/Admission、DSHHost 解析合成日志、真实子进程、复盘、快照/报告投影、scribe 字节回演 `ack verified`；第二轮同一 `series-small` 另预留 3、真实运行后 `reserved_units=6`/`spent_units=0`、两笔 unknown 成本保持 `reserved`，第三轮因未复盘被拒。真实云机 / 平台 / 通道版本未做 | 父级验收 |
 | V1–V3 语义验收 | 3 个合成案例、新 spawn 独立会话：V2 识别 7/10 写成 9/10 并阻断、V3 合理探索放行；V1 **修订后**通过。不是生产 Monitoring JSON 端到端 | 父级验收 + monitoring |
+| 真实远端资源状态 | `assurance` / `progress` 预检只读本地台账；已启动租约与终态仍需 `remote query/release` 及真实机器现场核验 | 受管远端部署 |
+| progress 超期源 | `preflight` / `next-round` / `schedule` / `outcome advance` 已固定接 workspace 只读 Inbox（`read_overdue`）；`--overdue-json`/adapter 只作诊断。CLI 本地组合已验，真实通道入向与宿主激活未验 | progress + 部署 |
+| 真实用户输入注入 / goal 激活 | 当前模型请求是否真收到完整指令、宿主 goal 的 activation 是否真在推进，均未验；不凭配置生成宣称已注入或已激活 | 部署 |
+| AutoDL / 比赛现场 | 仓库只有查询、事件与参数化 argv；真实 AutoDL、正式评分器与平台提交未验 | 部署 |
 | 真实宿主探针 | 已实测：独立子会话 spawn 绑定 / 固定 JSON 原文相等 / scribe 从空工作区写到整页（`ack` 回 `verified=true`、`session_verified=true`、`delivery_verified=false`）、八节校验无错。**这不等于完整真实云实验。** | 已记录，不外推 |
 
 ## 13 `research.py demo` 的定位
@@ -407,4 +462,4 @@ python -X utf8 -B research.py <entry> --help
 python -X utf8 -B research.py <entry> <subcommand> --help
 ```
 
-`<entry>` ∈ `workflow · reporting · monitoring · decisions · channels · progress · progress-host · remote · budget · workspace · issues · governance · topics · runtime`。
+`<entry>` ∈ `workflow · reporting · monitoring · decisions · channels · progress · progress-host · remote · budget · workspace · issues · assurance · questions · governance · topics · runtime`。

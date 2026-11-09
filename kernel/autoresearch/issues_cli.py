@@ -1,24 +1,30 @@
 # GENERATED-BY: issues ledger CLI migration, 2026-11-09
-# LAST-EDIT: 2026-11-09 首版：record / status / assign / fix / verify / reopen / archive / index 八个子命令
+# LAST-EDIT: 2026-11-09 E2/E4：`record --exp`、`status --exp` 与 `link` 子命令（显式跨实验关联）
 # PURPOSE: §9 问题台账的命令行入口 —— 首错登记、查重、负责人、修复、复验（可核 argv + 退出码）、冷件与索引。
 # ORIGIN: kernel/autoresearch/issues.py 的公共操作；⛔ 不含具体事故编号、机器、读数或个人通道。
-# CUMULATIVE-DELTA: 首版。只读子命令（status / index）零写；写子命令一律走台账事务。
+# CUMULATIVE-DELTA: 首版 + 本轮：`--exp` 进查重范围（同命令不同实验不再糊成一个）；
+#   `status --exp` 只列**明确关联**该实验的问题；`link` 追加 `linked_exp` 事件，⛔ 不改写旧记录。
 
-"""问题台账命令行（框架行为预期 §9）。
+"""问题台账命令行（框架行为预期 §9 + E2/E4）。
 
 用法（参数的准确写法以 `--help` 为准）：
 
     python -m kernel.autoresearch.issues_cli --workspace W record \\
-        --summary "…" --owner <人/会话> --scope <受影响范围> --exitcode N \\
+        --summary "…" --owner <人/会话> --scope <受影响范围> --exitcode N [--exp exp-01] \\
         [--source PATH ...] [--sources FILE] [--dedupe-key K] [--actor A] -- <首错命令 argv...>
 
-    ... status [--issue ISSUE-000001]
+    ... status [--issue ISSUE-000001] [--exp exp-01]
     ... assign --issue ID --owner <负责人> --text "…" (--source PATH | --sources FILE)
     ... fix    --issue ID --text "改了什么" (--source …) [--exitcode N -- <修复命令 argv...>]
     ... verify --issue ID --text "复验了什么" (--source …) --exitcode N -- <复验命令 argv...>
     ... reopen --issue ID --text "怎么又出现了" (--source …)
+    ... link   --issue ID --exp exp-02 --text "为什么也算这个实验" (--source …)
     ... archive --issue ID [--actor A]
     ... index
+
+`--exp` 是什么：这条证据/检查所属的实验号。它**进查重键** —— 同一个命令在两个实验里
+各崩一次是两个 issue。不给 `--exp` ⇒ 明确记成「没关联」（`exp_link=unlinked`）。
+⛔ 通用工程 bug 不必属于某个科研实验：那些就记成 unlinked，`status --exp` 不会把它们算进来。
 
 ⛔ 本工具**不执行**任何命令：`verify` 记录的是「有人用这条 argv 跑出这个退出码」，
 台账只证明这条完成记录；命令是否真跑过、是否针对这个 bug，仍由 agent / 人核。
@@ -35,7 +41,7 @@
 ======
 
     0  已登记 / 只读查询成功
-    9  规则拒绝（未结案不能归档、重复归档、复验前没修复、passed 与退出码不一致…）
+    9  规则拒绝（未结案不能归档、重复归档、复验前没修复、passed 与退出码不一致、重复链接…）
     2  输入或数据错误（工作区未初始化、文件不存在、JSON 坏、台账损坏）
 """
 
@@ -127,10 +133,14 @@ def _parser():
     node.add_argument("--sources", default=None, help="证据清单 JSON 数组（元素是路径或 {path, locator}）")
     node.add_argument("--dedupe-key", default=None,
                       help="显式归并键（命令里带临时路径时用）；⛔ 不给就不做模糊合并")
+    node.add_argument("--exp", default=None,
+                      help="这条证据/检查关联的实验号（进查重键；不给=明确不关联）")
     node.epilog = "`--` 之后是首错命令的完整 argv，必须与真实执行的一致。"
 
     status = sub.add_parser("status", parents=[common], help="只读：一个问题或全集当前状态")
     status.add_argument("--issue", default=None)
+    status.add_argument("--exp", default=None,
+                        help="只列**明确关联**该实验的问题（不算 unlinked/unknown）")
 
     assign = sub.add_parser("assign", parents=[common], help="改负责人（必须显式给 --owner）")
     assign.add_argument("--issue", required=True)
@@ -163,6 +173,14 @@ def _parser():
     reopen.add_argument("--source", action="append", default=[])
     reopen.add_argument("--sources", default=None)
 
+    link = sub.add_parser("link", parents=[common],
+                          help="显式把问题关联到另一个实验（追加 linked_exp 事件，不改写旧记录）")
+    link.add_argument("--issue", required=True)
+    link.add_argument("--exp", required=True, help="要关联的实验号")
+    link.add_argument("--text", required=True, help="为什么也算这个实验（理由，必填）")
+    link.add_argument("--source", action="append", default=[])
+    link.add_argument("--sources", default=None)
+
     archive = sub.add_parser("archive", parents=[common], help="把整段已结案历史归冷件（不删热件历史）")
     archive.add_argument("--issue", required=True)
 
@@ -188,13 +206,13 @@ def main(argv=None):
             if args.action == "index":
                 _dump({"ok": True, "archive_index": issues.archive_index()})
             elif args.issue:
-                item = issues.status(args.issue)
+                item = issues.status(args.issue, exp_id=args.exp)
                 _dump({"ok": True, "issue": {key: value for key, value in item.items() if key != "history"},
                        "history": item["history"]})
             else:
-                _dump({"ok": True, "issues": [
+                _dump({"ok": True, "exp_id": args.exp, "issues": [
                     {key: value for key, value in item.items() if key != "history"}
-                    for item in issues.status()]})
+                    for item in issues.status(exp_id=args.exp)]})
             return 0
 
         issues = Issues(workspace)
@@ -204,7 +222,13 @@ def main(argv=None):
             result = issues.record(summary=args.summary, owner=args.owner, command=tail,
                                    exitcode=args.exitcode,
                                    sources=_sources(workspace, args.source, args.sources),
-                                   scope=args.scope, actor=args.actor, dedupe_key=args.dedupe_key)
+                                   scope=args.scope, actor=args.actor, dedupe_key=args.dedupe_key,
+                                   exp_id=args.exp)
+            _dump({"ok": True, "event": result})
+            return 0
+        if args.action == "link":
+            result = issues.link(args.issue, exp_id=args.exp, actor=args.actor, reason=args.text,
+                                 sources=_sources(workspace, args.source, args.sources))
             _dump({"ok": True, "event": result})
             return 0
         if args.action == "assign":

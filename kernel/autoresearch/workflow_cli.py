@@ -1,5 +1,5 @@
 # GENERATED-BY: research execution main chain migration, 2026-11-09
-# LAST-EDIT: 2026-11-09 17:10 check 改为只读构造（ReadonlyStore + Workflow(readonly=True) + DecisionService.readonly）
+# LAST-EDIT: 2026-11-09，review默认要求版本2；显式legacy-record保留历史未知信息
 # PURPOSE: `workflow.py` 的命令行入口。**生产接线固定**：监控接 `Monitoring(workspace, host=DSHHost())`，
 #          审计核验接 `DSHHost()`；⛔ 不提供跳过闸的开关（没有 --allow-unwired-monitor / --monitor-module）。
 # ORIGIN: 抽取自 AutoDL实验/tool/exp_launch.py 的「先检查后起跑 + 保留真实退出码」入口形态；无比赛/渠道值。
@@ -301,7 +301,8 @@ def _parser():
     review = sub.add_parser("review", parents=[common],
                             help="复盘验收：结束记录、计划未改写、证据哈希、判决落账")
     review.add_argument("--run-id", required=True)
-    review.add_argument("--file", required=True, help="复盘记录 JSON（工作区内相对路径）")
+    review.add_argument("--file", required=True, help="复盘记录 JSON（工作区内相对路径）；新记录要求 schema_version=2")
+    review.add_argument("--legacy-record", action="store_true", help="显式导入旧复盘；缺少的下一步费用与审批信息仍为 unknown")
 
     status = sub.add_parser("status", parents=[common],
                             help="只读投影：准备是否过期、结束原因/退出码、待复盘、下一轮阻断")
@@ -374,7 +375,8 @@ def main(argv=None):
                        else (workspace.resolve() / ".autoresearch" / "runtime.sqlite3"))
             flow = Workflow(**common, verifier=_host_verifier(),
                             event_sink=host_event_sink(workspace, db_path))
-            result = flow.review(run_id=args.run_id, record=args.file, actor=args.actor)
+            result = flow.review(run_id=args.run_id, record=args.file, actor=args.actor,
+                                 require_version=None if args.legacy_record else 2)
             _dump(result)
             return 0 if result.get("ok") else 9
 

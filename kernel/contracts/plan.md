@@ -3,7 +3,7 @@ GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
 LAST-EDIT: latest framework synchronization, 2026-11-09
 PURPOSE: 一次实验的「事前设计」正文 —— 假设、一次一组同假设改动、判据与出处、三类对照与历史已通过项、结果分支、预算，以及冻结与指纹
 ORIGIN: none（新文件）。抽取自上游 EXPERIMENT_RULES.md §1.1/§1.2/§1.3/§1.5/§1.9 与 plan_audit.md §4/§6，去掉了题单规模阈值与个人渠道
-CUMULATIVE-DELTA: 2026-11-09 补齐探索性停止条件及来源、方向证据边界、工具变更与上下文纪律；生产主链加入四锚点、实现五项与文件定位、实际argv和共享预算授权绑定。
+CUMULATIVE-DELTA: 2026-11-09 增加复盘v2的下一步判据、证据、成本、负责人及审批说明；历史兼容但缺字段保留unknown。此前补齐探索性停止条件及来源、方向证据边界、工具变更与上下文纪律；生产主链加入四锚点、实现五项与文件定位、实际argv和共享预算授权绑定。
 -->
 
 # 方案契约（一次一轮）
@@ -198,3 +198,16 @@ CUMULATIVE-DELTA: 2026-11-09 补齐探索性停止条件及来源、方向证据
 `authorization` 显式声明 `scope`、`series_id` 和 `reservation_id`；扩大测试与线上提交还需对应 `decision_id`。计划成本只是事前声明，必须另有真实用户授权的共享预算账号和足额预留；不得由计划本身生成额度。`authorization` 参与关键指纹，不能当作措辞小修。
 
 真实起跑通过 [统一 CLI](<../autoresearch/workflow_cli.py>)。结束保存真实退出码与原因，安全停止不等待写页或预算结算。前轮未复盘不得开新轮；复验已否定假设须给新的条件和依据。运行结束、研究复盘、scribe 研究页验收与实际送达分别记录。
+
+## 12 复盘与下一步交接
+
+公开 `workflow review` 对新复盘要求 `schema_version=2`，模板见[复盘模板](<../templates/workflow.review.template.json>)。原有结果总结、判词、分支、证据和主文档判决定位仍须完整，另给 `continuation`：
+
+- `criterion` 与 `criterion_evidence[{path,locator}]`：下一步受什么研究判据约束，依据在哪。登记时核定位并保存文件哈希。
+- `cost_scope{scope,max_cost_units,basis}`：下一步费用上限覆盖哪些任务与动作；可附 `series_id` / `reservation_id`。未知费用不能写成零。`none` 只用于零付费动作；付费 scope 的上限必须大于零。
+- `next_owner`：谁继续推进。
+- `needs_approval` 与 `approval_reason`：明确是否需要专项批准及原因；`large` / `submission` 必须为 true，可附 `decision_id`。
+
+复盘可以把「先申请批准，再决定是否执行」作为下一步，不要求未来实验已经获批。上述字段只记录研究交接，不签发预算、审批或执行授权；下一次实际执行仍核真实准入。调用方不能自报 `approved` 作为证明。
+
+旧复盘的原始字节和历史账目不改写。API 仍能读取和登记旧格式；公开命令须显式给 `--legacy-record` 才导入旧格式。缺少的费用、负责人或审批信息投影为 unknown，不补造。
