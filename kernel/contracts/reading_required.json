@@ -109,6 +109,15 @@
       "anchor": "## 1 十三条原则",
       "why": "写页要守分层与上限；滚动是搬运不是删除。",
       "scope": "full_document"
+    },
+    {
+      "id": "R6",
+      "role": "researcher",
+      "phase": "open",
+      "path": "kernel/contracts/context_budget.md",
+      "anchor": "## 1 交付一次",
+      "why": "避免重复交付、例行重算与重复推进，不因局部流程问题停止全部已授权工作。",
+      "scope": "full_document"
     }
   ]
 }

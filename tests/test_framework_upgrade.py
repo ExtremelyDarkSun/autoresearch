@@ -1,6 +1,6 @@
 # ORIGIN: generic source framework mechanisms
-# LAST-EDIT: portable framework synchronization, 2026-11-09
-# CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
+# LAST-EDIT: latest framework synchronization, 2026-11-09
+# CUMULATIVE-DELTA: 2026-11-09 补齐探索性停止条件及来源、方向证据边界、工具变更与上下文纪律。
 # GENERATED-BY: framework synchronization, 2026-11-09
 # PURPOSE: 升级的行为回归，全部使用合成材料。
 import copy
@@ -29,10 +29,49 @@ def modern(prepared_id, decision='proceed', issues=None, **kw):
 class UpgradeTests(GovCase):
     def test_exploration_without_number(self):
         plan=make_plan(criteria={'mode':'exploratory','metric':'机制观察',
-            'observation':'配置是否生效','interpretation_boundary':'不外推幅度','conditions':'同装置小样本'})
+            'observation':'配置是否生效','interpretation_boundary':'不外推幅度','conditions':'同装置小样本',
+            'stop_condition':'取得预定机制观察或预算耗尽','source':'docs/design.md'})
         self.assertEqual(g.validate_plan(plan), [])
         del plan['criteria']['conditions']
         self.assertTrue(g.validate_plan(plan))
+
+    def test_exploration_requires_stop_and_source(self):
+        criteria = {'mode':'exploratory','metric':'机制观察','observation':'观察调用',
+                    'interpretation_boundary':'不外推','conditions':'固定装置',
+                    'stop_condition':'获得观察或预算耗尽','source':'docs/design.md'}
+        for key in ('stop_condition', 'source'):
+            for value in (None, '', '   ', 3):
+                with self.subTest(key=key, value=value):
+                    candidate = dict(criteria)
+                    if value is None:
+                        candidate.pop(key)
+                    else:
+                        candidate[key] = value
+                    self.assertTrue(g.validate_plan(make_plan(criteria=candidate)))
+
+    def test_stop_change_invalidates_audit_and_cannot_be_minor(self):
+        p = make_plan()
+        p['criteria']['stop_condition'] = '预算耗尽'
+        self.frozen(p)
+        prep = self.gov.prepare_audit('P1', actor='main')['prepared_id']
+        with self.assertRaises(g.GovernanceError):
+            self.gov.record_audit(prep, modern(prep, 'minor_fix', [issue()],
+                minor_fix_paths=[{'path':'criteria.stop_condition','issue_id':'I1','why':'改变停止观察'}]), actor='r1')
+        self.gov.record_audit(prep, modern(prep), actor='r1')
+        self.assertTrue(self.gov.audit_state('P1')['ok'])
+        p['criteria']['stop_condition'] = '发现反例即停止'
+        self.frozen(p)
+        self.assertFalse(self.gov.audit_state('P1')['ok'])
+
+    def test_context_budget_is_fully_included(self):
+        from kernel.autoresearch.context import instruction_manifest, render_bundle, verify_injection
+        root = Path(__file__).resolve().parents[1]
+        manifest = instruction_manifest(root, root/'profiles/agent-harness')
+        document = next(d for d in manifest['documents'] if d['source'] == 'kernel/contracts/context_budget.md')
+        self.assertEqual(document['content'], (root/document['source']).read_text(encoding='utf-8'))
+        bundle = render_bundle(manifest)
+        self.assertTrue(verify_injection(manifest, bundle)['complete'])
+        self.assertFalse(verify_injection(manifest, bundle.replace(document['content'], '# 只有摘要'))['complete'])
 
     def test_confirmatory_keeps_threshold(self):
         plan=make_plan();del plan['criteria']['threshold']

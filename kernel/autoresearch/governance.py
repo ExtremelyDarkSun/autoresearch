@@ -1,11 +1,11 @@
 # GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-# LAST-EDIT: portable framework synchronization, 2026-11-09
+# LAST-EDIT: latest framework synchronization, 2026-11-09
 # PURPOSE: 通用研究治理层 —— 事前方案校验与冻结哈希、独立方案审计的版本绑定与次数上限、专项意图的来源与节点监控、
 #          经验候选的四处置与修订失效、角色包/委派登记、必读与文档冷件台账。全部是本地 append-only 登记，不联网、不伪造授权。
 # ORIGIN: none（新文件）。机制抽取自上游组件 plan_audit.md / intent_monitor.md / research_lessons.md / trajectory_review.md /
 #         reading_required.json / CONTRACT.md / CONTEXT_LOADING.md / DOC_MAINTENANCE.md 与 EXPERIMENT_RULES.md 的
 #         事前设计、三类对照、结果分支表；只保留与具体赛事无关的通用部分，源头的个人渠道与实例值一律不带。
-# CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
+# CUMULATIVE-DELTA: 2026-11-09 补齐探索性停止条件及来源、方向证据边界、工具变更与上下文纪律。
 #         没有 verifier 时一切自述只标 declared（永不冒充 verified）。
 
 """通用研究治理层。
@@ -280,7 +280,7 @@ def validate_plan(plan: dict) -> list[str]:
             exploratory = criteria.get("mode") == "exploratory"
             if criteria.get("mode", "confirmatory") not in ("exploratory", "confirmatory"):
                 errors.append("criteria.mode 必须是 exploratory 或 confirmatory")
-            required = ("metric", "observation", "interpretation_boundary", "conditions") if exploratory else ("metric", "direction", "threshold", "source")
+            required = ("metric", "observation", "interpretation_boundary", "conditions", "stop_condition", "source") if exploratory else ("metric", "direction", "threshold", "source")
             for key in required:
                 if key not in criteria:
                     errors.append(f"缺少 criteria.{key}")

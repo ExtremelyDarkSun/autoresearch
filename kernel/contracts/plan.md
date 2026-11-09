@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-LAST-EDIT: portable framework synchronization, 2026-11-09
+LAST-EDIT: latest framework synchronization, 2026-11-09
 PURPOSE: 一次实验的「事前设计」正文 —— 假设、一次一组同假设改动、判据与出处、三类对照与历史已通过项、结果分支、预算，以及冻结与指纹
 ORIGIN: none（新文件）。抽取自上游 EXPERIMENT_RULES.md §1.1/§1.2/§1.3/§1.5/§1.9 与 plan_audit.md §4/§6，去掉了题单规模阈值与个人渠道
-CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
+CUMULATIVE-DELTA: 2026-11-09 补齐探索性停止条件及来源、方向证据边界、工具变更与上下文纪律。
 -->
 
 # 方案契约（一次一轮）
@@ -52,7 +52,7 @@ CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整
 
 ## 3 探索性观察与确认性门槛
 
-探索性实验使用 `mode=exploratory`，写 `metric`、`observation`、`interpretation_boundary`、`conditions`。它不强制数字门槛。确认性实验用 `mode=confirmatory`，或沿用未写 mode 的旧格式。确认性门槛必须有出处。
+探索性实验使用 `mode=exploratory`，写 `metric`、`observation`、`interpretation_boundary`、`conditions`、`stop_condition`、`source`。它不强制数字门槛。确认性实验用 `mode=confirmatory`，或沿用未写 mode 的旧格式。确认性门槛必须有出处。
 
 ```json
 "criteria": {
@@ -170,3 +170,16 @@ CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整
 6. 给预算与输入文件（`budget` / `input_files`），跑 `validate_plan()`，再 `freeze_plan()`。
 
 ⛔ 顺序反了（先跑再看判据）就是事后编判据 —— 审计会退回来，而且它是对的。
+
+
+## 9 机制、实现与方向的判断
+
+分开回答机制是否实际执行，以及这一版实现是否值得采用。一次实现失败只支持对应条件下的实现结论。
+
+一个方向可以有多版实现。多版没有被采用，仍不能用实现数量代替否定方向的证据。如果假设是某种写法能触发自主发现或采用，未采用可以否定这条具体假设。不能将它外推成整个方向无效。
+
+## 10 条件与预算权衡
+
+实验结论写适用条件、收益、代价和下一条假设。样本量与重复次数只支持相应范围的解释，不设跨任务通用的固定重复数。
+
+单项耗时上限乘任务数是整批预算的保守充分条件，不一定是必要条件。依赖提前结束的计划须核实尾部耗时、安全余量及超限风险。均值不能保证整批不超限。具体平台规则和预算值由实例及 profile 提供。

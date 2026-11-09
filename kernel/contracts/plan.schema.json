@@ -136,6 +136,11 @@
         "conditions": {
           "type": "string",
           "minLength": 1
+        },
+        "stop_condition": {
+          "type": "string",
+          "minLength": 1,
+          "description": "探索性研究的停止观察或条件，不要求数值门槛。"
         }
       },
       "allOf": [
@@ -154,7 +159,9 @@
             "required": [
               "observation",
               "interpretation_boundary",
-              "conditions"
+              "conditions",
+              "stop_condition",
+              "source"
             ]
           },
           "else": {

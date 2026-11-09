@@ -1,10 +1,10 @@
 <!--
 GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-LAST-EDIT: portable extraction / repository bootstrap (2026-11-09 +08:00)
+LAST-EDIT: latest framework synchronization, 2026-11-09
 PURPOSE: agent-harness profile 的必读规则 —— 这个 profile 被使用时，读数是「怎么算的、什么算通过、什么算无效」
 ORIGIN: none（新文件）。规则正文抽取自上游组件 EXPERIMENT_RULES.md（预注册 · 一个假设一次改动 · 题单三类对照 · 结果分支）
          与 run_eval.py · gates/gate_out_of_workspace.py 的判据；只保留「被优化对象是 agent harness」的通用部分
-CUMULATIVE-DELTA: 首版
+CUMULATIVE-DELTA: 2026-11-09 补齐探索性停止条件及来源、方向证据边界、工具变更与上下文纪律。
 -->
 
 # agent harness 评测规则（必读）
@@ -136,3 +136,14 @@ CUMULATIVE-DELTA: 首版
 - [ ] 环境错误与超时**没有**被算进通过，也没有被说成 agent 没做出来。
 - [ ] 越界 / 泄漏的题被标成无效读数，原始产物仍在。
 - [ ] 没有把本地读数写成官方分数，也没有把示例数据说成官方数据。
+
+
+## 10 工具变更与测量
+
+删掉模型提示词宣传的工具时，核对工具注册、白名单、提示词、任务描述及已加载的指令。工具可替换，不把某个工具的缺失直接解释成整个方向无效。
+
+两条候选路径：保留名称并提供显式报错及替代方法的桩，或删除工具并同步撤掉提示词与任务描述中的宣传。若任务描述无法修改，就不能声称第二条路径已经满足条件。
+
+核查实际工具调用和替代路径，确认模型能发现并执行替代动作。缺少 ToolNotFoundError 只能说明没有出现该错误，不能证明改动收益。还须比较替代路径的调用数、耗时、空补丁及任务结果。
+
+这些是被测 agent 的实验设计和验收义务。本配置不自动修改工具面，也不把某个实现或特定工具的历史表现写成通用结论。
