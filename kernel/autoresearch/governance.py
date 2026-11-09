@@ -1,11 +1,11 @@
 # GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-# LAST-EDIT: portable extraction / repository bootstrap (2026-11-09 +08:00)
+# LAST-EDIT: portable framework synchronization, 2026-11-09
 # PURPOSE: 通用研究治理层 —— 事前方案校验与冻结哈希、独立方案审计的版本绑定与次数上限、专项意图的来源与节点监控、
 #          经验候选的四处置与修订失效、角色包/委派登记、必读与文档冷件台账。全部是本地 append-only 登记，不联网、不伪造授权。
 # ORIGIN: none（新文件）。机制抽取自上游组件 plan_audit.md / intent_monitor.md / research_lessons.md / trajectory_review.md /
 #         reading_required.json / CONTRACT.md / CONTEXT_LOADING.md / DOC_MAINTENANCE.md 与 EXPERIMENT_RULES.md 的
 #         事前设计、三类对照、结果分支表；只保留与具体赛事无关的通用部分，源头的个人渠道与实例值一律不带。
-# CUMULATIVE-DELTA: 首版。默认 fail-closed：审计默认必审、关闭审计必须有 verifier 核过的用户证据、
+# CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
 #         没有 verifier 时一切自述只标 declared（永不冒充 verified）。
 
 """通用研究治理层。
@@ -111,15 +111,13 @@ ROLE_NAMES = (
 )
 
 #: 人读现状页的八节（顺序即页序）。缺一节 = 没写完。
+LEGACY_STATUS_SECTIONS = (
+    "范围与目标", "你的要求", "当前结论", "证据", "还没做成的事",
+    "需要你拍板", "证据在哪", "自推进状态",
+)
 STATUS_SECTIONS = (
-    "范围与目标",
-    "你的要求",
-    "当前结论",
-    "证据",
-    "还没做成的事",
-    "需要你拍板",
-    "证据在哪",
-    "自推进状态",
+    "你的要求", "一句话现状", "最近实验", "已定 / 已否 / 待定",
+    "本轮改了什么", "这轮结论依赖的未验证前提", "证据在哪", "下一步研究",
 )
 
 DOC_TIERS = ("hot", "cold")
@@ -279,9 +277,15 @@ def validate_plan(plan: dict) -> list[str]:
         if not isinstance(criteria, dict):
             errors.append("criteria 必须是对象")
         else:
-            for key in ("metric", "direction", "threshold", "source"):
+            exploratory = criteria.get("mode") == "exploratory"
+            if criteria.get("mode", "confirmatory") not in ("exploratory", "confirmatory"):
+                errors.append("criteria.mode 必须是 exploratory 或 confirmatory")
+            required = ("metric", "observation", "interpretation_boundary", "conditions") if exploratory else ("metric", "direction", "threshold", "source")
+            for key in required:
                 if key not in criteria:
                     errors.append(f"缺少 criteria.{key}")
+                elif exploratory and not _text(criteria.get(key)):
+                    errors.append(f"criteria.{key} 必须非空")
             if "metric" in criteria and not _text(criteria.get("metric")):
                 errors.append("criteria.metric 必须非空（量什么）")
             if "direction" in criteria and criteria.get("direction") not in DIRECTIONS:
@@ -470,6 +474,9 @@ def plan_key_fields(plan: dict) -> dict:
                 for kind in sorted(set(value) | set(CASE_SET_KINDS))
             }
         fields[key] = _normalize(value)
+    for key in ("execution_argv", "implementation"):
+        if key in plan:
+            fields[key] = _normalize(plan[key])
     return fields
 
 
@@ -487,6 +494,9 @@ def _digest(value) -> str:
 # ---------------------------------------------------------------------------
 
 _SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS gov_audit_corrections(\n"
+    " id INTEGER PRIMARY KEY, report_id TEXT NOT NULL, old_fingerprint TEXT NOT NULL,\n"
+    " new_fingerprint TEXT NOT NULL, detail_json TEXT NOT NULL, actor TEXT NOT NULL, created_at REAL NOT NULL)",
     "CREATE TABLE IF NOT EXISTS gov_policy(\n"
     "  id INTEGER PRIMARY KEY, scope TEXT NOT NULL, target TEXT NOT NULL,\n"
     "  mode TEXT NOT NULL, actor TEXT NOT NULL, evidence_json TEXT NOT NULL,\n"
@@ -569,6 +579,7 @@ _SCHEMA = (
 )
 
 _APPEND_ONLY_TABLES = (
+    "gov_audit_corrections",
     "gov_plans",
     "gov_audit_reports",
     "gov_audit_responses",
@@ -853,8 +864,8 @@ class Governance:
         with self.store.transaction() as conn:
             used = self._row(
                 conn,
-                "SELECT COUNT(*) AS n FROM gov_audits WHERE plan_id=? AND key_fingerprint=?",
-                (plan_id, key_fp),
+                "SELECT COUNT(*) AS n FROM gov_audits WHERE plan_id=?",
+                (plan_id,),
             )["n"]
             limit = int(self.policy["max_audits"])
             if used >= limit:
@@ -972,16 +983,49 @@ class Governance:
         for issue in issues:
             if isinstance(issue, dict) and issue.get("category") in AUDIT_CATEGORIES:
                 by_category.setdefault(issue["category"], []).append(issue)
+        decision = report.get("decision")
+        modern = decision is not None
+        if modern:
+            focus = report.get("focus")
+            focus_keys = ("question_goal", "design_interpretation", "history_constraints")
+            if not isinstance(focus, dict) or set(focus) != set(focus_keys) or not all(_text(focus.get(k)) for k in focus_keys):
+                errors.append("focus 必须恰好给三项非空审查重点")
+            for issue in issues:
+                if isinstance(issue, dict) and issue.get("blocking") and not _text(issue.get("why_blocking")):
+                    errors.append("重大阻断必须写 why_blocking")
+            if decision not in ("proceed", "minor_fix", "blocked"):
+                errors.append("decision 必须是 proceed/minor_fix/blocked")
+            if not _text(report.get("decision_reason")):
+                errors.append("decision_reason 必须非空")
+            blocking = any(x.get("blocking") is True for x in issues if isinstance(x, dict))
+            if decision in ("proceed", "minor_fix") and blocking:
+                errors.append("proceed/minor_fix 不允许 blocking issue")
+            if decision == "blocked" and not blocking:
+                errors.append("blocked 必须有 blocking issue")
+            if decision == "minor_fix" and not issues:
+                errors.append("minor_fix 必须有 issue")
         for category, items in coverage.items():
             if not isinstance(items, dict):
                 continue
             if items.get("verdict") == "unknown":
-                # 判不出来就不许默认通过：这一项必须有 blocking=true 的 issue。
-                if not any(issue.get("blocking") is True for issue in by_category.get(category, [])):
-                    errors.append(
-                        f"coverage.{category}.verdict=unknown，但这一项没有 blocking=true 的 issue"
-                        "（判不出来不许默认通过）"
-                    )
+                related = by_category.get(category, [])
+                if not modern and not any(x.get("blocking") is True for x in related):
+                    errors.append(f"coverage.{category}.verdict=unknown，但这一项没有 blocking=true 的 issue")
+                if modern:
+                    for issue in related:
+                        reason = "why_blocking" if issue.get("blocking") else "why_not_blocking"
+                        if not _text(issue.get(reason)):
+                            errors.append(f"unknown issue 必须写 {reason}")
+        from .audit_support import hard_path
+        grants = report.get("minor_fix_paths", [])
+        if not isinstance(grants, list):
+            errors.append("minor_fix_paths 必须是数组")
+            grants = []
+        for grant in grants:
+            if not isinstance(grant, dict) or not _text(grant.get("path")) or not _text(grant.get("why")) or grant.get("issue_id") not in issue_ids:
+                errors.append("minor_fix_paths 必须按 issue 点名 {path, issue_id, why}")
+            elif hard_path(grant["path"]) or any(x.get("id") == grant["issue_id"] and x.get("blocking") for x in issues):
+                errors.append("硬实质路径或重大问题不能授权为小修：" + grant["path"])
 
         resolves = report.get("resolves", [])
         if not isinstance(resolves, list):
@@ -1026,6 +1070,10 @@ class Governance:
                     "方案关键字段在这一轮审计期间变过 ⇒ 这份报告不能绑定当前版本；"
                     "请对新版本重新 prepare + 复审"
                 )
+            for resolved in resolves:
+                previous = self._row(conn, "SELECT * FROM gov_audit_reports WHERE report_id=? AND plan_id=?", (resolved["report_id"], prepared["plan_id"]))
+                if not previous or not any(x.get("id") == resolved["issue_id"] for x in json.loads(previous["report_json"]).get("issues", [])):
+                    raise GovernanceError("resolves 必须指向同计划的既有问题")
             independence, verified = self._verify("audit_independence", evidence)
             report_id = "AUD-" + _digest([prepared_id, report])[:12]
             conn.execute(
@@ -1047,6 +1095,57 @@ class Governance:
             "blocking_open": [issue["id"] for issue in issues
                               if isinstance(issue, dict) and issue.get("blocking") is True],
         }
+
+    def correct_audit(self, report_id: str, corrections: list, *, actor: str) -> dict:
+        """自查只覆盖指定非阻断意见及可授权叶子，不增加审计次数。"""
+        from .audit_support import changes, hard_path
+        self._require_text(actor, "actor")
+        if not isinstance(corrections, list) or not corrections:
+            raise GovernanceError("corrections 必须是非空数组")
+        with self.store.transaction() as conn:
+            row = self._row(conn, "SELECT * FROM gov_audit_reports WHERE report_id=?", (report_id,))
+            if not row:
+                raise GovernanceError("报告不存在")
+            report = json.loads(row["report_json"])
+            if report.get("decision") not in ("proceed", "minor_fix"):
+                raise GovernanceError("只有新三态非阻断报告可使用 correct")
+            prep = self._row(conn, "SELECT * FROM gov_audits WHERE prepared_id=?", (row["prepared_id"],))
+            if actor != prep["owner"]:
+                raise GovernanceError("小修必须由负责人登记")
+            before = self._row(conn, "SELECT * FROM gov_plans WHERE plan_id=? AND version=?", (row["plan_id"], prep["plan_version"]))
+            after = self._row(conn, "SELECT * FROM gov_plans WHERE plan_id=? ORDER BY version DESC LIMIT 1", (row["plan_id"],))
+            changed = changes(json.loads(before["plan_json"]), json.loads(after["plan_json"]))
+            issues = {x["id"]: x for x in report.get("issues", [])}
+            grants = {x["path"]: x for x in report.get("minor_fix_paths", [])}
+            covered = set()
+            for item in corrections:
+                if not isinstance(item, dict) or not all(_text(item.get(k)) for k in ("what", "self_check")) or not item.get("sources"):
+                    raise GovernanceError("小修必须写 what/self_check/sources")
+                issue_id = item.get("issue_id")
+                if issue_id and (issue_id not in issues or issues[issue_id].get("blocking")):
+                    raise GovernanceError("correct 不能关闭阻断或未知意见")
+                for path in item.get("paths", []):
+                    if hard_path(path):
+                        raise GovernanceError("硬实质变更必须复审：" + path)
+                    if path.endswith(".locator"):
+                        pass  # 只改定位叶子，文件 path 另有变更时仍需独立授权。
+                    elif path not in grants or grants[path]["issue_id"] != issue_id:
+                        raise GovernanceError("此小修路径未按问题获得授权：" + path)
+                    covered.add(path)
+            key_changes = [p for p in changed if p.split('.')[0] in KEY_FIELDS or p.split('.')[0] in ('execution_argv', 'implementation')]
+            if any(p not in covered for p in key_changes):
+                raise GovernanceError("关键字段变化未被小修覆盖：" + str(key_changes))
+            conn.execute("INSERT INTO gov_audit_corrections(report_id,old_fingerprint,new_fingerprint,detail_json,actor,created_at) VALUES(?,?,?,?,?,?)",
+                         (report_id, row["key_fingerprint"], after["key_fingerprint"], canonical_json(corrections), actor, self._now()))
+            self._emit(conn, "governance_audit_corrected", actor, {"report_id": report_id, "changed_paths": changed})
+        return {"report_id": report_id, "key_fingerprint": after["key_fingerprint"], "reaudit_required": False}
+
+    def record_audit_file(self, prepared_id: str, path: str, declaration: dict, *, actor: str, evidence=None) -> dict:
+        from .audit_support import load_bound_report
+        report = load_bound_report(path, declaration)
+        # 报告与短声明的可见消息真实性须由注入 verifier 核验。
+        proof = {"declaration": declaration, "host_evidence": evidence}
+        return self.record_audit(prepared_id, report, actor=actor, evidence=proof if evidence else None)
 
     def respond_audit(self, report_id: str, dispositions: list, *, actor: str) -> dict:
         """登记主会话对每条审计意见的处置。
@@ -1153,101 +1252,9 @@ class Governance:
                 "independence": independence, "key_fingerprint": report["key_fingerprint"]}
 
     def audit_state(self, plan_id: str) -> dict:
-        """能不能带这一版方案进下一轮。**只读**，不写任何东西。
-
-        返回 `{ok, problems, blocking_open, audits_used, limit, report_id,
-        independence, key_fingerprint, policy}`。`ok=False` 就是不放行。
-        """
-        with self.store.transaction() as conn:
-            plan = self._row(
-                conn,
-                "SELECT * FROM gov_plans WHERE plan_id=? ORDER BY version DESC LIMIT 1",
-                (plan_id,),
-            )
-            if plan is None:
-                return {"ok": False, "problems": [f"方案 {plan_id!r} 不存在"],
-                        "blocking_open": [], "audits_used": 0,
-                        "limit": int(self.policy["max_audits"]), "report_id": None,
-                        "independence": None, "key_fingerprint": None,
-                        "policy": self.audit_policy(plan_id)}
-            key_fp = plan["key_fingerprint"]
-            audits = self._rows(
-                conn,
-                "SELECT * FROM gov_audits WHERE plan_id=? AND key_fingerprint=? ORDER BY index_no",
-                (plan_id, key_fp),
-            )
-            reports = self._rows(
-                conn,
-                "SELECT * FROM gov_audit_reports WHERE plan_id=? AND key_fingerprint=?"
-                " ORDER BY created_at",
-                (plan_id, key_fp),
-            )
-            responses = self._rows(conn, "SELECT * FROM gov_audit_responses")
-            waivers = self._rows(
-                conn, "SELECT * FROM gov_waivers WHERE key_fingerprint=?", (key_fp,)
-            )
-        policy = self.audit_policy(plan_id)
-        problems: list[str] = []
-        blocking_open: list[str] = []
-        report_id = reports[-1]["report_id"] if reports else None
-        independence = reports[-1]["independence"] if reports else None
-
-        if policy["mode"] == "off":
-            problems.append(
-                "审计政策是 off，这一版没有审计依据；不代表审过"
-                f"（政策来源 {policy['source']}，证据等级 {policy['independence']}）"
-            )
-        elif not reports:
-            problems.append(
-                f"当前版本没有审计：key_fingerprint={key_fp[:12]}…；"
-                "先 prepare_audit + record_audit"
-            )
-        else:
-            latest = reports[-1]
-            payload = json.loads(latest["report_json"])
-            resolved: set[tuple[str, str]] = set()
-            for item in payload.get("resolves", []) or []:
-                if isinstance(item, dict):
-                    resolved.add((str(item.get("report_id")), str(item.get("issue_id"))))
-            waived = {(row["report_id"], row["issue_id"]) for row in waivers}
-            handled = {(row["report_id"], row["issue_id"]): row for row in responses}
-            for issue in payload.get("issues", []) or []:
-                if not isinstance(issue, dict):
-                    continue
-                issue_id = str(issue.get("id"))
-                key = (latest["report_id"], issue_id)
-                response = handled.get(key)
-                is_waived = key in waived
-                if response and response["disposition"] == "declined":
-                    problems.append(f"意见 {issue_id} 被 declined，但没有关闭依据（declined 不等于关掉）")
-                if response and response["disposition"] == "needs_user":
-                    problems.append(f"意见 {issue_id} 待用户决定（needs_user）")
-                # 处置或人工豁免都算「处理过」：豁免本身就是用户对这条意见的决定。
-                if not response and not is_waived:
-                    problems.append(f"意见 {issue_id} 还没有处置")
-                if issue.get("blocking") is True:
-                    closed = key in resolved or is_waived
-                    if not closed:
-                        blocking_open.append(issue_id)
-            if blocking_open:
-                problems.append(f"阻断项未关：{blocking_open}")
-            if self.policy.get("require_verified_independence") \
-                    and latest["independence"] != INDEPENDENCE_VERIFIED:
-                problems.append(
-                    "审计独立性只有 declared（没有 verifier 核过的宿主证据），"
-                    "而政策要求 verified"
-                )
-        return {
-            "ok": not problems,
-            "problems": problems,
-            "blocking_open": blocking_open,
-            "audits_used": len(audits),
-            "limit": int(self.policy["max_audits"]),
-            "report_id": report_id,
-            "independence": independence,
-            "key_fingerprint": key_fp,
-            "policy": policy,
-        }
+        """三态投影。所有历史阻断跨版本存活，只读。"""
+        from .audit_state import audit_state
+        return audit_state(self, plan_id)
 
     # ------------------------------------------------------------------
     # 专项意图与节点监控
@@ -2116,7 +2123,7 @@ class Governance:
 # ---------------------------------------------------------------------------
 
 
-def validate_status_page(text: str) -> list[str]:
+def _validate_status_structure(text: str, sections) -> list[str]:
     """检查一份人读现状页是否八节齐全。
 
     只查节标题在不在、顺序对不对；**不判断内容真假** —— 内容真假要靠证据文件。
@@ -2132,7 +2139,7 @@ def validate_status_page(text: str) -> list[str]:
     normalised = [_normalise_heading(line) for line in headings]
     positions: list[tuple[int, int]] = []
     used: set[int] = set()
-    for index, section in enumerate(STATUS_SECTIONS):
+    for index, section in enumerate(sections):
         position = None
         for candidate, heading in enumerate(normalised):
             if candidate not in used and heading == section:
@@ -2144,7 +2151,7 @@ def validate_status_page(text: str) -> list[str]:
                     continue
                 # 子串兜底：如果这个标题正好是**另一节**的整名，不算命中。
                 # 否则「证据在哪」会被当成「证据」，于是两节互相顶替、各少一节却看不出。
-                if heading in STATUS_SECTIONS and heading != section:
+                if heading in sections and heading != section:
                     continue
                 if section in heading:
                     position = candidate
@@ -2157,8 +2164,8 @@ def validate_status_page(text: str) -> list[str]:
     for (left_index, left_at), (right_index, right_at) in zip(positions, positions[1:]):
         if right_at < left_at:
             errors.append(
-                f"节顺序不对：第 {right_index + 1} 节「{STATUS_SECTIONS[right_index]}」"
-                f"出现在第 {left_index + 1} 节「{STATUS_SECTIONS[left_index]}」之前"
+                f"节顺序不对：第 {right_index + 1} 节「{sections[right_index]}」"
+                f"出现在第 {left_index + 1} 节「{sections[left_index]}」之前"
             )
     return errors
 
@@ -2168,3 +2175,32 @@ def _normalise_heading(line: str) -> str:
     text = re.sub(r"^#+\s*", "", line).strip()
     text = re.sub(r"^第?\s*\d+\s*[.、,)]?\s*节?\s*", "", text).strip()
     return text
+
+
+def validate_status_page(text: str, *, legacy: bool = False) -> list[str]:
+    """研究八节及四段结构。旧页显式 legacy 只读兼容。"""
+    sections = LEGACY_STATUS_SECTIONS if legacy else STATUS_SECTIONS
+    errors = _validate_status_structure(text, sections)
+    if errors or legacy:
+        return errors
+    matches = list(re.finditer(r"(?m)^##(?!#)\s+.*$", text))
+    if len(matches) != 8:
+        return ["研究页必须有八个二级标题"]
+    bodies = [text[m.end():matches[i+1].start() if i+1 < len(matches) else len(text)].strip() for i,m in enumerate(matches)]
+    for i, body in enumerate(bodies):
+        if not body:
+            errors.append(f"第 {i+1} 节没有内容")
+    recent = bodies[2]
+    if '暂无实验，未起跑' not in recent:
+        blocks = re.split(r'(?m)^###\s+', recent)[1:]
+        if not blocks:
+            errors.append("第 3 节实验须用三级标题分块")
+        if len(blocks) > 3:
+            errors.append("第 3 节最多保留最近 3 轮")
+        for block in blocks:
+            positions = [block.find(label) for label in ('假设', '判据', '设置', '结果')]
+            if any(x < 0 for x in positions) or positions != sorted(positions):
+                errors.append("每个实验块须按假设→判据→设置→结果组织")
+            if '来源' not in block:
+                errors.append("实验块缺来源")
+    return errors

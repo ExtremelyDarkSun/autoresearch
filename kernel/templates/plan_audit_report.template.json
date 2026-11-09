@@ -6,37 +6,72 @@
     "hypothesis": {
       "verdict": "ok",
       "note": "<什么观察会否定它 / 有没有把两件事混成一个假设>",
-      "sources": [{"path": "<文件>", "locator": "L1"}]
+      "sources": [
+        {
+          "path": "<文件>",
+          "locator": "L1"
+        }
+      ]
     },
     "design": {
       "verdict": "ok",
       "note": "<读数变好能否支持所声称的解释>",
-      "sources": [{"path": "<文件>", "locator": "L1"}]
+      "sources": [
+        {
+          "path": "<文件>",
+          "locator": "L1"
+        }
+      ]
     },
     "criterion": {
       "verdict": "ok",
       "note": "<门槛有出处吗 / 样本与波动够不够>",
-      "sources": [{"path": "<文件>", "locator": "L1"}]
+      "sources": [
+        {
+          "path": "<文件>",
+          "locator": "L1"
+        }
+      ]
     },
     "history": {
       "verdict": "ok",
       "note": "<是否已试过并被否掉（自己检索的）>",
-      "sources": [{"path": "<文件>", "locator": "L1"}]
+      "sources": [
+        {
+          "path": "<文件>",
+          "locator": "L1"
+        }
+      ]
     },
     "cost": {
       "verdict": "ok",
       "note": "<有没有更省的验证路径>",
-      "sources": [{"path": "<文件>", "locator": "L1"}]
+      "sources": [
+        {
+          "path": "<文件>",
+          "locator": "L1"
+        }
+      ]
     },
     "branches": {
       "verdict": "ok",
       "note": "<三支行动是否真的不同>",
-      "sources": [{"path": "<文件>", "locator": "L1"}]
+      "sources": [
+        {
+          "path": "<文件>",
+          "locator": "L1"
+        }
+      ]
     },
     "activation": {
       "verdict": "ok",
       "note": "<改动到读数要经过哪几跳、每跳的证据>",
-      "sources": [{"path": "<文件>", "locator": "L1"}]
+      "sources": [
+        {
+          "path": "<文件>",
+          "locator": "L1"
+        }
+      ]
     }
   },
   "issues": [
@@ -47,15 +82,21 @@
       "problem": "<问题一句话>",
       "consequence": "<不改会怎样>",
       "suggestion": "<最小改法>",
-      "sources": [{"path": "<文件>", "locator": "L2"}]
+      "sources": [
+        {
+          "path": "<文件>",
+          "locator": "L2"
+        }
+      ]
     }
   ],
-  "resolves": [
-    {
-      "report_id": "<上一份报告 id>",
-      "issue_id": "<上一份报告里的 issue id>",
-      "reason": "<为什么这条已经关掉>",
-      "sources": [{"path": "<文件>", "locator": "L3"}]
-    }
-  ]
+  "resolves": [],
+  "decision": "minor_fix",
+  "decision_reason": "<目标连接、设计重大缺陷、会改变决定的历史约束>",
+  "minor_fix_paths": [],
+  "focus": {
+    "question_goal": "<研究问题如何连接目标>",
+    "design_interpretation": "<设计与解释的重大缺陷>",
+    "history_constraints": "<会改变研究决定的历史和实际限制>"
+  }
 }

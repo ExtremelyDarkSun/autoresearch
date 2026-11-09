@@ -1,8 +1,8 @@
 # GENERATED-BY: portable extraction / repository bootstrap, 2026-11-09 +08:00
-# LAST-EDIT: 2026-11-09 +08:00
+# LAST-EDIT: portable framework synchronization, 2026-11-09
 # PURPOSE: Portable project entrypoint or verification.
 # ORIGIN: none
-# CUMULATIVE-DELTA: Independent kernel and target profile integration.
+# CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
 """Governance CLI with explicit local mutation and no trusted verifier fallback."""
 import argparse
 import json
@@ -18,16 +18,20 @@ def main(argv=None):
     p.add_argument('--commit',action='store_true')
     p.add_argument('--actor',default='local-cli')
     sub=p.add_subparsers(dest='action',required=True)
-    for action in ('freeze','audit-record','audit-respond','lesson-add','lesson-revise','trigger','monitor-record','intent-new','sync-user','assess-update'):
+    for action in ('freeze','audit-record','audit-respond','lesson-add','lesson-revise','trigger','monitor-record','intent-new','sync-user','assess-update','audit-correct','audit-file'):
         a=sub.add_parser(action);a.add_argument('--file',required=True)
-        if action in ('audit-record','audit-respond','lesson-revise','trigger','monitor-record'):a.add_argument('--id',required=True)
+        if action in ('audit-record','audit-respond','lesson-revise','trigger','monitor-record','audit-correct','audit-file'):a.add_argument('--id',required=True)
     for action in ('plan','audit-state','audit-prepare','intent-state','lesson-state'):
         a=sub.add_parser(action);a.add_argument('--id',required=True)
     a=sub.add_parser('start-check');a.add_argument('--intent-id');a.add_argument('--source-session')
+    a=sub.add_parser('audit-digest');a.add_argument('--file',required=True)
     a=sub.add_parser('lessons')
     args=p.parse_args(argv)
-    writes=args.action in {'freeze','audit-record','audit-respond','lesson-add','lesson-revise','trigger','monitor-record','audit-prepare','intent-new','sync-user','assess-update'}
+    writes=args.action in {'audit-correct','audit-file','freeze','audit-record','audit-respond','lesson-add','lesson-revise','trigger','monitor-record','audit-prepare','intent-new','sync-user','assess-update'}
     try:
+        if args.action=='audit-digest':
+            from .audit_support import report_digest
+            print(report_digest(args.file));return 0
         if writes and not args.commit:
             print(json.dumps({'mode':'plan','action':args.action,'writes':False},ensure_ascii=False));return 0
         if not Path(args.db).is_file():raise ValueError('数据库不存在；先初始化独立工作区')
@@ -60,6 +64,8 @@ def main(argv=None):
         elif args.action=='audit-prepare':out=gov.prepare_audit(args.id,actor=args.actor)
         elif args.action=='audit-record':out=gov.record_audit(args.id,body,actor=args.actor)
         elif args.action=='audit-respond':out=gov.respond_audit(args.id,body,actor=args.actor)
+        elif args.action=='audit-correct':out=gov.correct_audit(args.id,body,actor=args.actor)
+        elif args.action=='audit-file':out=gov.record_audit_file(args.id,body['report_file'],body,actor=args.actor)
         elif args.action=='audit-state':out=gov.audit_state(args.id)
         elif args.action=='start-check':out=gov.check_start(intent_id=args.intent_id,source_session=args.source_session)
         elif args.action=='intent-state':out=gov.intent_state(args.id)

@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-LAST-EDIT: portable extraction / repository bootstrap (2026-11-09 +08:00)
+LAST-EDIT: portable framework synchronization, 2026-11-09
 PURPOSE: 读什么、谁读、什么时候重读 —— 分级读取政策与派工只写三样
 ORIGIN: none（新文件）。抽取自上游 CONTEXT_LOADING.md 的 §0–§6，去掉了具体文档名与角色包路径
-CUMULATIVE-DELTA: 首版。机读清单在 kernel/contracts/reading_required.json。
+CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
 -->
 
 # 读取政策
@@ -24,19 +24,19 @@ CUMULATIVE-DELTA: 首版。机读清单在 kernel/contracts/reading_required.jso
 
 ---
 
-## 2 按角色读（只读本角色那一行）
+## 2 按角色选文档（选中的整份读完）
 
 | 角色 | 除公共底线外读什么 | 什么时候 |
 |---|---|---|
-| **researcher**（主会话） | 入口与「一轮应该长什么样」；本任务相关节 | 开局一次；每轮开工前 |
+| **researcher**（主会话） | 入口与「一轮应该长什么样」；本任务相关的整份现行文档 | 开局一次；每轮开工前 |
 | **planner** | 方案契约 + 上一轮的读数与经验 | 派工后动手前 |
-| **runner** | 运行与预算契约；本任务相关节 | 派工后动手前 |
+| **runner** | 运行与预算契约；本任务相关的整份现行文档 | 派工后动手前 |
 | **scribe** | 现状页契约（八节）+ 人给的材料 | 派工后动手前 |
 | **independent-reviewer** | 方案审计契约（七项 + 报告字段）+ 材料包 | 收到派工后**动手前**一次 |
 | **intent-monitor** | 意图监控契约 + 固定截止的会话原文 | 三类触发后派工即读 |
 | **trajectory-reviewer** | 轨迹复盘契约（九节 + 输入清单） | 专题收尾时派工后 |
 
-⚠️ 角色文档**不要求整份通读**：只读本角色那一行点名的部分 + 本任务相关节。
+与任务相关的现行规则、方案、分析文档必须整份读完。摘要、节选、他人转述不算读取正文。归档、冷件和历史快照在追溯时按编号查证，不要求全仓库通读。已逐字内嵌全文且版本未变时，不重复读取。
 
 ---
 
@@ -89,7 +89,7 @@ CUMULATIVE-DELTA: 首版。机读清单在 kernel/contracts/reading_required.jso
 
 ## 7 机读清单
 
-`kernel/contracts/reading_required.json` 是「谁在什么阶段必读哪份的哪一节」的唯一机读住所。
+`kernel/contracts/reading_required.json` 是「谁在什么阶段必读哪份完整文档」的唯一机读住所。
 每条含 `id` / `role` / `phase` / `path` / `anchor` / `why`。
 
 ⚠️ 改必读项**只改这个文件**，并跑一次校验：

@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-LAST-EDIT: portable extraction / repository bootstrap (2026-11-09 +08:00)
+LAST-EDIT: portable framework synchronization, 2026-11-09
 PURPOSE: 一次实验的「事前设计」正文 —— 假设、一次一组同假设改动、判据与出处、三类对照与历史已通过项、结果分支、预算，以及冻结与指纹
 ORIGIN: none（新文件）。抽取自上游 EXPERIMENT_RULES.md §1.1/§1.2/§1.3/§1.5/§1.9 与 plan_audit.md §4/§6，去掉了题单规模阈值与个人渠道
-CUMULATIVE-DELTA: 首版。每个字段都与 kernel/autoresearch/governance.py 的 validate_plan() 一一对应。
+CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
 -->
 
 # 方案契约（一次一轮）
@@ -50,7 +50,9 @@ CUMULATIVE-DELTA: 首版。每个字段都与 kernel/autoresearch/governance.py 
 
 ---
 
-## 3 判据必须带出处
+## 3 探索性观察与确认性门槛
+
+探索性实验使用 `mode=exploratory`，写 `metric`、`observation`、`interpretation_boundary`、`conditions`。它不强制数字门槛。确认性实验用 `mode=confirmatory`，或沿用未写 mode 的旧格式。确认性门槛必须有出处。
 
 ```json
 "criteria": {
@@ -162,7 +164,7 @@ CUMULATIVE-DELTA: 首版。每个字段都与 kernel/autoresearch/governance.py 
 
 1. 写一句**可被否掉**的假设（`hypothesis`）。
 2. 列出验证它需要的**整组改动**（`change_set`）。
-3. 定**读什么量**、门槛多少、**出处在哪**（`criteria`）。
+3. 先确定探索性或确认性。写观察、解释边界和条件。确认性实验再写有出处的门槛（`criteria`）。
 4. 选题：`target` 产生那个量；`regression` 包含全部 `previous_passes`；`control` 视情况。
 5. 写三支结果分支，确认三支行动不同（`branches`）。
 6. 给预算与输入文件（`budget` / `input_files`），跑 `validate_plan()`，再 `freeze_plan()`。

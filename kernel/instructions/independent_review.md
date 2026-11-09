@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-LAST-EDIT: portable extraction / repository bootstrap (2026-11-09 +08:00)
+LAST-EDIT: portable framework synchronization, 2026-11-09
 PURPOSE: 独立审计者的第一份输入 —— 只读、七项、报告怎么写、不许做什么
 ORIGIN: none（新文件）
-CUMULATIVE-DELTA: 首版
+CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
 -->
 
 # 独立方案审计者（第一份输入）
@@ -33,7 +33,7 @@ CUMULATIVE-DELTA: 首版
 | `branches` | 三支行动是否真的不同、是否能指导下一步？ |
 | `activation` | 改动到读数要经过哪几跳？每跳有可观察证据？ |
 
-**判不出来就写 `unknown`**，并且那项必须有 `blocking=true` 的 issue。
+**判不出来就写 `unknown`**，同 category 必须有 issue。新三态报告按影响写 `why_blocking` 或 `why_not_blocking`。
 ⛔ 判不出来不许默认通过。
 
 ---
@@ -63,5 +63,9 @@ CUMULATIVE-DELTA: 首版
 
 ## 5 交回什么
 
-一句话 + 报告 JSON：**七项结论、blocking 有几条、你判不了的是哪几项**。
+完整报告存 JSON 文件，只回传契约规定的六键短声明。给 `decision`、`decision_reason` 与三键 `focus`，重大阻断写 `why_blocking`。
 ⚠️ 你的报告会标 `declared` 还是 `verified` 由调用方的 verifier 决定，**不是你能声明的**。
+
+审查聚焦：研究问题与目标的连接、研究设计与解释的重大缺陷、会改变决定的历史证据和实际限制。
+完整 JSON 存文件，附 `decision`、`decision_reason`。只回传一条含文件路径、SHA256及问题摘要的短声明。
+三态是 `proceed`、`minor_fix`、`blocked`。不要把所有建议都当重大阻断。授权小修要按 issue 点名 `minor_fix_paths`。实现链路、执行参数、判据和题单不可授权为小修。

@@ -15,21 +15,29 @@
     }
   ],
   "criteria": {
-    "metric": "<这一个设计能产出的量>",
-    "direction": "increase",
-    "threshold": 1,
-    "source": "<门槛出处：哪次读数 / 哪条规则 / 哪份契约>"
+    "mode": "exploratory",
+    "metric": "<观察什么>",
+    "observation": "<支持、反驳、未看到分别是什么观察>",
+    "interpretation_boundary": "<本次观察能解释什么、不能外推什么>",
+    "conditions": "<装置、样本、预算和比较前提>"
   },
   "baseline": {
     "label": "<这一轮对照的是谁>",
     "fingerprint": "<对照件的内容指纹>"
   },
   "case_sets": {
-    "target": ["<产生那个量的题>"],
-    "regression": ["<历史已通过、必须留着的题>", "<可选：其它回归题>"],
+    "target": [
+      "<产生那个量的题>"
+    ],
+    "regression": [
+      "<历史已通过、必须留着的题>",
+      "<可选：其它回归题>"
+    ],
     "control": []
   },
-  "previous_passes": ["<历史已通过、必须留着的题>"],
+  "previous_passes": [
+    "<历史已通过、必须留着的题>"
+  ],
   "branches": {
     "support": {
       "action": "<支撑时下一步做什么>",
@@ -48,6 +56,8 @@
     "max_cost_units": 0,
     "max_seconds": 1
   },
-  "input_files": ["<仓库内相对路径>"],
+  "input_files": [
+    "<仓库内相对路径>"
+  ],
   "notes": "<叙述字段：改它不会触发重新审计>"
 }

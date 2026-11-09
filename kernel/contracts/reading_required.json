@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "_note": "机读唯一住所：谁在什么阶段必读哪份的哪一节。改必读项只改这里；口径见 kernel/contracts/reading_policy.md。⛔ 本文件不记录「谁读过」—— 读过要 record_read()，且默认只能标 declared。",
+  "_note": "机读唯一住所：角色与阶段只决定哪些文件。选中的现行文档必须整份读取。anchor 仅作导航，不限定读取范围。登记默认只能标 declared。",
   "entries": [
     {
       "id": "R1",
@@ -8,7 +8,8 @@
       "phase": "open",
       "path": "kernel/contracts/CONTRACT.md",
       "anchor": "## 1 不变量",
-      "why": "开局要能答「哪些规矩是机械判的、哪些仍靠纪律」。不读它会把 declared 当 verified。"
+      "why": "开局要能答「哪些规矩是机械判的、哪些仍靠纪律」。不读它会把 declared 当 verified。",
+      "scope": "full_document"
     },
     {
       "id": "R2",
@@ -16,7 +17,8 @@
       "phase": "plan",
       "path": "kernel/contracts/plan.md",
       "anchor": "## 8 写方案的顺序",
-      "why": "写方案前按六步走。跳过它就会先跑再看判据，审计必然退回。"
+      "why": "写方案前按六步走。跳过它就会先跑再看判据，审计必然退回。",
+      "scope": "full_document"
     },
     {
       "id": "R3",
@@ -24,7 +26,8 @@
       "phase": "plan",
       "path": "kernel/contracts/plan_audit.md",
       "anchor": "## 5 版本绑定",
-      "why": "判「这次要不要重新审计、还剩几次额度」。绑定面只到关键字段。"
+      "why": "判「这次要不要重新审计、还剩几次额度」。绑定面只到关键字段。",
+      "scope": "full_document"
     },
     {
       "id": "R4",
@@ -32,7 +35,8 @@
       "phase": "round",
       "path": "kernel/contracts/intent_monitor.md",
       "anchor": "## 7 进下一轮之前",
-      "why": "进下一轮前要跑 check_start。不读它就不知道被拦时该补什么。"
+      "why": "进下一轮前要跑 check_start。不读它就不知道被拦时该补什么。",
+      "scope": "full_document"
     },
     {
       "id": "R5",
@@ -40,7 +44,8 @@
       "phase": "close",
       "path": "kernel/contracts/status_page.md",
       "anchor": "## 1 八节",
-      "why": "收尾要交人读页。缺第 6/8 节时读者不知道要不要拍板、会话还会不会动。"
+      "why": "研究八节与四段、来源及未验证前提必须完整。流程状态另存。",
+      "scope": "full_document"
     },
     {
       "id": "A1",
@@ -48,7 +53,8 @@
       "phase": "review",
       "path": "kernel/contracts/plan_audit.md",
       "anchor": "## 3 审哪七项",
-      "why": "七项是清单，漏项会被工具拒；unknown 必须有 blocking issue。"
+      "why": "整份读取三态审计与小修边界。unknown 写明为何阻断或不阻断。",
+      "scope": "full_document"
     },
     {
       "id": "A2",
@@ -56,7 +62,8 @@
       "phase": "review",
       "path": "kernel/contracts/plan_audit.md",
       "anchor": "## 4 报告字段",
-      "why": "报告字段形状错会被拒；sources 非空是 I3 的要求。"
+      "why": "报告字段形状错会被拒；sources 非空是 I3 的要求。",
+      "scope": "full_document"
     },
     {
       "id": "M1",
@@ -64,7 +71,8 @@
       "phase": "monitor",
       "path": "kernel/contracts/intent_monitor.md",
       "anchor": "## 5 两个水位",
-      "why": "同步 ≠ 评估。不读它会拿「已同步」当「已核过」。"
+      "why": "同步 ≠ 评估。不读它会拿「已同步」当「已核过」。",
+      "scope": "full_document"
     },
     {
       "id": "M2",
@@ -72,7 +80,8 @@
       "phase": "monitor",
       "path": "kernel/contracts/intent_monitor.md",
       "anchor": "## 6 报告字段",
-      "why": "报告不覆盖全部未处理触发会被拒。"
+      "why": "报告不覆盖全部未处理触发会被拒。",
+      "scope": "full_document"
     },
     {
       "id": "T1",
@@ -80,7 +89,8 @@
       "phase": "close",
       "path": "kernel/contracts/trajectory_review.md",
       "anchor": "## 4 输出：九节",
-      "why": "九节缺一节就算没做完；第 2/3 节是这条流程的价值所在。"
+      "why": "九节缺一节就算没做完；第 2/3 节是这条流程的价值所在。",
+      "scope": "full_document"
     },
     {
       "id": "L1",
@@ -88,7 +98,8 @@
       "phase": "lesson",
       "path": "kernel/contracts/research_lessons.md",
       "anchor": "## 5 改了什么会作废旧确认",
-      "why": "设计下一轮前要按「适用场景」检索经验；未确认条目不许当依据。"
+      "why": "设计下一轮前要按「适用场景」检索经验；未确认条目不许当依据。",
+      "scope": "full_document"
     },
     {
       "id": "D1",
@@ -96,7 +107,8 @@
       "phase": "write",
       "path": "kernel/contracts/doc_maintenance.md",
       "anchor": "## 1 十三条原则",
-      "why": "写页要守分层与上限；滚动是搬运不是删除。"
+      "why": "写页要守分层与上限；滚动是搬运不是删除。",
+      "scope": "full_document"
     }
   ]
 }

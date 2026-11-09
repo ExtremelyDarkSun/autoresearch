@@ -1,9 +1,9 @@
 # GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-# LAST-EDIT: portable extraction / repository bootstrap (2026-11-09 +08:00)
+# LAST-EDIT: portable framework synchronization, 2026-11-09
 # PURPOSE: 治理层的单元测试 —— 重点覆盖拒绝路径（方案不合规、审计次数上限、关闭审计要证据、意图闭合四理由、
 #          经验修订使旧确认失效、委派哈希不符、冷件缺索引、append-only 被破坏）
 # ORIGIN: none（新文件）
-# CUMULATIVE-DELTA: 首版
+# CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
 """治理层测试。
 
 三条约束：
@@ -844,39 +844,42 @@ class DocTests(GovCase):
 
 
 class StatusPageTests(unittest.TestCase):
+    def _legacy(self, text):
+        return gov.validate_status_page(text, legacy=True)
+
     def _render(self, sections) -> str:
         return "\n\n".join(f"## {index + 1} {name}"
                            for index, name in enumerate(sections))
 
     def test_eight_sections_ok(self):
-        self.assertEqual(gov.validate_status_page(self._render(gov.STATUS_SECTIONS)), [])
+        self.assertEqual(self._legacy(self._render(gov.LEGACY_STATUS_SECTIONS)), [])
 
     def test_missing_section(self):
-        sections = [name for name in gov.STATUS_SECTIONS if name != "需要你拍板"]
-        errors = gov.validate_status_page(self._render(sections))
+        sections = [name for name in gov.LEGACY_STATUS_SECTIONS if name != "需要你拍板"]
+        errors = self._legacy(self._render(sections))
         self.assertTrue(any("需要你拍板" in item for item in errors), errors)
 
     def test_wrong_order(self):
-        sections = list(gov.STATUS_SECTIONS)
+        sections = list(gov.LEGACY_STATUS_SECTIONS)
         sections[2], sections[3] = sections[3], sections[2]
         self.assertTrue(any("顺序" in item
-                            for item in gov.validate_status_page(self._render(sections))))
+                            for item in self._legacy(self._render(sections))))
 
     def test_evidence_sections_do_not_impersonate_each_other(self):
         """「证据」与「证据在哪」是两节：少一节时必须点名少的那一节。"""
-        self.assertIn("证据", gov.STATUS_SECTIONS)
-        self.assertIn("证据在哪", gov.STATUS_SECTIONS)
-        sections = [name for name in gov.STATUS_SECTIONS if name != "证据"]
-        errors = gov.validate_status_page(self._render(sections))
+        self.assertIn("证据", gov.LEGACY_STATUS_SECTIONS)
+        self.assertIn("证据在哪", gov.LEGACY_STATUS_SECTIONS)
+        sections = [name for name in gov.LEGACY_STATUS_SECTIONS if name != "证据"]
+        errors = self._legacy(self._render(sections))
         self.assertTrue(any("「证据」" in item for item in errors), errors)
         self.assertFalse(any("「证据在哪」" in item for item in errors), errors)
 
     def test_numbering_variant_still_matches(self):
-        sections = ["02 范围与目标"] + list(gov.STATUS_SECTIONS[1:])
-        self.assertEqual(gov.validate_status_page(self._render(sections)), [])
+        sections = ["02 范围与目标"] + list(gov.LEGACY_STATUS_SECTIONS[1:])
+        self.assertEqual(self._legacy(self._render(sections)), [])
 
     def test_empty(self):
-        self.assertEqual(len(gov.validate_status_page("")), 1)
+        self.assertEqual(len(self._legacy("")), 1)
 
 
 # ---------------------------------------------------------------------------

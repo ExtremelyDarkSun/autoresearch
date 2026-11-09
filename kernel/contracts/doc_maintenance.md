@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-LAST-EDIT: portable extraction / repository bootstrap (2026-11-09 +08:00)
+LAST-EDIT: portable framework synchronization, 2026-11-09
 PURPOSE: 文档维护 —— 哪些该分层、热件上限、滚动成冷件怎么搬、编号与索引为什么不能省
 ORIGIN: none（新文件）。抽取自上游 DOC_MAINTENANCE.md 的 P1–P13，去掉了具体文件名与体积
-CUMULATIVE-DELTA: 首版。机械判据落在 governance.register_doc / roll_cold / doc_status。
+CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
 -->
 
 # 文档维护：分层、上限、滚动
@@ -28,7 +28,7 @@ CUMULATIVE-DELTA: 首版。机械判据落在 governance.register_doc / roll_col
 | **P10** | 滚动必须在**没有其他写者**的窗口里做 | 并发滚动会丢别人的追加，而且不报错 |
 | **P11** | 滚动前后各记一次**可核值**（字节数 + sha256），且算 hash 与最后一次写之间不许有别的写 | 做不到就别把 hash 写在同一份还会被写的文件里 |
 | **P12** | 每条「必须滚」要么是**会红的闸**，要么在收工报告里显式列为「仍是纪律」 | 只写「应当定期滚动」等于不会滚 |
-| **P13** | **渐进式披露**：先给当前答案，再给行动依据，最后按需读历史与原始证据 | 入口说明当前口径与必读条件，不靠通读变更史推导现状 |
+| **P13** | **渐进式披露**：先给当前答案，再给行动依据，最后按需读历史与原始证据 | 分层只决定阅读顺序和文件组织。相关现行文档仍须整份读，不能用摘要或节选代替正文 |
 
 ---
 

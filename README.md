@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: repository creation, 2026-11-09 +08:00
-LAST-EDIT: 2026-11-09 +08:00
+LAST-EDIT: portable framework synchronization, 2026-11-09
 PURPOSE: 给首次查看项目的人说明用途、边界和可执行检查。
 ORIGIN: reusable research mechanisms and target-specific evaluation adapters
-CUMULATIVE-DELTA: 实际拆开内核、agent配置与实例。新增首次真实启动prompt，覆盖Kaggle、AutoDL和首轮研究验收。
+CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
 -->
 # AutoResearch：可复用研究内核与 agent 比赛配置
 
@@ -48,7 +48,7 @@ python -X utf8 -B research.py selftest --plugins
 | [kernel/autoresearch/runtime](kernel/autoresearch/runtime/) | 通用事务内核 | 状态、追加事件、预算、任务与资源租约、幂等执行、结果取回、交付和回复台账 |
 | [kernel/autoresearch/governance.py](kernel/autoresearch/governance.py) | 通用研究治理 | 计划检查、冻结、独立审查、意图、复盘和经验确认 |
 | [kernel/contracts](kernel/contracts/) · [kernel/instructions](kernel/instructions/) | 内核现行契约与读取要求 | 原则、可执行条件、证据边界 |
-| [kernel/roles](kernel/roles/) · [kernel/templates](kernel/templates/) | 可选委派与空模板 | 角色材料、事前设计、人读现状页与交接 |
+| [kernel/roles](kernel/roles/) · [kernel/templates](kernel/templates/) | 角色委派与空模板 | 角色材料、事前设计、人读现状页与交接 |
 | [kernel/hosts/dsh](kernel/hosts/dsh/) | 首个宿主适配 | 三套项目插件、配置生成和加载检查工具 |
 | [kernel/autoresearch/backends](kernel/autoresearch/backends/) | 基础设施适配 | AutoDL 查询、变化事件、负责人绑定与单次监控 |
 | [profiles/agent-harness](profiles/agent-harness/) | agent 目标配置 | 题单、结果和轨迹协议；工具、路径、泄漏与预算规则 |
@@ -130,4 +130,4 @@ python research.py instructions --captured path/to/captured-host-request.txt
 - 本次执行过的检查与结果：[验收记录](docs/VERIFICATION.md)。
 - 源码来源与许可证状态：[来源说明](NOTICE.md)。
 
-这是独立本地 Git 项目。没有配置远端，也没有发布到外部平台。
+这是独立 Git 项目。最新框架同步内容与能力边界见 [升级记录](docs/UPGRADE_SYNC.md)。

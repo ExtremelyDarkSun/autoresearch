@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-LAST-EDIT: portable extraction / repository bootstrap (2026-11-09 +08:00)
+LAST-EDIT: portable framework synchronization, 2026-11-09
 PURPOSE: 研究治理层的说明书 —— 每个能力对应哪个机械判据、装在哪、真实边界是什么（不声称生产宿主已验证）
 ORIGIN: none（新文件）
-CUMULATIVE-DELTA: 首版
+CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
 -->
 
 # 研究治理层
@@ -18,7 +18,7 @@ CUMULATIVE-DELTA: 首版
 
 | 没有这一层会发生什么 | 这一层怎么拦 |
 |---|---|
-| 方案是事后补的，判据是跑完再定的 | `freeze_plan` 要求 11 个字段齐全且判据带出处 |
+| 方案是事后补的，判据是跑完再定的 | `freeze_plan` 要求 必需字段齐全，探索性写观察边界，确认性门槛有出处 |
 | 一轮里同时改三件事，读数分不开 | `validate_plan` 拒绝多个 `hypothesis_id` |
 | 本来能过的题被悄悄删掉 | `previous_passes ⊂ case_sets.regression` |
 | 自己审自己，结论必然通过 | `record_audit` 拒绝「审计者 = 负责人」 |
@@ -33,21 +33,21 @@ CUMULATIVE-DELTA: 首版
 
 | 能力 | 机械判据（会拒绝的函数） | 真实边界 |
 |---|---|---|
-| 事前假设与判据出处 | `validate_plan`（`criteria.source` 非空、`threshold` 有限数） | 判不了「这个假设值不值得做」 |
+| 事前假设与判据出处 | `validate_plan`（探索性观察/条件/边界，确认性阈值与出处） | 判不了「这个假设值不值得做」 |
 | 一次一组同假设改动 | `validate_plan`（多个 `hypothesis_id` ⇒ 拒） | 判不了两项改动是不是真属于同一假设 |
 | 三类对照 + 历史已通过项不丢 | `validate_plan`（`target` 非空、三类不重叠、类内不重复、`previous_passes ⊂ regression`） | 判不了那些题号是不是真的在同一个测量装置上通过过 |
 | 结果分支 | `validate_plan`（三支都要 `action`，且不许完全相同） | 判不了某一支的行动是不是合理 |
 | 计划冻结 / 指纹 | `freeze_plan` + `plan_fingerprint`（关键字段 vs 叙述字段） | 叙述字段可以在不重审的情况下变（这是明确取舍） |
 | 预算政策可配 | `validate_plan`（`max_cost_units` ≥0 整数、`max_seconds` >0 整数） | 预算单位由部署方定义，本层不换算 |
 | 独立方案审计 + 版本绑定 | `prepare_audit` / `record_audit` / `audit_state` | 独立性只有结构层（新会话）由宿主保证；`verified` 要注入 verifier |
-| 每版最多 2 次、措辞不重审 | `prepare_audit` 按 `key_fingerprint` 计数；超限直接拒 | 扩额没有自我通道（这是设计） |
+| 每个计划跨版本最多 2 次、措辞不重审 | `prepare_audit` 按 `plan_id` 累计计数；超限直接拒 | 扩额没有自我通道（这是设计） |
 | 用户专项意图 + 节点监控 | `create_intent`（原话 + 会话 + seq）· `record_monitor_report`（覆盖全部触发）· `check_start` | 判不了「这句话算不算专项意图」，那是语义判断 |
 | 复盘 / 经验候选四处置 | `add_lesson_candidate` · `confirm_lesson`（`REV` + `method` 绑定） | 判不了人是不是真心保留 |
 | 修订使旧确认失效 | `revise_lesson`（`REV+1`）· `lesson_state`（列失效确认） | 判不了修订后的正文是不是更对 |
 | 主会话推进 + 可选委派 | `record_delegation`（`rolepack_sha` 必须等于登记值） | 判不了子会话是不是真的新起的 |
-| 现状页八节 | `validate_status_page`（八节齐 + 顺序对） | 判不了内容真假 |
+| 研究现状页八节 | `validate_status_page`（八节非空、四段顺序、来源标记） | 判不了内容真假 |
 | 文档冷件 / 不丢 | `register_doc`（hot 必须给上限）· `roll_cold`（基线哈希、索引、不能覆盖） | 判不了搬走的是不是「已结案」 |
-| append-only | 13 张表带 `BEFORE UPDATE/DELETE` 触发器 | 数据库文件本身可以被替换（那是宿主层的事） |
+| append-only | 治理表带 `BEFORE UPDATE/DELETE` 触发器 | 数据库文件本身可以被替换（那是宿主层的事） |
 
 ⚠️ **JSON 文件不带文件头注释**：`kernel/contracts/plan.schema.json`、
 `kernel/contracts/reading_required.json` 与 `kernel/templates/*.json` 改用
@@ -96,7 +96,7 @@ if not state["ok"]:
 
 三类状态检查都是**只读**：`audit_state` · `check_start` · `lesson_state` / `doc_status`。
 
-统一 CLI 用法：`python research.py governance --db <工作区>/.autoresearch/runtime.sqlite3 --help`。写操作必须显式加 `--commit`；不加时只显示计划模式。`audit-prepare` 成功就占用本版一次审查额度。
+统一 CLI 用法：`python research.py governance --db <工作区>/.autoresearch/runtime.sqlite3 --help`。写操作必须显式加 `--commit`；不加时只显示计划模式。`audit-prepare` 成功就占用该计划一次审查额度。
 
 `sync-user --file update.json` 接收 `source_session/seq/quote`；`intent-new --file intent.json` 接收 `intent_id/quote/source_session/seq`（可加 `acceptance`）。先按用户的实际回答决定是否登记意图。`assess-update --file assessment.json` 接收 `source_session/covers_seq/decision/quote`，判 `intent` 时提供 `intent_id`，判 `none` 时提供晚于原句的 `answer_seq`。这些 CLI 输入只是本地声明，不构成已认证的用户事件。意图闭合、豁免与用户确认等完整接口仍由 Python API 提供；需要可信验证器的路径在没有验证器时拒绝执行。
 写操作全部 `store.transaction()` + `store.emit()`，事件进 `store` 的 append-only 事件流。
@@ -130,8 +130,8 @@ python -m unittest discover -s tests -p 'test_governance.py' -v
 * 方案缺字段 / 判据无出处 / `threshold` 是 `NaN` 或 `true` / 多个 `hypothesis_id`；
 * 三类对照重叠、类内重复、`previous_passes` 不在回归集合里；
 * 三支分支行动完全相同；预算为负或布尔；`input_files` 是绝对路径或含 `..`；
-* 审计者 = 负责人；报告缺审项；`issue` 没有对应 issue；`unknown` 没有 blocking；
-* 同一版审计超过 2 次；关闭审计 / 豁免 / 撤回式闭合在没有 verifier 时被拒；
+* 审计者 = 负责人；报告缺审项；`issue` 没有对应 issue；新三态 `unknown` 缺阻断或非阻断理由；
+* 同一计划跨版本审计超过 2 次；关闭审计 / 豁免 / 撤回式闭合在没有 verifier 时被拒；
 * 意图闭合用非法理由、用 `on_track` 报告冒充 `unachievable`、缺用户原话；
 * 报告没覆盖未处理触发；`blocked` 不等于 `closed`；
 * 经验修订后旧确认失效、用旧 `REV` 确认被拒；
@@ -140,3 +140,7 @@ python -m unittest discover -s tests -p 'test_governance.py' -v
 
 全部用**临时文件数据库 + 合成数据**（`P1` / `H1` / `t1` / `r1` / `c1`），
 不碰任何真实记录。
+
+## 最新同步
+
+三态审查、correct 小修与文件摘要绑定、历史阻断跨版本保存，见 [升级记录](UPGRADE_SYNC.md)。`audit-correct` 接收小修列表，`audit-file` 接收六键短声明文件，`audit-digest --file` 输出原始字节 SHA256。三者仍使用显式 `--db`，写入须 `--commit`。

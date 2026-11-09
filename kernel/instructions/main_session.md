@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-LAST-EDIT: portable extraction / repository bootstrap (2026-11-09 +08:00)
+LAST-EDIT: portable framework synchronization, 2026-11-09
 PURPOSE: 主会话入口指令 —— 一轮的顺序、什么时候必须派独立会话、什么时候必须停
 ORIGIN: none（新文件）
-CUMULATIVE-DELTA: 首版。这份是「指令」不是「契约」：它讲顺序，判据在 kernel/contracts/ 里。
+CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
 -->
 
 # 主会话入口（researcher）
@@ -18,11 +18,11 @@ CUMULATIVE-DELTA: 首版。这份是「指令」不是「契约」：它讲顺�
 1. **认基线**：这一轮对照的是谁、凭什么、差在哪。写进 `plan.baseline`。
 2. **写方案**：按 `plan.md` 六步，跑 `validate_plan()`，再 `freeze_plan()`。
 3. **准备独立审计**：`prepare_audit()` → 派**新会话**按七项审 → `record_audit()`。
-4. **看审计状态**：`audit_state()` 必须 `ok=True`；否则先改方案或补复审。
+4. **看审计状态**：`audit_state()` 必须 `ok=True`；小修先 correct 自查，重大设计变更再复审。
 5. **查意图**：`check_start()` 必须 `allow=True`；否则先补评估或监控。
 6. **跑**：预算内执行，结果落文件。
 7. **读结果**：先看四态计数（通过/失败/环境错误/超时），再谈解释。
-8. **更现状页**：八节；缺节就是没写完。
+8. **派 scribe 更新现状页**：负责人提供分析、结论、下一步与证据，scribe 写研究八节与四段。流程状态另存。
 9. **登记触发**：结果分析之后登记 `result_analysis`，等监控来核。
 
 ⛔ 第 3–5 步不许省。**审计绿 ≠ 实验授权**；**意图检查绿 ≠ 可以绕过预算**。
@@ -35,6 +35,7 @@ CUMULATIVE-DELTA: 首版。这份是「指令」不是「契约」：它讲顺�
 |---|---|---|
 | 开跑前的方案审计 | `independent-reviewer` | 自己审自己的方案，会按自己的理由解释自己 |
 | 三类触发后的意图核对 | `intent-monitor` | 它要先读用户原话、再读原始结果、最后才读你的分析 |
+| 人读页正文交付 | `scribe` | 负责人供料，实际派出会话组织正文 |
 | 专题收尾的轨迹复盘 | `trajectory-reviewer` | 同一会话回看自己的决策会自洽成闭环 |
 
 派工只写三样（见 `reading_policy.md` §5）。⛔ 不用 fork：那会把你的论证递过去。
@@ -56,5 +57,5 @@ CUMULATIVE-DELTA: 首版。这份是「指令」不是「契约」：它讲顺�
 
 * 先给**目标 / 结果 / 方向**，再给细节。
 * 每条结论指到原始文件；指不到的写「只能当假设」。
-* 交付写四样：**结果 · 证据 · 异常 · 未决**。
+* 回传先给结论与关键研究理由，再说缺什么证据。拒绝或取消也只讲关键研究理由。过程状态留在机器回执中。
 * ⛔ 不用「上面说过」代替解释；⛔ 不把内部代号当共同坐标。

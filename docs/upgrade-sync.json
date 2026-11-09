@@ -1,0 +1,188 @@
+{
+  "format": 1,
+  "baseline_commit": "ee6898e",
+  "scope": "current framework mechanisms; private instance material excluded",
+  "runtime_comparison": [
+    {
+      "component": "research-runtime/store.py",
+      "sha256": "5abbdf00f48de7a286c21c1ed0b09b0b714f310f3408cecec45eb86900c5e7a3",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/accounts.py",
+      "sha256": "a8c1e404c75749536fefd1e0ad1ab0181ca7f98fdfaa7374c2073f33e9609bcb",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/scheduler.py",
+      "sha256": "ad3e344991319232225fa606b84f78691cc43c5475720fc2d8ee6b8a741bdadd",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/policy.py",
+      "sha256": "96d0066214319a5b9e5def6e35a91fc8787764192ad0f092ecb40b786c8d4ac0",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/execution.py",
+      "sha256": "686a6703c88618c03daf0e7e53ca75795932ec05a472c33f5892ce2a220dd137",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/service.py",
+      "sha256": "8c2ec6b7bf650f971841960ab0bc26ba29e85fdd3e6aed0d14a1e5a8692f9fd8",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/delivery.py",
+      "sha256": "afabb77cdea7757d896680f7cbb09b52d4eb957957ed8d618ea6eb4cd6a326c2",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/inbox.py",
+      "sha256": "52d6b533fed8a9cc5033f591939e7d29d72891c1621943c842259a90afd92d03",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/delegation.py",
+      "sha256": "947eb9f74f2483726ba392644c98a793f2456394d7e0ce670cdeceaf08361a91",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/topics.py",
+      "sha256": "23852bf2c824b28c7adf3c4087654a79368c21cd1e0ff3d15b304f878414c928",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/legacy.py",
+      "sha256": "0b8c2dbfc47a786f0bbc536e4781d4a2076e0ae1c7d68fef98789a6374c848a8",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/backend.py",
+      "sha256": "b6c91669ab1ced3be80547daed76f1e6e6dbe94c82591b47a5a9a48a08891f85",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/cli.py",
+      "sha256": "9fa17c4fe5f09167af02af6e2557d2e1fb4f5571a40752da4585f5a1b23411fa",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/test_accounts.py",
+      "sha256": "dc3e36512f0811c3a4987ea00aea6deb1992224df239857fc4d94d0a77a07118",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/test_scheduler.py",
+      "sha256": "2d093badee26b41a8056e6186193d2f5db08980ee30dcef9b6bff871f21d5376",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/test_execution.py",
+      "sha256": "c19276ee58ad644e6760c2bfbc0a198235912cd9e795426a58ecb50e8fd6996a",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/test_service.py",
+      "sha256": "9479e39d90a4ff347d77250fc64b24d5785b5dfab1ccc978ab9639d398838244",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/test_delivery.py",
+      "sha256": "b67f4b7dde546680fa81e71c78fe004e4cca13ae0ba318bd380cf4b136b9b05b",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/test_inbox.py",
+      "sha256": "2dcb82bbe2e4e5f209f41adb3e18d14e1dfd958e76c2dbc25240d6986cafb6d1",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/test_delegation.py",
+      "sha256": "d14741b44edec69ffa35c5c1f0176195bb5f7e2096fa1fa86a9e6981d2cf7dfa",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/test_topics.py",
+      "sha256": "9781a932074d31d7bdc93efb7a9880bc9da5f32a8602cfcd7bd846af78cb593b",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/test_legacy.py",
+      "sha256": "59a4131f41c9e6e483652622229bb59bbd285a18cf70c7328f803d429fba885b",
+      "unchanged_from_extraction": true
+    },
+    {
+      "component": "research-runtime/test_cli.py",
+      "sha256": "74c09edc3f7133012e7ca0f22eb85a20edaee231482a29d05b3b7202ab8ce898",
+      "unchanged_from_extraction": true
+    }
+  ],
+  "sources": [
+    {
+      "component": "plan_audit.md",
+      "sha256": "772b166340ad8995a9e81a4ee38e9ce7e931b3c650ac0b2fe2c51dca07db2acc"
+    },
+    {
+      "component": "CONTEXT_LOADING.md",
+      "sha256": "8e89e610dee4e4a156467280711b670fb0d68bb3f2154df3a66b86ad485211b7"
+    },
+    {
+      "component": "CONTEXT_BUDGET.md",
+      "sha256": "97f57e47aef66fa2b033a167ad95bcce5e7b02f346da966406ea22d6d245d108"
+    },
+    {
+      "component": "PLAN_AUTHORING.md",
+      "sha256": "9cc69f636d2191624caf775f1cb1e447922580aac01dc794d940cf303ee8b956"
+    },
+    {
+      "component": "SCRIBE_STATUS_PROMPT.md",
+      "sha256": "abf19a21966c16376af6c77e4aa44972bb577431b736d76e9935ee35c6790fdc"
+    },
+    {
+      "component": "TOPICS_RUNBOOK.md",
+      "sha256": "110a21f6bf49f2bf3d95f0e0d1ad866523c29e4e1434d8e61ca0246599df3628"
+    },
+    {
+      "component": "topic_scaffold.py",
+      "sha256": "1dba33b56d61910bde3ef2a8c3f7d97f37747ff5421a07ec8ebaa5628bee7c71"
+    },
+    {
+      "component": "plan_audit.py",
+      "sha256": "e6fbbc1c3d50ba09cf5bb9012d7ae60494cc013d51546d909ef8c68d759c5d92"
+    },
+    {
+      "component": "intent_monitor.py",
+      "sha256": "6eacc7d0c35f42579f87b1484d4132cf924d874a94bddd80a08a4b85a0c7619f"
+    },
+    {
+      "component": "status_pack.py",
+      "sha256": "ec1fe7c7c322f5808de22254d950483f5f84e63d8cb7ea140378cfa1851523b4"
+    },
+    {
+      "component": "status_delivery.py",
+      "sha256": "8ad7b4b11a7e97ca45b406de7b5d4525ec3912d78ef9bf2608eb1f61c70e29c5"
+    },
+    {
+      "component": "topic_watchdog.py",
+      "sha256": "c4168cbda0fd2b0e7392f1ea775da6c140207b4ddda8b2868015e5f4ad921318"
+    },
+    {
+      "component": "ai_work.py",
+      "sha256": "2d891f6c229962eeefcbf5486321f290d9de1f2a1a15ec9cfa83b84a907d43a3"
+    },
+    {
+      "component": "exp_ledger.py",
+      "sha256": "0bbb7a2f571b75c678e8ddc5ec1b0dfe8a9eb99c69b4d9cbb634fb914303a84a"
+    },
+    {
+      "component": "exp_launch.py",
+      "sha256": "dc38c147b658ae93c4df9a16e25f366127e85a0cb4faf604cf7cdbfe76edd489"
+    },
+    {
+      "component": "DOC_MAINTENANCE.md",
+      "sha256": "4675bfea7ac375fb587ee75c4b2033d621d23e105ae3a442824b1cb9d1a80933"
+    }
+  ]
+}

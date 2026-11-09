@@ -1,8 +1,8 @@
 # GENERATED-BY: portable extraction / repository bootstrap, 2026-11-09 +08:00
-# LAST-EDIT: 2026-11-09 +08:00
+# LAST-EDIT: portable framework synchronization, 2026-11-09
 # PURPOSE: Portable project entrypoint or verification.
 # ORIGIN: none
-# CUMULATIVE-DELTA: Independent kernel and target profile integration.
+# CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
 """Complete instruction bundles: measure first, then verify captured host input."""
 from __future__ import annotations
 import hashlib
@@ -27,6 +27,8 @@ def instruction_manifest(repo_root, profile_path):
     for entry in reading.get('entries', []):
         if not isinstance(entry, dict) or not isinstance(entry.get('path'), str) or not entry['path'].strip():
             raise ValueError('reading_required entry must contain a nonempty path')
+        if entry.get('scope', 'full_document') != 'full_document':
+            raise ValueError('current required documents must use full_document scope')
         candidate = (root / entry['path']).resolve()
         if not candidate.is_relative_to(root):
             raise ValueError('kernel reading path escapes the repository')

@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-LAST-EDIT: portable extraction / repository bootstrap (2026-11-09 +08:00)
+LAST-EDIT: portable framework synchronization, 2026-11-09
 PURPOSE: 写方案时的作者指令 —— 六步、常见退回原因、写完自检
 ORIGIN: none（新文件）
-CUMULATIVE-DELTA: 首版
+CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
 -->
 
 # 写方案（plan_authoring）
@@ -17,7 +17,7 @@ CUMULATIVE-DELTA: 首版
 1. **判据文字与实际取的数不同源**：写了「通过率」，实际读的是「通过题数」。
    ⇒ 判据每个字都要能在结果字段里找到对应的量。
 2. **先定门槛再看基线**：门槛是拍的。
-   ⇒ 先算基线，再定门槛，`criteria.source` 指到那次读数。
+   ⇒ 确认性实验先看基线，再定有出处的门槛。探索性实验写观察与解释边界，不编数字门槛。
 3. **登记的判据对象不是被评的那个**：写的是 A 指标，评测产出的是 B 指标。
    ⇒ 去读评测入口到底写哪些字段（别猜）。
 4. **改动后只改了一处登记**：方案、契约、模板各写一份同样的值，改一处必漏两处。
@@ -31,7 +31,7 @@ CUMULATIVE-DELTA: 首版
 |---|---|---|
 | 1 | 写一句**可被否掉**的假设：什么观察会让它错 | `hypothesis` |
 | 2 | 列出验证它需要的**整组改动**（允许一项多项，但只属一个假设） | `change_set` |
-| 3 | 定**读什么量**、门槛多少、**出处** | `criteria` |
+| 3 | 写观察、条件与解释边界，确认性门槛另附出处 | `criteria` |
 | 4 | 选题：`target` 产生那个量；`regression` 含全部 `previous_passes`；`control` 视情况 | `case_sets` · `previous_passes` |
 | 5 | 写三支结果分支，确认三支行动**不同** | `branches` |
 | 6 | 给预算与输入文件，跑校验，再冻结 | `budget` · `input_files` → `freeze_plan` |
@@ -51,7 +51,7 @@ CUMULATIVE-DELTA: 首版
 
 - [ ] 假设能不能被某个具体读数否掉？
 - [ ] `change_set` 里每一项都写了「改了什么」，不是「想让它变好」？
-- [ ] `criteria.threshold` 是有限数，`source` 能指到具体文件/规则？
+- [ ] 探索性判据有观察、条件和解释边界？确认性门槛有有限数及出处？
 - [ ] `case_sets.target` 非空，三类不重叠，类内不重复？
 - [ ] `previous_passes` 全在 `regression` 里？
 - [ ] `branches` 三支行动**确实不同**？
@@ -68,4 +68,4 @@ CUMULATIVE-DELTA: 首版
 | `criteria` / `case_sets` / `change_set` / `budget` / 其它关键字段 | 关键字段指纹变 ⇒ **旧审计不覆盖** ⇒ 重新 prepare + 复审 |
 | `notes` / `title` / `rationale` | 指纹不变 ⇒ **不用重审**（但要在记录里写改了哪里） |
 
-⚠️ 一个方案版本最多审 2 次。**先想清楚再 prepare**，别把额度花在改错字上。
+⚠️ 一个方案跨版本默认最多审 2 次。**先想清楚再 prepare**，别把额度花在改错字上。
