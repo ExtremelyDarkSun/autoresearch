@@ -130,8 +130,10 @@ $python = (Get-Command python).Source   # 用部署机现有的 Python；需要�
 | `--no-idle-trigger` | 只按判词触发，不看显卡余量 |
 | `--cooldown-minutes` / `--max-age-minutes` | 冷却期 / 过期阈值 |
 | `--timeout` / `--deadline` | 单次请求超时 / 整次查询硬上限 |
-| `--targets-db` / `--targets-table` | 负责人绑定所在 sqlite（只读）与表名 |
+| `--targets-db` / `--targets-table` | 只读负责人绑定库与表。库默认 `<workspace>/.autoresearch/runtime.sqlite3`，表默认topics |
 | `--dry-run` / `--json` / `--once` / `--selftest` | 只读模式 / 输出格式 / 单次（默认） / 离线自检 |
+
+成功采集后的每次tick会更新已登记专题的`.autoresearch/state/process_status/<专题>.json|.md`，专题正文按工作区布局标记定位。它不改STATUS研究正文。缺库、缺必要列、缺专题目录或无检查点时显式写unknown/待核，不把心跳写成运行证明。库不可读时不覆盖已有targets；可读但无active负责人时写空名单，插件hold。新会话接手后用新绑定生成名单。
 
 退出码：`0` = 查到了 · `2` = 说不清（没给 workspace / 凭据缺 / 查询失败）· `3` = 自检失败。
 

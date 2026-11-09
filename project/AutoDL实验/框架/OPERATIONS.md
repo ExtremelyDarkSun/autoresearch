@@ -3,7 +3,7 @@ GENERATED-BY: portable project organization
 LAST-EDIT: 2026-11-09
 PURPOSE: 实际工具入口与固定路径适配
 ORIGIN: maintained layered workspace organization, neutral extraction
-CUMULATIVE-DELTA: 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
+CUMULATIVE-DELTA: 2026-11-09 恢复本地中文目录，工具按明确布局标记适配； 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
 -->
 # 操作入口
 
@@ -22,5 +22,5 @@ CUMULATIVE-DELTA: 固定项目组织模板；实例事实留空，现行规则�
 | 下一轮只读建议 | `progress preflight`、`progress next-round`、`progress schedule` |
 | 工程问题、普通提问 | `issues`、`questions` |
 
-固定工具路径不改：专题正文在根 `topics`，运行库在 `.autoresearch/runtime.sqlite3`。中文实验分析目录只索引，不复制专题正文。
+新工作区的专题正文在 `AutoDL实验/实验分析/topics/`，代码副本在同级 `worktrees/`，环境在 `AutoDL实验/实验记录/environments/`，计划在 `AutoDL实验/框架/state/plans/`。布局由 `.autoresearch/workspace-layout.json` 固定，不按目录是否存在猜测。旧无标记工作区保持原路径，不自动搬迁。运行库仍在 `.autoresearch/runtime.sqlite3`。
 历史终点检查不恢复为必跑义务。部署未配置就写未配置；工具建议命令不表示已执行。

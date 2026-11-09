@@ -32,7 +32,7 @@ def main(argv=None):
                'monitoring': '.monitoring_cli', 'decisions': '.decisions_cli',
                'progress': '.progress_cli', 'workspace': '.workspace_cli', 'budget': '.budget_cli',
                'issues': '.issues_cli', 'progress-host': '.progress_host_cli',
-               'channels': '.channels_cli', 'remote': '.remote_cli',
+               'channels': '.channels_cli', 'remote': '.remote_cli', 'recovery': '.recovery_cli',
                'assurance': '.assurance_cli', 'questions': '.questions_cli'}
     if args and args[0] in modules:
         from importlib import import_module
@@ -55,6 +55,7 @@ def main(argv=None):
         ('decisions', '审批HTML、双回执、入向回复与超时'),
         ('progress', '声明式进展采集与受管推进作业'),
         ('workspace', '专题真实代码隔离、环境和研究快照'),
+        ('recovery', '当前工作树私有恢复包的导出、校验与全新目录恢复'),
         ('issues', '首错查重、负责人、修复复验和冷件索引'),
         ('progress-host', '真实宿主goal、入向与受管作业的推进适配'),
         ('channels', '通道配置诊断与认证收件监听'),

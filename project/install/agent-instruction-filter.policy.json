@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "defaultRule": {"mode": "keep"},
+  "rules": [
+    {"match": "**/.dsh/AGENTS.md", "mode": "keep"},
+    {"match": "**/AutoDL实验/框架/AGENTS.md", "mode": "drop"},
+    {"match": "**/AutoDL实验/AGENTS.md", "mode": "drop"},
+    {"match": "**/Kaggle平台/AGENTS.md", "mode": "drop"},
+    {"match": "**/AGENTS.md", "mode": "drop"}
+  ]
+}

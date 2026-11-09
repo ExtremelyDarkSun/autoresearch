@@ -3,7 +3,7 @@ GENERATED-BY: portable project organization
 LAST-EDIT: 2026-11-09
 PURPOSE: 原组织到中性模板的功能映射
 ORIGIN: maintained layered workspace organization, neutral extraction
-CUMULATIVE-DELTA: 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
+CUMULATIVE-DELTA: 2026-11-09 恢复本地中文目录，工具按明确布局标记适配； 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
 -->
 # 项目组织抽取映射
 
@@ -21,7 +21,7 @@ CUMULATIVE-DELTA: 固定项目组织模板；实例事实留空，现行规则�
 | 现行规则只一份、索引一跳直达 | 根索引与各层入口 | 索引引用内核唯一正文；安装时复制同版本，链接改到本地 |
 | 机读读取与人读表同步 | 框架/context_routes.json、CONTEXT_LOADING | 组织路由与内核 reading_required 分开：前者选入口，后者定义执行必读义务 |
 | 基线不等于中间实验与当前提交包 | BASELINES、EXPERIMENT_STATUS | 语义保留，名单与结果为空 |
-| 实验前后快照与人读/机器材料分开 | topics、.autoresearch、实验分析索引 | 为兼容公共工具，专题正文固定在根 topics；原中文层保留索引，不再复制正文 |
+| 实验前后快照与人读/机器材料分开 | AutoDL实验/实验分析/topics、.autoresearch | 恢复本地专题层级；新工作区用明确布局标记，工具适配目录；旧无标记工作区继续原路径 |
 | 目录迁移与旧节号追溯 | 本映射与历史 INDEX | 不搬入旧比赛的整套变更史，项目未来迁移须登记旧→新 |
 | 真实宿主分层注入与子会话精简 | 安装说明与读取政策 | 源码/模板存在不等于宿主加载；必须实际探针 |
 | 用户最近减少流程的决定 | RULES §1.3、加载图的兼容边界 | 不以旧归档恢复撤销义务；监控默认关闭与审计减负已接执行代码，具体验证另列 |

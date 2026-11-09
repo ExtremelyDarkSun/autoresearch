@@ -3,7 +3,7 @@ GENERATED-BY: repository creation, 2026-11-09 +08:00
 LAST-EDIT: 2026-11-09 本批同步：补 review v2、issues exp、questions、assurance、progress 跨轮预检/阶段排序与 D2 回复绑定；通用补项与真实部署分开
 PURPOSE: 给首次查看项目的人说明用途、边界和可执行检查。
 ORIGIN: reusable research mechanisms and target-specific evaluation adapters
-CUMULATIVE-DELTA: 2026-11-09 固定分层项目模板与默认初始化，保留显式bundle兼容；2026-11-09 新增 [怎么跑](<docs/RUNNING.md>)（工作区 / 专题隔离 / 预算 / 执行主链 / 人读页 / 监控 / 审批 / 通道 / 远端 / 进度 / 问题台账的实际命令）；
+CUMULATIVE-DELTA: 2026-11-09 恢复本地中文目录、空台账格式与新电脑恢复入口； 2026-11-09 固定分层项目模板与默认初始化，保留显式bundle兼容；2026-11-09 新增 [怎么跑](<docs/RUNNING.md>)（工作区 / 专题隔离 / 预算 / 执行主链 / 人读页 / 监控 / 审批 / 通道 / 远端 / 进度 / 问题台账的实际命令）；
 改写迁移状态段：本地独立环境、完整服务链冷启动（含第二轮共享预算与未复盘阻断）及可信宿主探针已验；真实通道租户、真实 SSH/POSIX 停止/机器空闲、远端上传和平台仍待现场验收；
 把只登记 Topics 的首次隔离改成真实 worktree + 独立环境命令（claim 保留）；明确 demo 只是底层事务合成、不代科研主链；109 编号验收表继续保留。
 依赖口径：Python 内核只用标准库，飞书加密收件另需可选 cryptography（requirements-feishu.txt）；插件 Node 20+，可信 DSH 压缩日志 Node 24+。
@@ -13,7 +13,7 @@ CUMULATIVE-DELTA: 2026-11-09 固定分层项目模板与默认初始化，保留
 
 这套项目的目标是让 AI 围绕一个研究目标持续工作：先写假设和判断标准，再安排实验，保存原始证据，核查结果，决定下一步。人负责目标、方向和需要批准的动作。
 
-**迁移状态：本次逐项复核发现的通用功能已补齐，现场验收仍未完成。** 现在可以按 [怎么跑](<docs/RUNNING.md>) 依次调用工作区初始化、专题隔离、共享预算、研究执行主链（事前材料 → 起跑闸 → 真子进程 → 结束 → 复盘）、人读页供料与验收、意图与过程监控、审批与入向、通道配置与收件、受管远端执行、进度采集与受管推进器、问题台账。以下三类仍需核验，逐项写在[迁移功能验收](<docs/EXPECTATIONS_ACCEPTANCE.md>)（109 个编号全部保留）：
+**迁移状态：通用流程已可运行，原工程的完整恢复仍须私有备份与新机现场验收。** 现在可以按 [怎么跑](<docs/RUNNING.md>) 依次调用工作区初始化、专题隔离、共享预算、研究执行主链（事前材料 → 起跑闸 → 真子进程 → 结束 → 复盘）、人读页供料与验收、意图与过程监控、审批与入向、通道配置与收件、受管远端执行、进度采集与受管推进器、问题台账。以下三类仍需核验，逐项写在[迁移功能验收](<docs/EXPECTATIONS_ACCEPTANCE.md>)（109 个编号全部保留）：
 
 - **真实部署未验**：真实消息通道租户送达与回复、真实 SSH / POSIX 停止与机器空闲、远端代码 / 题单上传步骤、真实云机与平台提交。空工作区的本地冷启动（含第二轮共享预算与未复盘阻断）已用合成证据跑通，详见[验收记录](<docs/VERIFICATION.md>)。
 - **部分验收**：V1–V3 意图监控语义核只有 3 个合成案例的一次独立核（V1 修订后通过）；真实宿主探针只证明单次绑定，不外推。
@@ -27,16 +27,20 @@ CUMULATIVE-DELTA: 2026-11-09 固定分层项目模板与默认初始化，保留
 
 ## clone 后直接保留项目组织
 
-固定的[项目模板](<project/AGENTS.md>)随 Git 提供，包含根规则、平台线、实验线、框架子项目、分层索引、读取路由、维护清单和空台账。它保留已维护的组织方式，不要求 AI 重新设计文件结构。
+固定的[项目模板](<project/AGENTS.md>)随Git提供，包含根规则、平台线、实验线、框架子项目、分层索引、读取路由、维护清单，以及有章节、字段和示范格式的空台账。它保留已维护的组织方式，不要求 AI 重新设计文件结构。
 
 ```powershell
 python -X utf8 -B research.py init --workspace ../my-research
 python -X utf8 -B research.py layout-check --workspace ../my-research
 ```
 
-默认初始化按模板复制目录和正文，安装所选 profile 与内核契约副本，重写本地链接并生成空状态库及来源哈希回执。目标必须尚不存在。工具固定的 `topics/`、`worktrees/`、`environments/` 与 `.autoresearch/` 保持兼容；中文业务目录承担分层入口和资料组织，不复制另一套专题正文。
+默认初始化按模板复制目录和正文，安装所选 profile 与内核契约副本，重写本地链接并生成空状态库及来源哈希回执。目标必须尚不存在。新工作区的专题在`AutoDL实验/实验分析/topics/`，代码副本在同级`worktrees/`，环境在`AutoDL实验/实验记录/environments/`。工具按明确布局标记适配，不再为工具另建一排根目录。旧无标记工作区保持原路径。
 
 结构、内容边界及与原组织的对应关系见[组织映射](<project/ORGANIZATION_MAP.md>)；初始化、维护规则恢复及独立读取测试见[项目组织验收](<docs/PROJECT_ORGANIZATION.md>)。宿主是否实际分层加载须另测；链接检查不冒充注入证明。最新监控默认关闭、审计减负及专题文档创建已同步，范围与验证见[框架同步记录](<docs/FRAMEWORK_SYNC.md>)。
+
+## 换新电脑
+
+先读[新电脑恢复](<docs/NEW_MACHINE_RECOVERY.md>)及[安装步骤](<project/INSTALL.md>)。新项目用init建空工作区。恢复旧工程用recovery保存当前工作树、专题和SQLite，私有ZIP不上传GitHub。新机按实际路径生成插件部署参数，再核真实会话输入、定时任务和一个实际评测样例。旧会话、授权、资源与凭据须另行核对。
 
 ## 让 AI 带你走一轮
 
@@ -125,7 +129,7 @@ python -X utf8 -B research.py topics --db ../my-research/.autoresearch/runtime.s
 python -X utf8 -B research.py topics --db ../my-research/.autoresearch/runtime.sqlite3 show --topic demo-topic
 ```
 
-`workspace topic`从版本模板建立TOPIC、日期EVIDENCE及STATUS骨架，骨架不算已交付报告。它会真的建 `worktrees/<topic>` 与 `environments/<topic>`，失败时把 `status=incomplete` 与错误写进 `topics/<topic>/provision.json`，**不静默覆盖**。它**不装依赖、不跑评测**（`ready_for_evaluation=false`）。
+`workspace topic`从版本模板建立TOPIC、日期EVIDENCE及STATUS骨架，骨架不算已交付报告。它会真的建 布局指定的独立代码副本与环境，失败时把 `status=incomplete` 与错误写进 `AutoDL实验/实验分析/topics/<topic>/provision.json`，**不静默覆盖**。它**不装依赖、不跑评测**（`ready_for_evaluation=false`）。
 
 ⚠️ 旧版只有 `topics create`：它只登记目录与分支字符串，**不会**建 worktree、不会建独立环境、也不证明远端隔离。真实实验仍需把这两步都做到；`claim` / 交接命令保留不变。
 
@@ -140,10 +144,10 @@ python -X utf8 -B research.py workspace snapshot --workspace ../my-research --to
 | 要做的事 | 入口 | 写在哪 |
 |---|---|---|
 | 初始化工作区 | `research.py init` | `<工作区>/.autoresearch/runtime.sqlite3`、`AGENTS.md` |
-| 建专题隔离 | `research.py workspace topic` / `snapshot` | `topics/<专题>/`、`worktrees/`、`environments/` |
+| 建专题隔离 | `research.py workspace topic` / `snapshot` | 中文实验层下的专题、代码副本与环境 |
 | 预算授权与预留 | `research.py budget grant/reserve/status/release/settle` | `budget_accounts` / `budget_reservations`（同一个库） |
 | 研究执行主链 | `research.py workflow prepare/check/launch/finish/review/status` | `wf_preparations` / `wf_runs` / `wf_finishes` / `wf_reviews` / `wf_events` |
-| 人读页供料与验收 | `research.py reporting prepare/check/ack/round-check/diagnose` | `topics/<专题>/STATUS.md` + `.autoresearch/state/reporting/<专题>/` |
+| 人读页供料与验收 | `research.py reporting prepare/check/ack/round-check/diagnose` | `AutoDL实验/实验分析/topics/<专题>/STATUS.md` + `.autoresearch/state/reporting/<专题>/` |
 | 意图与过程监控 | `research.py monitoring register/sync/event/prepare/record/check` | `<工作区>/.autoresearch/monitoring.sqlite3` |
 | 审批与入向 | `research.py decisions prepare/send/status/inbox/overdue/reply/hook/authorize-check` | 决策台账 + 自包含审批页 + 通道回执 |
 | 通道配置与收件 | `research.py channels doctor/listen/poll` + `decisions --channel-config` | 通道台账 + 决策库；`doctor` 只读 |

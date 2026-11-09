@@ -21,7 +21,9 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import threading
@@ -35,6 +37,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from kernel.autoresearch.backends.autodl import availability, cloud, events, worker  # noqa: E402
+from kernel.autoresearch.workspace_layout import resolve_layout, write_layout_marker  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))
 TOKEN_ENV = "AUTORESEARCH_TEST_TOKEN"
@@ -651,6 +654,214 @@ class WorkerTests(TempDirMixin, AvailabilityStateMixin, unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         self.assertIn("--workspace", buffer.getvalue())
         self.assertEqual(worker.main(["--selftest"]), 0)
+
+
+# ── worker：可用性 tick 的 process_status 投影与 targets-db 接线 ───────
+CHINESE_TOPICS = "AutoDL实验/实验分析/topics"
+
+
+class TickProjectionTests(TempDirMixin, AvailabilityStateMixin, unittest.TestCase):
+    """每次 availability tick 都要：刷新已登记专题的 process_status、按绑定库写 targets。
+
+    判据（⛔ 不看「命令退出 0」）：
+    1. 两 tick 幂等：同一输入不重复发事件、targets 名单不变、研究页 `STATUS.md` 字节不变；
+    2. 专题目录按 workspace-layout 解析（中文本地目录），流程状态只落 `process_status/`；
+    3. 缺登记库 / 缺 `topics` 表 ⇒ 显式 unknown，⛔ 不写权威空名单、不假绿；
+    4. 新会话绑定后 targets 立刻更新；没有绑定 ⇒ 权威空名单 + hold（事件不投递）。
+    """
+
+    def make_workspace(self, rows=(("T1", "active", None),), *, table=True):
+        """临时工作区：中文布局标记 + runtime.sqlite3（可选缺表）+ 专题目录与研究页。"""
+        root = self.tmpdir()
+        (root / ".autoresearch").mkdir()
+        write_layout_marker(root)
+        layout = resolve_layout(root)
+        db_path = root / ".autoresearch" / "runtime.sqlite3"
+        connection = sqlite3.connect(str(db_path))
+        try:
+            if table:
+                connection.execute("CREATE TABLE topics (id TEXT PRIMARY KEY, status TEXT, "
+                                   "leader_session_id TEXT, leader_since TEXT)")
+                connection.executemany(
+                    "INSERT INTO topics VALUES (?,?,?,?)",
+                    [(topic, status, leader, None) for topic, status, leader in rows])
+                connection.commit()
+        finally:
+            connection.close()
+        for topic, status, leader in rows:
+            directory = layout.topic_dir(topic)
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "STATUS.md").write_text(
+                f"# {topic} 研究页\n\n## 1 你的要求\n只验证机制，不动机器。\n", encoding="utf-8")
+        return root, layout, db_path
+
+    def worker_args(self, root: Path, **overrides):
+        namespace = worker.build_parser().parse_args(
+            ["--workspace", str(root), "--token-env", TOKEN_ENV])
+        for key, value in overrides.items():
+            setattr(namespace, key, value)
+        return namespace
+
+    def tick(self, root: Path, when, transport=None, **overrides):
+        with env_var(TOKEN_ENV, "token-value"):
+            return worker.run_once(self.worker_args(root, **overrides),
+                                   transport=transport or fake_transport(),
+                                   now=datetime(2026, 1, 1, when[0], when[1], tzinfo=TZ))
+
+    def all_shutdown(self):
+        return {"code": "Success", "data": {"list": [
+            {"machine_alias": f"m-0{i}", "status": "shutdown", "start_mode": "gpu",
+             "gpu_all_num": 8, "gpu_idle_num": 2, "uuid": f"u-{i}"} for i in range(1, 7)]}}
+
+    def set_leader(self, db_path: Path, topic: str, session: str, since: str):
+        connection = sqlite3.connect(str(db_path))
+        try:
+            connection.execute("UPDATE topics SET leader_session_id=?, leader_since=? WHERE id=?",
+                               (session, since, topic))
+            connection.commit()
+        finally:
+            connection.close()
+
+    def process_status_json(self, root: Path, topic: str = "T1"):
+        path = root / ".autoresearch" / "state" / "process_status" / f"{topic}.json"
+        return json.loads(path.read_text(encoding="utf-8")), path
+
+    def test_two_ticks_are_idempotent_and_keep_research_page_bytes(self):
+        root, layout, _db = self.make_workspace()
+        page = layout.topic_dir("T1") / "STATUS.md"
+        before = page.read_bytes()
+
+        first = self.tick(root, (1, 0))
+        second = self.tick(root, (1, 1))
+        self.assertTrue(first["ok"] and second["ok"])
+        self.assertTrue(first["baseline"])
+        self.assertEqual(second["emitted"], [], "同一输入的第二 tick 不应重复发事件")
+        self.assertEqual(len(events.read_pending(root)), 0)
+        self.assertEqual(page.read_bytes(), before, "⛔ tick 不许改研究页任何字节")
+
+        self.assertEqual(first["process_status"]["status"], "written")
+        self.assertEqual(second["process_status"]["status"], "written")
+        self.assertEqual(second["emitted"], [])
+        projection, path = self.process_status_json(root)
+        self.assertEqual(projection["verdict"], "状态待核")       # 没有 checkpoint ⇒ 不假绿
+        self.assertEqual(projection["page"]["path"],
+                         f"{CHINESE_TOPICS}/T1/STATUS.md", "流程投影要按布局指到中文专题页")
+        self.assertTrue((root / ".autoresearch" / "state" / "process_status"
+                         / "T1.md").is_file())
+        # 第二次 tick 只是刷新心跳（projected_at 变）；判定与交付状态必须一致。
+        self.assertEqual(projection["documentation"]["state"],
+                         first["process_status"]["topics"]["T1"]["delivery"])
+        self.assertEqual(first["targets_status"], "empty")
+        self.assertTrue(first["events_hold"])
+        self.assertEqual(first["targets"]["sessions"], [])
+        self.assertTrue(first["targets"]["authoritative"])
+
+    def test_flip_emits_once_then_holds_and_never_touches_status(self):
+        root, layout, _db = self.make_workspace()
+        page = layout.topic_dir("T1") / "STATUS.md"
+        before = page.read_bytes()
+        self.tick(root, (1, 0))
+        flipped = self.tick(root, (1, 5), transport=fake_transport(self.all_shutdown()))
+        self.assertTrue(flipped["emitted"], "从关机到有余卡应判出事件")
+        pending = len(events.read_pending(root))
+        repeated = self.tick(root, (1, 10), transport=fake_transport(self.all_shutdown()))
+        self.assertEqual(repeated["emitted"], [], "同一状态重复 tick 不许重复发事件")
+        self.assertEqual(len(events.read_pending(root)), pending)
+        self.assertEqual(page.read_bytes(), before)
+        self.assertEqual(repeated["process_status"]["status"], "written")
+
+    def test_missing_topic_db_is_explicit_unknown_and_keeps_targets(self):
+        root = self.tmpdir()
+        (root / ".autoresearch").mkdir()
+        write_layout_marker(root)
+        stale = root / ".autoresearch" / "events" / "targets.json"
+        stale.parent.mkdir(parents=True)
+        stale.write_text(json.dumps({"sessions": ["session-old"], "authoritative": True}),
+                         encoding="utf-8")
+        summary = self.tick(root, (1, 0))
+        self.assertTrue(summary["ok"], "可用性查询成功，不能被登记库缺失改成失败")
+        self.assertEqual(summary["topics"]["status"], "unknown")
+        self.assertIn("登记库不存在", summary["topics"]["why"])
+        self.assertEqual(summary["targets_status"], "unknown")
+        self.assertEqual(summary["targets"]["sessions"], ["session-old"], "unknown 不许清空旧名单")
+        self.assertEqual(summary["process_status"]["status"], "unknown")
+        self.assertIn("登记库不存在", summary["process_status"]["why"])
+        self.assertFalse((root / ".autoresearch" / "state" / "process_status").exists(),
+                         "没有登记表就不许写任何专题流程状态")
+        self.assertEqual(json.loads(stale.read_text(encoding="utf-8"))["sessions"],
+                         ["session-old"], "⛔ 不拿空名单覆盖已有 targets.json")
+
+    def test_missing_topics_table_is_explicit_unknown(self):
+        root, _layout, _db = self.make_workspace(table=False)
+        summary = self.tick(root, (1, 0))
+        self.assertEqual(summary["topics"]["status"], "unknown")
+        self.assertIn("schema 缺 topics 表", summary["topics"]["why"])
+        self.assertEqual(summary["targets_status"], "unknown")
+        self.assertFalse(events.targets_path(root).exists())
+        self.assertEqual(summary["process_status"]["status"], "unknown")
+
+    def test_new_binding_updates_targets_and_unbound_holds(self):
+        root, _layout, db_path = self.make_workspace()
+        unbound = self.tick(root, (1, 0))
+        self.assertTrue(unbound["events_hold"])
+        self.assertEqual(unbound["targets"]["sessions"], [])
+        self.assertTrue(unbound["targets"]["authoritative"])
+        self.assertEqual(events.read_receipts(root), [], "无绑定时不许有投递回执")
+        self.assertFalse(events.receipt_path(root).exists())
+        self.set_leader(db_path, "T1", "session-new", "2026-01-01T01:04:00+08:00")
+        bound = self.tick(root, (1, 5))
+        self.assertEqual(bound["targets_status"], "published")
+        self.assertFalse(bound["events_hold"])
+        self.assertEqual(bound["targets"]["sessions"], ["session-new"])
+        self.assertEqual(events.read_targets(root)["sessions"], ["session-new"])
+
+    def test_registered_topic_without_directory_is_not_fake_green(self):
+        root, _layout, _db = self.make_workspace(
+            rows=(("T1", "active", None), ("T2", "active", None)))
+        # 删掉 T2 的专题目录：登记表有、落点没有 ⇒ 该专题必须显式 unknown。
+        shutil.rmtree(root / CHINESE_TOPICS / "T2")
+        summary = self.tick(root, (1, 0))
+        self.assertEqual(summary["process_status"]["count"], 2)
+        self.assertEqual(summary["process_status"]["status"], "partial")
+        self.assertFalse(summary["process_status"]["topics"]["T2"]["ok"])
+        self.assertTrue(summary["process_status"]["topics"]["T2"]["unknown"])
+        self.assertTrue(summary["process_status"]["topics"]["T1"]["ok"])
+        self.assertFalse((root / ".autoresearch" / "state" / "process_status" / "T2.json").exists())
+
+
+@unittest.skipUnless(os.name == "nt" and shutil.which("powershell"),
+                     "schtasks.ps1 是 Windows PowerShell 脚本")
+class SchtasksDefinitionTests(TempDirMixin, unittest.TestCase):
+    """计划任务定义只生成不注册，且命令里带实际工作区与 targets-db。"""
+
+    SCRIPT = REPO_ROOT / "kernel" / "hosts" / "dsh" / "tools" / "schtasks.ps1"
+
+    def generate(self, workspace: Path, out: Path) -> str:
+        completed = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(self.SCRIPT),
+             "-Action", "generate", "-Workspace", str(workspace), "-OutFile", str(out),
+             "-PythonPath", sys.executable],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+            errors="replace", timeout=120)
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        return out.read_text(encoding="utf-8-sig")
+
+    def test_generated_definition_carries_actual_workspace_and_targets_db(self):
+        workspace = self.tmpdir()
+        (workspace / ".autoresearch").mkdir()
+        write_layout_marker(workspace)
+        out = workspace / "task-definition.txt"
+        text = self.generate(workspace, out)
+        self.assertIn(str(workspace.resolve()), text)
+        self.assertIn("--workspace", text)
+        self.assertIn("--targets-db", text)
+        self.assertIn(str((workspace / ".autoresearch" / "runtime.sqlite3").resolve()), text)
+        self.assertIn("process_status", text)
+        self.assertIn("不写 STATUS.md", text)
+        self.assertIn("workspace-layout.json", text)
+        # 生成文件里只有命令文本；本测试没有执行 install（默认动作是 preview）。
+        self.assertIn("schtasks.exe /Create", text)
+        self.assertNotIn("已注册", text)
 
 
 # ── cloud：默认拒绝；离线只验请求形态 ────────────────────

@@ -10,6 +10,8 @@
 #   首版不启进程、不核宿主、不判科学；缺 before 不补造；hook 失败只记 diagnostic。
 #   2026-11-09 只读零副作用：`_read` 不再拼裸 `?mode=ro`，委托 `ReadonlyStore`（WAL 库按 sidecar 实况选
 #   mode=ro / immutable=1，读不创建 -shm/-wal）；缺库仍是原来的 LifecycleError，WAL 歧义态 StoreError 交上层。
+#   2026-11-09 专题落点由 `.autoresearch/workspace-layout.json` 决定（无标记仍是 topics/<topic>）；
+#   专题内投影前缀仍是 `plans/`（相对专题目录），与布局里的框架级 directories.plans 不是同一个目录。
 
 """研究执行 ↔ 人读交付的接线层。
 
@@ -68,6 +70,7 @@ if str(_REPO_ROOT) not in sys.path:
 from kernel.autoresearch import reporting  # noqa: E402  (复用页面/事件/来源指纹的规则)
 from kernel.autoresearch.runtime.store import ReadonlyStore  # noqa: E402
 from kernel.autoresearch.review_continuation import render as render_continuation  # noqa: E402
+from kernel.autoresearch.workspace_layout import resolve_layout  # noqa: E402
 
 SCHEMA = 1
 
@@ -85,7 +88,9 @@ TERMINAL_KIND = {
     "superseded": "superseded",
 }
 
-#: 允许写进 `topics/<topic>/sources.json` 的生成物前缀（专题计划投影目录）。
+#: 允许写进 `sources.json` 的生成物前缀（**专题内**计划投影目录，相对专题目录）。
+#: ⚠️ 与布局标记里的 `directories.plans`（框架级 `AutoDL实验/框架/state/plans`）不是同一个目录；
+#: 保持 `plans/` 前缀是为了旧工作区的 sources.json 条目逐字节兼容。
 PROJECTION_PREFIX = "plans/"
 
 #: ⛔ 这些是人读输出，不能进来源清单（否则 FEED/RECEIPT 会自证循环）。
@@ -195,7 +200,7 @@ def _load_json(path, default):
 class Lifecycle:
     """一次接线：workspace 与其 runtime.sqlite3（与 workflow / governance 同一个库）。"""
 
-    def __init__(self, workspace, *, db=None):
+    def __init__(self, workspace, *, db=None, layout=None):
         if not isinstance(workspace, (str, Path)):
             raise LifecycleError("workspace 必须是路径")
         self.root = Path(workspace).resolve()
@@ -204,14 +209,24 @@ class Lifecycle:
         self.db = Path(db).resolve() if db is not None else (
             self.root / ".autoresearch" / "runtime.sqlite3")
         self.log_path = self.root / ".autoresearch" / "lifecycle" / "hooks.jsonl"
+        #: 专题落点只由 `.autoresearch/workspace-layout.json` 决定（无标记 = topics/<topic>）。
+        try:
+            self.layout = layout if layout is not None else resolve_layout(self.root)
+        except ValueError as exc:
+            raise LifecycleError(f"工作区布局不可用：{exc}") from None
 
     # -- 路径 ---------------------------------------------------------------
 
     def topic_dir(self, topic):
         _ensure_topic(topic)
-        path = (self.root / "topics" / topic).resolve()
+        try:
+            path = self.layout.topic_dir(topic)
+        except ValueError as exc:
+            raise LifecycleError(f"专题 {topic} 的落点不可用：{exc}") from None
         if not path.is_dir():
-            raise LifecycleError(f"专题目录不存在：topics/{topic}")
+            raise LifecycleError(
+                f"专题目录不存在：{self.layout.topics}/{topic}"
+                "（布局由 .autoresearch/workspace-layout.json 决定；无标记工作区是 topics/<topic>）")
         return path
 
     def plan_dir(self, topic, plan_id):
@@ -466,7 +481,8 @@ class Lifecycle:
         path = self.topic_dir(topic) / "sources.json"
         existing = _load_json(path, [])
         if not isinstance(existing, list) or not all(isinstance(item, str) for item in existing):
-            raise LifecycleError(f"topics/{topic}/sources.json 必须是 JSON 字符串路径列表")
+            raise LifecycleError(
+                f"{self.layout.topics}/{topic}/sources.json 必须是 JSON 字符串路径列表")
         for item in existing + list(generated):
             name = Path(item).name
             if name in FORBIDDEN_SOURCES or "/.autoresearch/" in item or item.startswith(".autoresearch/"):
@@ -622,7 +638,7 @@ class Lifecycle:
         topic, plan_id = row["topic"], row["plan_id"]
         document = self.topic_dir(topic) / "TOPIC.md"
         if not document.is_file():
-            raise LifecycleError(f"缺专题主文档：topics/{topic}/TOPIC.md")
+            raise LifecycleError(f"缺专题主文档：{self.layout.topics}/{topic}/TOPIC.md")
         raw = document.read_bytes()
         digest = _digest(raw)
         receipt = {
@@ -666,7 +682,7 @@ class Lifecycle:
                 "新轮次请在启动前调用 before()；历史轮次只能记录缺口")
         document = self.topic_dir(topic) / "TOPIC.md"
         if not document.is_file():
-            raise LifecycleError(f"缺专题主文档：topics/{topic}/TOPIC.md")
+            raise LifecycleError(f"缺专题主文档：{self.layout.topics}/{topic}/TOPIC.md")
         raw = document.read_bytes()
         digest = _digest(raw)
         if digest == before_receipt.get("sha256"):

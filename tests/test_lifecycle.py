@@ -47,7 +47,7 @@ TESTS = Path(__file__).resolve().parent
 if str(TESTS) not in sys.path:
     sys.path.insert(0, str(TESTS))
 
-from kernel.autoresearch import lifecycle, reporting  # noqa: E402
+from kernel.autoresearch import lifecycle, reporting, workspace_layout  # noqa: E402
 from kernel.autoresearch.admission import Admission  # noqa: E402
 from kernel.autoresearch.runtime.accounts import (  # noqa: E402
     Accounts,
@@ -379,7 +379,11 @@ class ProvisionedDeliveryTests(fixtures.FlowCase):
         self.db = self.ws / ".autoresearch" / "runtime.sqlite3"
         self.store = Store(self.db)
         self.topics = Topics(self.store)
-        self.topic_dir = self.ws / "topics" / TOPIC
+        # `init` 之后专题落点由 `.autoresearch/workspace-layout.json` 决定（旧无标记工作区仍是 topics/<id>），
+        # 所以夹具按布局解析，而不是硬编码 topics/。
+        layout = workspace_layout.resolve_layout(self.ws)
+        self.layout = layout
+        self.topic_dir = layout.topic_dir(TOPIC)
         self.doc = self.topic_dir / "TOPIC.md"
         (self.ws / "evidence").mkdir()
         self.readings = self.ws / "evidence" / "readings.md"
@@ -432,7 +436,8 @@ class ProvisionedDeliveryTests(fixtures.FlowCase):
 
         reporting.record_input(self.ws, TOPIC, "user_requirement",
                                "用户要求：先小样本验证机制，别动题单",
-                               {"path": f"topics/{TOPIC}/REQUIREMENTS.md", "locator": "L1"})
+                               {"path": self.layout.relative(self.topic_dir / "REQUIREMENTS.md"),
+                                "locator": "L1"})
         post = client.post("result_analysis",
                            {"run_id": launched["run_id"], "topic": TOPIC, "plan_id": "P1",
                             "record_sha256": review["record_sha256"]})
@@ -445,10 +450,12 @@ class ProvisionedDeliveryTests(fixtures.FlowCase):
 
         ready = reporting.prepare(self.ws, TOPIC)
         files = ready["sources"]["files"]
-        for rel in (f"topics/{TOPIC}/plans/P1/plan.json",
-                    f"topics/{TOPIC}/plans/P1/AI_WORK.md",
-                    f"topics/{TOPIC}/plans/P1/receipts/finish-{launched['run_id']}.json",
-                    f"topics/{TOPIC}/plans/P1/receipts/review-{launched['run_id']}.json"):
+        for rel in (self.layout.relative(self.topic_dir / "plans" / "P1" / "plan.json"),
+                    self.layout.relative(self.topic_dir / "plans" / "P1" / "AI_WORK.md"),
+                    self.layout.relative(self.topic_dir / "plans" / "P1" / "receipts"
+                                         / f"finish-{launched['run_id']}.json"),
+                    self.layout.relative(self.topic_dir / "plans" / "P1" / "receipts"
+                                         / f"review-{launched['run_id']}.json")):
             self.assertIn(rel, files)
 
         receipt_rel = client.receipt(TOPIC, "P1", "finish", launched["run_id"]).relative_to(
@@ -499,7 +506,8 @@ class ProvisionedDeliveryTests(fixtures.FlowCase):
         client.sync(TOPIC, plan_id="P1")
         reporting.record_input(self.ws, TOPIC, "user_requirement",
                                "用户要求：先小样本验证机制，别动题单",
-                               {"path": f"topics/{TOPIC}/REQUIREMENTS.md", "locator": "L1"})
+                               {"path": self.layout.relative(self.topic_dir / "REQUIREMENTS.md"),
+                                "locator": "L1"})
         reporting.prepare(self.ws, TOPIC)
         receipt_rel = client.receipt(TOPIC, "P1", "finish", launched["run_id"]).relative_to(
             self.ws).as_posix()

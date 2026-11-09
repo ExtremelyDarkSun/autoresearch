@@ -3,12 +3,12 @@ GENERATED-BY: portable project organization
 LAST-EDIT: 2026-11-09
 PURPOSE: 专题目录加载入口
 ORIGIN: maintained layered workspace organization, neutral extraction
-CUMULATIVE-DELTA: 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
+CUMULATIVE-DELTA: 2026-11-09 恢复本地中文目录，工具按明确布局标记适配； 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
 -->
 # 专题工作入口
 
 接手先读专题登记中的真实目标，再读该专题完整 OBJECTIVE、REQUIREMENTS、TOPIC及本轮计划。
-判读前整份读[实验规则](<../AutoDL实验/实验记录/EXPERIMENT_RULES.md>)。当前没有真实专题。
+判读前整份读[实验规则](<../../实验记录/EXPERIMENT_RULES.md>)。当前没有真实专题。
 
 TOPIC是唯一科学主文档：目标、假设迭代、完成条件、研究边界、路线、证据索引、专题间关系。
 每轮事前与事后更新并留快照。EVIDENCE原始证据带产生时间、前提与条件。

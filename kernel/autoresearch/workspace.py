@@ -1,8 +1,9 @@
 # GENERATED-BY: portable functional migration
-# LAST-EDIT: 2026-11-09
+# LAST-EDIT: 2026-11-09 路径统一走 workspace_layout（标记选择中文本地目录，无标记沿用旧布局）
 # PURPOSE: Create genuine isolated topic code, environment, source references and research snapshots.
 # ORIGIN: generic topic/bootstrap requirements from framework expectations
 # CUMULATIVE-DELTA: 2026-11-09 从版本模板建立TOPIC、EVIDENCE与STATUS，骨架不代表验收；Initialization is separate from registration; preserve incomplete provisioning for diagnosis.
+#   2026-11-09 专题/工作树/环境落点由 `.autoresearch/workspace-layout.json` 决定；⛔ 不靠目录存在与否改变旧落点。
 from __future__ import annotations
 import hashlib
 import json
@@ -15,6 +16,7 @@ import time
 
 from .runtime.store import Store
 from .runtime.topics import Topics
+from .workspace_layout import resolve_layout
 
 
 def _id(value):
@@ -41,6 +43,7 @@ def _git(argv, cwd):
 
 
 def _inside(root, relative):
+    """普通工作区相对路径 → 真实绝对路径（布局无关；专题落点请用 `resolve_layout`）。"""
     target = (root / relative).resolve()
     if not target.is_relative_to(root):
         raise ValueError('路径越出独立工作区')
@@ -56,7 +59,9 @@ def provision_topic(workspace, *, topic, objective, requirements, owner_session,
     for name, value in (('objective', objective), ('requirements', requirements), ('owner_session', owner_session)):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(name + '必须明确给出')
-    target = _inside(root, 'topics/' + topic)
+    # 布局只由标记决定：无标记工作区保持 topics/worktrees/environments 旧落点。
+    layout = resolve_layout(root)
+    target = layout.topic_dir(topic)
     database = root / '.autoresearch/runtime.sqlite3'
     if database.is_file() and Topics(database, readonly=True).get_topic(topic) is not None:
         raise ValueError('专题已登记；不能重新建立它的代码或环境')
@@ -65,8 +70,8 @@ def provision_topic(workspace, *, topic, objective, requirements, owner_session,
     record = {'topic': topic, 'owner_session': owner_session, 'objective': objective,
               'created_at': time.time(), 'status': 'provisioning', 'external_actions': False}
     _write(target / 'provision.json', json.dumps(record, ensure_ascii=False, indent=2) + '\n')
-    code = _inside(root, 'worktrees/' + topic)
-    environment = _inside(root, 'environments/' + topic)
+    code = layout.worktree_dir(topic)
+    environment = layout.environment_dir(topic)
     branch = 'research/' + topic
     try:
         code.parent.mkdir(parents=True, exist_ok=True)
@@ -110,7 +115,8 @@ def provision_topic(workspace, *, topic, objective, requirements, owner_session,
         _write(target / 'OBJECTIVE.md', header + '# 目标\n\n' + objective + '\n')
         from .topic_documents import ensure_topic_documents
         record['research_documents'] = ensure_topic_documents(target, topic=topic, objective=objective)
-        source_list = [f'topics/{topic}/OBJECTIVE.md', f'topics/{topic}/TOPIC.md', f'topics/{topic}/REQUIREMENTS.md']
+        source_list = [layout.relative(target / name)
+                       for name in ('OBJECTIVE.md', 'TOPIC.md', 'REQUIREMENTS.md')]
         _write(target / 'sources.json', json.dumps(source_list, ensure_ascii=False, indent=2) + '\n')
         store = Store(root / '.autoresearch/runtime.sqlite3')
         topics = Topics(store)
@@ -137,7 +143,7 @@ def snapshot_topic(workspace, *, topic, exp_id, stage):
     topic, exp_id = _id(topic), _id(exp_id)
     if stage not in ('before', 'after'):
         raise ValueError('快照stage必须是before或after')
-    directory = _inside(root, 'topics/' + topic)
+    directory = resolve_layout(root).topic_dir(topic)
     document = directory / 'TOPIC.md'
     raw = document.read_bytes()
     digest = hashlib.sha256(raw).hexdigest()

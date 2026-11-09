@@ -203,6 +203,16 @@ class ProjectLayoutTests(unittest.TestCase):
 
     # ---- 链接重写 -------------------------------------------------------
 
+    def test_validate_rejects_invalid_workspace_layout_marker(self):
+        self.install()
+        marker = self.dest / '.autoresearch/workspace-layout.json'
+        marker.write_text('{"schema":1,"directories":{"topics":"../outside"}}\n', encoding='utf-8')
+        before = marker.read_bytes()
+        result = validate_layout(self.dest)
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('布局标记无效' in error for error in result['errors']))
+        self.assertEqual(marker.read_bytes(), before)
+
     def test_rewrites_template_links_and_placeholder_only_in_copies(self):
         self.install()
         agents = links_of(self.dest / 'AGENTS.md')

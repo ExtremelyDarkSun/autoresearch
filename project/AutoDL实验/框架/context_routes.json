@@ -39,8 +39,8 @@
     },
     {
       "id": "topic",
-      "prefix": "topics/",
-      "entry": "topics/AGENTS.md",
+      "prefix": "AutoDL实验/实验分析/topics/",
+      "entry": "AutoDL实验/实验分析/topics/AGENTS.md",
       "required": [
         "AutoDL实验/实验记录/EXPERIMENT_RULES.md"
       ]

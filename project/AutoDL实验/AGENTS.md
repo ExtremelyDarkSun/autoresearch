@@ -3,7 +3,7 @@ GENERATED-BY: portable project organization
 LAST-EDIT: 2026-11-09
 PURPOSE: 实验线目录与动作入口
 ORIGIN: maintained layered workspace organization, neutral extraction
-CUMULATIVE-DELTA: 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
+CUMULATIVE-DELTA: 2026-11-09 恢复本地中文目录，工具按明确布局标记适配； 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
 -->
 # 实验线入口
 
@@ -16,7 +16,7 @@ CUMULATIVE-DELTA: 固定项目组织模板；实例事实留空，现行规则�
 | 找认可基线、核本轮对照 | [基线名单](<实验记录/BASELINES.md>) |
 | 查实际运行、费用、停止证据 | [运行登记](<实验记录/EXPERIMENT_STATUS.md>) |
 | 查历史维护和交接 | [工作日志](<实验记录/EXPERIMENT_LOG.md>) |
-| 分析结果或接手专题 | [分析索引](<实验分析/_INDEX.md>)、[专题入口](<../topics/AGENTS.md>) |
+| 分析结果或接手专题 | [分析索引](<实验分析/_INDEX.md>)、[专题入口](<实验分析/topics/AGENTS.md>) |
 | 动框架、调用执行主链 | [框架入口](<框架/AGENTS.md>) |
 | 定规模与预算 | [预算与并行](<实验记录/PARALLEL_AND_COST.md>) |
 

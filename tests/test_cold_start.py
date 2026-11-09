@@ -128,13 +128,17 @@ class ColdStartTests(lifecycle_fixtures.ProvisionedDeliveryTests):
         self.assertEqual(review['continuation']['status'], 'recorded')
         self.assertEqual(review['continuation']['next_owner'], SESSION)
         self.assertTrue(review['lifecycle_after']['ok'], review)
+        # 专题落点由布局标记决定（init 之后是本地中文目录；旧无标记工作区仍是 topics/<id>），
+        # 因此这里按 reporting/lifecycle 的解析结果取相对路径，⛔ 不硬编码 topics/。
+        topic_dir = reporting.topic_root(self.ws, TOPIC)
         reporting.record_input(self.ws, TOPIC, 'user_requirement',
             '只验证合成机制，不连接真实比赛与云机',
-            {'path': f'topics/{TOPIC}/REQUIREMENTS.md', 'locator': 'L1'})
+            {'path': reporting.relative(self.ws, topic_dir / 'REQUIREMENTS.md'), 'locator': 'L1'})
         pack = reporting.prepare(self.ws, TOPIC)
         self.assertTrue(pack['ok'], pack)
-        page_rel = f'topics/{TOPIC}/STATUS.md'
-        source = f'topics/{TOPIC}/plans/P1/receipts/finish-{run["run_id"]}.json'
+        page_rel = reporting.page_rel(self.ws, TOPIC)
+        source = reporting.relative(
+            self.ws, topic_dir / 'plans' / 'P1' / 'receipts' / f'finish-{run["run_id"]}.json')
         text = page_text(source)
         (self.ws / page_rel).write_text(text, encoding='utf-8', newline='')
         child = 'cold-scribe'

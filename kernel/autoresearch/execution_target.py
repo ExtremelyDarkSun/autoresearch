@@ -1,8 +1,9 @@
 # GENERATED-BY: portable functional migration
-# LAST-EDIT: 2026-11-09
+# LAST-EDIT: 2026-11-09 provision 落点改由 workspace-layout 解析（旧无标记工作区不变）
 # PURPOSE: Bind actual local execution to provisioned code and Python environment.
 # ORIGIN: workspace provisioning and research isolation expectations
 # CUMULATIVE-DELTA: Read-only resolution; remote execution needs a separately verified runtime adapter.
+#   2026-11-09 专题目录按布局标记解析；record 里的 code_path/python 仍是工作区相对，越界仍拒。
 from __future__ import annotations
 import json
 import os
@@ -10,11 +11,15 @@ from pathlib import Path
 import re
 import shutil
 
+from .workspace_layout import resolve_layout
+
 
 class ExecutionTarget:
-    def __init__(self, workspace, *, require_provision=False):
+    def __init__(self, workspace, *, require_provision=False, layout=None):
         self.root = Path(workspace).resolve()
         self.require_provision = require_provision
+        #: 布局只由 `.autoresearch/workspace-layout.json` 决定；无标记即旧布局（topics/<id>）。
+        self.layout = layout if layout is not None else resolve_layout(self.root)
 
     def _inside(self, value):
         path = (self.root / value).resolve()
@@ -37,7 +42,7 @@ class ExecutionTarget:
             raise ValueError('远端执行须显式接入受管Runtime，不能冒用本地超时等于远端停机')
         if spec.get('resource_kind', 'cpu') != 'cpu':
             raise ValueError('GPU等共享资源须接实际资源租约；本地入口未配资源适配器时不放行')
-        path = self._inside('topics/' + topic + '/provision.json')
+        path = self.layout.topic_dir(topic) / 'provision.json'
         if not path.is_file():
             if self.require_provision:
                 raise ValueError('专题尚未实际初始化独立代码环境：先执行workspace topic')

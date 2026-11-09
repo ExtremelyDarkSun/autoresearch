@@ -8,6 +8,8 @@
 #   首版竞争无关：比赛语义留给 profile 与调用方的 argv/来源清单。
 #   2026-11-09：`_ReadOnlyStore` 与 `_read_conn` 不再自己拼 `?mode=ro`，委托 `runtime.store.ReadonlyStore`
 #   （WAL 库按 sidecar 实况选 mode=ro / immutable=1，只读不创建 -shm/-wal；-wal 有 -shm 缺判不可判）。
+#   2026-11-09 专题主文档 / provision.json / before 快照落点由 `.autoresearch/workspace-layout.json`
+#   决定；`topic_doc_pattern=None` 时按布局解析，显式自定义 pattern 仍然优先且原样生效。
 
 """研究执行主链（J1–J6 · K1 起跑检查 · I7）。
 
@@ -88,7 +90,8 @@
 工作区（`workspace`）内：
 
     .autoresearch/runtime.sqlite3   与 runtime.Store / Governance / Topics 共用同一个库
-    topics/<topic>/TOPIC.md         专题主文档（参与 J2 哈希，路径可用 topic_doc_pattern 改）
+    <topics>/<topic>/TOPIC.md       专题主文档（参与 J2 哈希）；目录由 .autoresearch/workspace-layout.json
+                                    决定（无标记 = topics/<topic>），路径也可用 topic_doc_pattern 改
 
 本模块自建的 append-only 表（都有 `BEFORE UPDATE/DELETE` 触发器）：
 
@@ -159,6 +162,7 @@ from kernel.autoresearch.review_continuation import project as project_continuat
 from kernel.autoresearch.execution_target import ExecutionTarget  # noqa: E402
 from kernel.autoresearch.runtime.store import ReadonlyStore, Store, canonical_json  # noqa: E402
 from kernel.autoresearch.runtime.topics import Topics, TopicsError  # noqa: E402
+from kernel.autoresearch.workspace_layout import DEFAULT_TOPIC_DOC_PATTERN, resolve_layout  # noqa: E402
 
 __all__ = (
     "Workflow",
@@ -453,7 +457,7 @@ class Workflow:
                  require_monitor_check=True, authorization_check=None,
                  require_authorization_check=True, require_authorization=None,
                  event_sink=None, clock=None, runner=None,
-                 environ=None, readonly=False, topic_doc_pattern="topics/{topic}/TOPIC.md",
+                 environ=None, readonly=False, topic_doc_pattern=None,
                  execution_target=None, lifecycle=None):
         if not isinstance(workspace, (str, Path)):
             raise WorkflowError("workspace 必须是路径", code=2)
@@ -476,12 +480,19 @@ class Workflow:
         self.require_authorization_check = bool(require_authorization_check)
         self.event_sink = event_sink
         self.require_verified_independence = bool(require_verified_independence)
-        self.topic_doc_pattern = str(topic_doc_pattern)
-        if not self.topic_doc_pattern.count("{topic}"):
+        #: 布局：专题/代码/环境目录由 `.autoresearch/workspace-layout.json` 决定（无标记 = 旧布局）。
+        try:
+            self.layout = resolve_layout(self.root)
+        except ValueError as exc:
+            raise WorkflowError(f"工作区布局不可用：{exc}", code=2) from None
+        #: 主文档模式：`None` = 按布局（默认 `{topics}/{topic}/TOPIC.md`）；显式自定义仍然优先。
+        self.topic_doc_pattern = None if topic_doc_pattern is None else str(topic_doc_pattern)
+        if self.topic_doc_pattern is not None and "{topic}" not in self.topic_doc_pattern:
             raise WorkflowError("topic_doc_pattern 必须含 {topic} 占位", code=2)
         #: 执行落点：默认库 API 允许未 provision 的 legacy 根目录夹具；生产 CLI 固定
         #: `ExecutionTarget(workspace, require_provision=True)`（没有真实独立环境就不放行）。
-        self.execution_target = execution_target or ExecutionTarget(self.root, require_provision=False)
+        self.execution_target = execution_target or ExecutionTarget(self.root, require_provision=False,
+                                                                    layout=self.layout)
         #: 生命周期投影（AI_WORK / 前后快照 / reporting 事件）。它是**通知/投影**，失败只记诊断，
         #: ⛔ 不阻断 prepare/start/finish/review，也不改退出码。
         self.lifecycle = lifecycle
@@ -749,10 +760,12 @@ class Workflow:
                          (topic,))
 
     def _topic_doc(self, topic):
-        pattern = self.topic_doc_pattern.format(topic=topic)
-        path = self._resolve(pattern, "专题主文档")
+        pattern = self.topic_doc_pattern or DEFAULT_TOPIC_DOC_PATTERN
+        # `{topics}` 由布局代入；显式自定义 pattern 里没有它时行为与旧版一致。
+        relative = pattern.replace("{topics}", self.layout.topics).replace("{topic}", topic)
+        path = self._resolve(relative, "专题主文档")
         if not path.is_file():
-            raise WorkflowError(f"缺专题主文档：{pattern}（J2 要求主文档参与来源哈希，不能空着）")
+            raise WorkflowError(f"缺专题主文档：{relative}（J2 要求主文档参与来源哈希，不能空着）")
         return {"path": self._rel(path), "sha256": _sha_file(path)}
 
     def _require_topic(self, conn, topic):
@@ -783,12 +796,15 @@ class Workflow:
     def _source_manifest(self, plan, implementation, extra_refs, topic_doc, topic=None):
         """把本轮依据的文件摊成 {相对路径: sha256}。J2 的过期判据就是它 + 专题目标/原话。
 
-        ⚠️ `topics/<topic>/provision.json`（真实独立代码/环境落点）也进清单：
+        ⚠️ `<topics>/<topic>/provision.json`（真实独立代码/环境落点）也进清单：
         改落点或重建环境会让旧 prepare 过期，⛔ 不能拿旧事前的哈希去新环境起跑。
         """
         manifest = {topic_doc["path"]: topic_doc["sha256"]}
         if topic:
-            provision = self.root / "topics" / str(topic) / "provision.json"
+            try:
+                provision = self.layout.topic_dir(str(topic)) / "provision.json"
+            except ValueError as exc:
+                raise WorkflowError(f"专题 {topic} 的落点不可用：{exc}", code=2) from None
             if provision.is_file():
                 manifest[self._rel(provision)] = _sha_file(provision)
         for ref in (plan.get("input_files") or []):
@@ -1353,10 +1369,14 @@ class Workflow:
         plan_id = preparation.get("plan_id")
         if not _filled(topic) or not _filled(plan_id):
             return ["准备记录缺 topic/plan_id：无法核 before 快照"]
-        base = self.root / "topics" / str(topic) / "snapshots" / str(plan_id) / str(preparation['prepared_id'])
+        try:
+            base = self.layout.topic_dir(str(topic)) / "snapshots" / str(plan_id) \
+                / str(preparation['prepared_id'])
+        except ValueError as exc:
+            return [f"专题 {topic} 的落点不可用：{exc}"]
         receipt_path, snapshot_path = base / "before.json", base / "before.md"
         if not receipt_path.is_file() or not snapshot_path.is_file():
-            return [f"缺 before 主文档快照：topics/{topic}/snapshots/{plan_id}/before.*"
+            return [f"缺 before 主文档快照：{self.layout.relative(base)}/before.*"
                     "（prepare 的 Lifecycle.before 没成功 ⇒ 不允许启动；历史轮次不补造）"]
         try:
             receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))

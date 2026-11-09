@@ -61,7 +61,8 @@ def build_parser():
         description='研究现状页供料与验收；只读检查不写文件，验收回执默认只记调用方自述（declared）。')
     parser.add_argument('--workspace', default='.',
                         help='研究工作区根目录（默认当前目录）；人读页在 '
-                             '<工作区>/topics/<专题>/STATUS.md（与专题主文档同目录），'
+                             '<专题目录>/STATUS.md（与专题主文档同目录；专题目录由 '
+                             '.autoresearch/workspace-layout.json 决定，无标记时是 topics/<专题>），'
                              '机器供料/回执在 <工作区>/.autoresearch/state/reporting/<专题>/')
     subparsers = parser.add_subparsers(dest='command', required=True,
                                        metavar='{prepare,check,ack,event,round-check,diagnose,input,fail,status,process-status}')
@@ -71,7 +72,7 @@ def build_parser():
     preparer.add_argument('--topic', required=True, help='专题名（只允许字母、数字与 . _ -）')
     preparer.add_argument('--source', action='append', default=[], metavar='REL_PATH',
                           help='追加显式来源（工作区内相对路径，可重复）；越界路径会被拒。'
-                               '默认已扫 topics/<专题>/ 的 TOPIC/OBJECTIVE/REQUIREMENTS/EVIDENCE*、'
+                               '默认已扫专题目录的 TOPIC/OBJECTIVE/REQUIREMENTS/EVIDENCE*、'
                                'plans/** 与 sources.json 清单，通常不必手工加')
     preparer.add_argument('--inline-limit', type=int, default=reporting.INLINE_LIMIT_BYTES,
                           help='单个来源内联上限（字节，默认 %(default)s）；超过它的来源显式标'

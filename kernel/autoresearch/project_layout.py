@@ -2,7 +2,7 @@
 # LAST-EDIT: 2026-11-09 +08:00
 # PURPOSE: 从仓库内 project 模板确定性地安装项目目录、重写 Markdown 链接、返回回执并只读校验结果。
 # ORIGIN: 用户要求（模板安装、@FRAMEWORK@ 替换、manifest 回执、只读 validate_layout）
-# CUMULATIVE-DELTA: 2026-11-09 安装templates文档骨架并纳入来源回执；机器可读清单契约是模板的 context_routes.json。
+# CUMULATIVE-DELTA: 2026-11-09 新分层工作区写入固定中文布局标记，旧无标记工作区保持旧路径；安装templates文档骨架并纳入来源回执；机器可读清单契约是模板的 context_routes.json。
 """项目目录模板的确定性安装与只读校验。
 
 四条边界（改本模块前先读）：
@@ -153,6 +153,8 @@ def initialize_layout(repo_root, destination, profile_path=None, *, template=Non
         if info['placeholder']:
             entry['framework_placeholder_replaced'] = info['placeholder']
         files.append(entry)
+    from .workspace_layout import write_layout_marker
+    workspace_layout = write_layout_marker(dest)
     store_state = _initialize_state(state)
     measurement = _measure_root(dest)
     entries = _measure_entries(dest)
@@ -164,6 +166,7 @@ def initialize_layout(repo_root, destination, profile_path=None, *, template=Non
         'files': files,
         'skipped': plan['skipped'],
         'state': store_state,
+        'workspace_layout': workspace_layout,
         'root_measurement': measurement,
         'entry_measurement': entries,
         'measurement': {
@@ -649,8 +652,8 @@ def _measure_entries(dest):
             routes.append({'manifest': document.relative_to(dest).as_posix(),
                            'id': route.get('id'), 'entry': entry,
                            'required': [item for item in required if item]})
-            entry_bytes += entry['bytes'] if entry else 0
-            required_bytes += sum(item['bytes'] for item in required if item)
+            entry_bytes += (entry['bytes'] or 0) if entry else 0
+            required_bytes += sum(item['bytes'] or 0 for item in required if item)
     return {'routes': routes, 'entry_bytes': entry_bytes, 'required_bytes': required_bytes,
             'note': '实测生成文件的字节；不是宿主首轮注入，也不证明宿主已加载。'}
 
@@ -720,6 +723,11 @@ def validate_layout(root):
     root_path = base.resolve()
     generated = (root_path / STATE_DIRNAME / MANIFEST_NAME).is_file()
     errors, unresolved, external, patterns = [], [], [], []
+    from .workspace_layout import resolve_layout
+    try:
+        resolve_layout(root_path)
+    except (ValueError, OSError) as exc:
+        errors.append('工作区布局标记无效：' + str(exc))
     documents = checked = references = 0
     for document in _markdown_documents(root_path):
         documents += 1

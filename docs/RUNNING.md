@@ -3,7 +3,7 @@ GENERATED-BY: operations manual migration, 2026-11-09
 LAST-EDIT: 2026-11-09 本批同步：补 review v2、issues exp、questions、assurance、progress preflight/next-round/schedule 与 D2 回复绑定；通用补项与真实部署分别标
 PURPOSE: 主入口操作说明 —— 工作区、专题隔离、预算准入、研究执行主链、人读页供料、意图监控、审批入向、通道、远端、进度推进器、问题台账、检查清单、提问
 ORIGIN: kernel/autoresearch/{workspace,budget,workflow,reporting,monitoring,decisions,channels,progress,progress_host,remote,issues,assurance,questions}_cli.py 的实际参数
-CUMULATIVE-DELTA: 2026-11-09 固定分层项目模板与默认初始化，保留显式bundle兼容；2026-11-09 复核版。命令取自当前 `--help`；已验/待现网/在补分别写清，⛔ 不把待配置或在补写成已验。
+CUMULATIVE-DELTA: 2026-11-09 操作路径随中文布局标记适配，旧工作区不移动； 2026-11-09 固定分层项目模板与默认初始化，保留显式bundle兼容；2026-11-09 复核版。命令取自当前 `--help`；已验/待现网/在补分别写清，⛔ 不把待配置或在补写成已验。
 -->
 
 # 怎么跑：主入口操作说明
@@ -36,9 +36,9 @@ python -X utf8 -B research.py budget grant --workspace ../my-research --event-fi
 python -X utf8 -B research.py budget reserve --workspace ../my-research --series-id S1 \
     --exp-id P1 --scope small --units 3 --request-key res-1
 python -X utf8 -B research.py workflow prepare --workspace ../my-research --topic demo \
-    --plan plans/P1.json --owner-session session-owner
+    --plan AutoDL实验/框架/state/plans/P1.json --owner-session session-owner
 python -X utf8 -B research.py workflow check --workspace ../my-research --topic demo \
-    --plan plans/P1.json --owner-session session-owner --intent-none -- python -m pytest -q
+    --plan AutoDL实验/框架/state/plans/P1.json --owner-session session-owner --intent-none -- python -m pytest -q
 ```
 
 `plans/P1.json` 从 [生产计划模板](<../kernel/templates/workflow.plan.template.json>) 复制后逐项填真实值（见 §4）。
@@ -68,6 +68,8 @@ python -X utf8 -B research.py instructions --captured 宿主实际请求.txt
 - 本轮测量（2026-11-09，**仅测量**）：来源合计 110,747 B，合并 bundle 113,166 B，建议总预算 141,457 B，最大单来源 15,948 B。它不是宿主实际注入证据；文档或 profile 一改就要重新测量。
 - 第二条只检查「你给的这段宿主请求」是否含完整正文；它**不**证明宿主真注入了。
 
+新分层工作区的目录由`.autoresearch/workspace-layout.json`确定。下文采用中文默认布局，旧无标记工作区保留根topics等路径。旧机的当前实现与记录迁移见[新电脑恢复](<NEW_MACHINE_RECOVERY.md>)，不能用init覆盖。
+
 ## 2 专题隔离：`research.py workspace`
 
 旧版只登记 `Topics`（目录 + 分支字符串）。**现在真的建隔离单元**：
@@ -82,10 +84,10 @@ python -X utf8 -B research.py workspace topic --workspace ../my-research --topic
 
 | 产出 | 说明 |
 |---|---|
-| `topics/<topic>/{TOPIC.md,EVIDENCE_<日期>.md,STATUS.md,OBJECTIVE.md,REQUIREMENTS.md,sources.json}` | 从版本模板生成三份骨架 + 原始用户要求（逐字保留）；记录模板指纹，骨架不算报告验收 |
-| `topics/<topic>/provision.json` | 状态 `provisioning` / `provisioned` / `incomplete`（含 `error`）；⛔ 不静默覆盖 |
-| `worktrees/<topic>` | 给了 `--code-repo` 就是真实 `git worktree`（分支 `research/<topic>`）；不给就是**独立空 Git 仓库** |
-| `environments/<topic>` | `python -m venv --without-pip` 的独立解释器；`--no-environment` 则不建并在回执里写明 |
+| `AutoDL实验/实验分析/topics/<topic>/{TOPIC.md,EVIDENCE_<日期>.md,STATUS.md,OBJECTIVE.md,REQUIREMENTS.md,sources.json}` | 从版本模板生成三份骨架 + 原始用户要求（逐字保留）；记录模板指纹，骨架不算报告验收 |
+| `AutoDL实验/实验分析/topics/<topic>/provision.json` | 状态 `provisioning` / `provisioned` / `incomplete`（含 `error`）；⛔ 不静默覆盖 |
+| `AutoDL实验/实验分析/worktrees/<topic>` | 给了 `--code-repo` 就是真实 `git worktree`（分支 `research/<topic>`）；不给就是**独立空 Git 仓库** |
+| `AutoDL实验/实验记录/environments/<topic>` | `python -m venv --without-pip` 的独立解释器；`--no-environment` 则不建并在回执里写明 |
 
 ⚠️ 它**不装依赖**（`dependencies_installed=false`）、**不跑评测**（`ready_for_evaluation=false`）。专题已登记过或代码/环境落点已存在时直接拒，避免把旧研究接到新代码上。
 
@@ -157,15 +159,15 @@ argv / 实现 / 执行落点 / 本轮授权，`check-plan` 通过**不能**当�
 ```powershell
 # 事前材料：四锚点 + 实现五项/files + argv → 冻结来源哈希（专题主文档/目标/用户原话/旧复盘来源）
 python -X utf8 -B research.py workflow prepare --workspace ../my-research --topic demo \
-    --plan plans/P1.json --owner-session session-owner [--source results/prev.jsonl]
+    --plan AutoDL实验/框架/state/plans/P1.json --owner-session session-owner [--source results/prev.jsonl]
 
 # 只读闸（不写盘、不起子进程）：计划未改 → 材料未过期 → argv 命中 → 前轮已复盘 → 审计/监控/准入
 python -X utf8 -B research.py workflow check --workspace ../my-research --topic demo \
-    --plan plans/P1.json --owner-session session-owner (--intent-id I1 | --intent-none) -- <argv...>
+    --plan AutoDL实验/框架/state/plans/P1.json --owner-session session-owner (--intent-id I1 | --intent-none) -- <argv...>
 
 # 真的启动（同一个闸；通过后 sqlite 事务原子占用唯一 run）→ 退出码原值
 python -X utf8 -B research.py workflow launch --workspace ../my-research --topic demo \
-    --plan plans/P1.json --owner-session session-owner --intent-none -- <argv...>
+    --plan AutoDL实验/框架/state/plans/P1.json --owner-session session-owner --intent-none -- <argv...>
 
 # 结束 / 复盘 / 状态
 python -X utf8 -B research.py workflow finish --workspace ../my-research --run-id RUN-… \
@@ -196,7 +198,7 @@ python -X utf8 -B research.py workflow status --workspace ../my-research --topic
 ⚠️ `launch` 的退出码 = 被启动进程的真实退出码（0/3/-9 原样保留）；闸拒绝是 9；输入错误是 2。
 
 自动投影：`prepare` / `launch` / `review` 会由 `Lifecycle` 自动写
-`topics/<topic>/plans/<plan>/` 下的 `plan-vN.json`、`AI_WORK.md`、`receipts/*.json` 与前后快照，并把
+`AutoDL实验/实验分析/topics/<topic>/plans/<plan>/` 下的 `plan-vN.json`、`AI_WORK.md`、`receipts/*.json` 与前后快照，并把
 起跑（`running`）、run / round 终态与复盘结论投影成 `reporting` 事件。**投影失败只记诊断，不改决定与退出码**；
 页面是否已验收仍看 §5。
 
@@ -206,7 +208,7 @@ python -X utf8 -B research.py workflow status --workspace ../my-research --topic
 
 ```powershell
 python -X utf8 -B research.py remote doctor --workspace ../my-research
-python -X utf8 -B research.py remote check --workspace ../my-research --topic demo --plan plans/P1.json \
+python -X utf8 -B research.py remote check --workspace ../my-research --topic demo --plan AutoDL实验/框架/state/plans/P1.json \
     --owner-session session-owner --intent-none --resource <资源租约键> -- <argv...>
 python -X utf8 -B research.py remote provision --workspace ../my-research [--force]
 python -X utf8 -B research.py remote start （同 check） -- <argv...>
@@ -223,7 +225,7 @@ python -X utf8 -B research.py remote status / query / cancel / collect / release
 
 ## 5 人读页与供料：`research.py reporting`
 
-人读页在 `topics/<topic>/STATUS.md`；机器供料与回执在 `.autoresearch/state/reporting/<topic>/`。
+人读页在 `AutoDL实验/实验分析/topics/<topic>/STATUS.md`；机器供料与回执在 `.autoresearch/state/reporting/<topic>/`。
 
 ```powershell
 python -X utf8 -B research.py reporting --workspace ../my-research prepare --topic demo
@@ -421,9 +423,9 @@ python -X utf8 -B research.py questions --workspace ../my-research declare Q-000
 
 | 需要的东西 | 放哪 | ⛔ 不要 |
 |---|---|---|
-| 工作区状态、页面、结果 | `<工作区>/.autoresearch/`、`<工作区>/topics/` | 不进源码仓库 |
+| 工作区状态、页面、结果 | `<工作区>/.autoresearch/`、`<工作区>/AutoDL实验/实验分析/topics/` | 不进源码仓库 |
 | 临时件、生成物 | `.local/`（已 gitignore） | 不放仓库根 |
-| 用户原始要求 | `topics/<topic>/REQUIREMENTS.md`（`workspace topic` 逐字写入） | 不改写成摘要 |
+| 用户原始要求 | `AutoDL实验/实验分析/topics/<topic>/REQUIREMENTS.md`（`workspace topic` 逐字写入） | 不改写成摘要 |
 | 宿主日志根 | 由部署方选定（`DSHHost` 默认 `~/.dsh`，**不接受调用方自带路径**） | 不用工作区记录挑证据根 |
 | 消息通道 | 部署配置：`decisions --channel module:factory` 或 `--channel-config <JSON / @文件>`；收件用 `channels --config … listen/poll` | 不把凭据写进仓库 |
 | 监控宿主适配器 | `monitoring --adapter <file.py|module:attr> --log-root <根>` | 不把日志内容抄进仓库 |

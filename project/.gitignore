@@ -1,15 +1,26 @@
+# GENERATED-BY: portable project, 2026-11-09 +08:00
+# LAST-EDIT: 2026-11-09 +08:00
+# PURPOSE: Keep machine state, credentials and generated environments out of project Git.
+# ORIGIN: project template ignore rules
+# CUMULATIVE-DELTA: Follow restored Chinese directory layout; preserve format documents.
 .autoresearch/
-private/*
-!private/README.md
+.kaggle_auth/
+install/private/*
+!install/private/README.md
+install/recovery/*.zip
 data/*
 !data/README.md
-results/*
-!results/README.md
 temp/*
 !temp/README.md
-worktrees/*
-!worktrees/README.md
-environments/*
-!environments/README.md
+AutoDL实验/实验分析/results/*
+!AutoDL实验/实验分析/results/README.md
+AutoDL实验/实验分析/worktrees/*
+!AutoDL实验/实验分析/worktrees/README.md
+AutoDL实验/实验记录/environments/*
+!AutoDL实验/实验记录/environments/README.md
+AutoDL实验/框架/state/*
+!AutoDL实验/框架/state/plans/
+AutoDL实验/框架/state/plans/*
+!AutoDL实验/框架/state/plans/README.md
 .env
 __pycache__/

@@ -290,6 +290,8 @@ class FlowCase(unittest.TestCase):
 
     def review_record(self, *, verdict="supported", branch="support", next_action=None,
                       evidence="__default__", deviations="没有", locator="判决", **extra):
+        # 专题主文档的路径按夹具实际落点取（旧布局 topics/<id>；真实 init 工作区由
+        # workspace-layout 标记决定），⛔ 不硬编码布局。
         record = {
             "result_summary": "逐题读数显示通过题数 3 → 4（同装置、同题单）",
             "verdict": verdict,
@@ -298,10 +300,17 @@ class FlowCase(unittest.TestCase):
             "deviations": deviations,
             "evidence": ([{"path": "evidence/readings.md", "locator": "L1"}]
                          if evidence == "__default__" else evidence),
-            "hypothesis_update": {"path": f"topics/{TOPIC}/TOPIC.md", "locator": locator},
+            "hypothesis_update": {"path": self.doc.resolve().relative_to(self.ws.resolve()).as_posix(), "locator": locator},
         }
         record.update(extra)
         return record
+
+    def topic_doc_rel(self):
+        """专题主文档的工作区相对路径（按实际夹具落点算）。"""
+        try:
+            return self.doc.relative_to(self.ws).as_posix()
+        except ValueError:  # 两侧一处已 resolve 时按真实路径比
+            return self.doc.resolve().relative_to(self.ws.resolve()).as_posix()
 
     def append_doc(self, verdict="supported"):
         with self.doc.open("a", encoding="utf-8") as handle:

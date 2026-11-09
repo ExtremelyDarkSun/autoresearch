@@ -52,6 +52,7 @@ from kernel.autoresearch.runtime.store import file_identity  # noqa: E402
 from kernel.autoresearch.runtime.topics import Topics  # noqa: E402
 from kernel.autoresearch.workflow import Workflow  # noqa: E402
 from kernel.autoresearch.workspace import provision_topic  # noqa: E402
+from kernel.autoresearch.workspace_layout import resolve_layout  # noqa: E402
 
 from test_workflow import (  # noqa: E402  (同目录夹具模块，非包)
     BRANCH_ACTIONS,
@@ -170,7 +171,9 @@ class AdvanceFixture(unittest.TestCase):
             requirements="用户要求：先小样本验证机制，别动题单",
             owner_session=SESSION, create_environment=True)
         self.python = str((self.ws / self.provision["python"]).absolute())
-        self.topic_dir = self.ws / "topics" / TOPIC
+        # 专题落点由 `.autoresearch/workspace-layout.json` 决定（真实 init 之后是本地中文目录；
+        # 旧无标记工作区仍是 topics/<id>），夹具按布局解析，⛔ 不硬编码 topics/。
+        self.topic_dir = resolve_layout(self.ws).topic_dir(TOPIC)
         self.doc = self.topic_dir / "TOPIC.md"
         (self.ws / "evidence").mkdir(exist_ok=True)
         self.readings = self.ws / "evidence" / "readings.md"
@@ -207,6 +210,7 @@ class AdvanceFixture(unittest.TestCase):
     # -- 基建 ---------------------------------------------------------------
 
     def _ensure_topic(self, topic):
+        layout = resolve_layout(self.ws)
         if topic == TOPIC:
             code = self.ws / self.provision["code_path"]
             record = self.provision
@@ -214,10 +218,10 @@ class AdvanceFixture(unittest.TestCase):
             self.topics.create_topic(topic, title=f"{topic} 的组合实验",
                                      objective=f"{topic}：准备组合与配对",
                                      actor=SESSION)
-            code = self.ws / "worktrees" / topic
+            code = layout.worktree_dir(topic)
             code.mkdir(parents=True, exist_ok=True)
             (code / ".git").mkdir(exist_ok=True)
-            topic_dir = self.ws / "topics" / topic
+            topic_dir = layout.topic_dir(topic)
             topic_dir.mkdir(parents=True, exist_ok=True)
             (topic_dir / "TOPIC.md").write_text(
                 f"# {topic}\n\n## 2 假设与假设迭代\n\n- H1：组合与对照逐题配对后可比较（待验证）\n",
@@ -229,7 +233,7 @@ class AdvanceFixture(unittest.TestCase):
                       # 合成夹具：共用 T1 的真实 venv（只为排序/冲突用例，不声称依赖隔离）。
                       "python": self.provision["python"],
                       "environment_verified": True}
-            (self.ws / "topics" / topic / "provision.json").write_text(
+            (topic_dir / "provision.json").write_text(
                 json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         marker = code / "marker.py"
         marker.write_text(MARKER_SRC, encoding="utf-8")

@@ -10,6 +10,8 @@
 #          ③ 终态只能来自远端 worker 记录并用 cancel 探针核 request token，query unknown 时保留租约与预留。
 #          2026-11-09 只读零副作用：`_readonly_conn` 不再拼裸 `?mode=ro`，委托 `ReadonlyStore`
 #          （WAL 读不创建 -shm/-wal）；缺库仍是原来的 RemoteWorkflowError(code=2)。
+#          2026-11-09 专题主文档模式默认交给统一 Workflow 按 `.autoresearch/workspace-layout.json`
+#          解析（`topic_doc_pattern=None`）；显式自定义 pattern 仍原样传给 Workflow。
 """受管远端执行接线（Workflow 闸 → Runtime RunSpec / 资源租约 → SSHAdapter）。
 
 这一层解决什么问题
@@ -671,7 +673,7 @@ class RemoteWorkflow:
                  ownership_verifier=None, idle_verifier=None, audit_verifier=None,
                  evidence=None, clock=None, transport=None, adapter=None, event_sink=None,
                  allow_fixture_gates=False,
-                 topic_doc_pattern="topics/{topic}/TOPIC.md"):
+                 topic_doc_pattern=None):
         if not isinstance(workspace, (str, Path)):
             raise RemoteWorkflowError("workspace 必须是路径", code=2)
         self.root = Path(workspace).resolve()

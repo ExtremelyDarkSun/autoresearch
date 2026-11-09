@@ -8,6 +8,10 @@
 #   ② 生成/预览不调用 `schtasks /Create`；`generate` 只把命令写进 `-OutFile`（给人复核）；
 #   ③ Python 与入口路径由参数或环境发现，⛔ 不内置本机绝对路径；
 #   ④ 用 pythonw（无控制台窗口）跑，避免每分钟弹窗；退出码只反映「脚本本身」，不反映机器状态。
+#   2026-11-09 命令里带**实际工作区参数**：`--workspace <解析后的工作区>` 与
+#   `--targets-db <工作区>\.autoresearch\runtime.sqlite3`（worker 默认也用它）。定时任务每 tick 还会
+#   按布局刷新每个已登记专题的 `.autoresearch\state\process_status\`，⛔ 不写 STATUS.md 研究正文；
+#   本脚本仍不注册、不改宿主。
 #
 # 用法（在仓库根或任意目录）：
 #   powershell -NoProfile -File kernel/hosts/dsh/tools/schtasks.ps1 -Action preview -Workspace <项目根>
@@ -96,9 +100,18 @@ if ($IntervalMinutes -lt 1 -or $IntervalMinutes -gt 1440) { Fail '-IntervalMinut
 if ([string]::IsNullOrWhiteSpace($TaskName)) { Fail '-TaskName 不能为空。' }
 
 $eventsRoot = Join-Path $workspacePath '.autoresearch\events'
+$processStatusRoot = Join-Path $workspacePath '.autoresearch\state\process_status'
+$runtimeDb = Join-Path $workspacePath '.autoresearch\runtime.sqlite3'
+$layoutMarker = Join-Path $workspacePath '.autoresearch\workspace-layout.json'
+$layoutNote = if (Test-Path -LiteralPath $layoutMarker) {
+    '由 .autoresearch\workspace-layout.json 决定（本地中文目录布局）'
+} else {
+    '旧布局：topics/<专题>（无布局标记）'
+}
 $arguments = @(
     "`"$worker`"",
     '--workspace', "`"$workspacePath`"",
+    '--targets-db', "`"$runtimeDb`"",
     '--once',
     '--json'
 )
@@ -112,13 +125,16 @@ $definition = @"
 # 任务名：$TaskName
 # 频率：每 $IntervalMinutes 分钟一次（单次 worker，不驻留）
 # 工作区：$workspacePath
+# 专题目录：$layoutNote
 # 运行态：$eventsRoot
+# 流程状态：$processStatusRoot\<专题>.json|.md（每 tick 刷新；⛔ 不写 STATUS.md 研究正文）
+# 绑定库：$runtimeDb（读 topics.leader_session_id；读不出显式 unknown，已有 targets.json 不动）
 # Python：$python
 # 入口：$worker
 # 说明：只读采集 + 判事件 + 落队列；⛔ 不开机、不关机、不投递会话消息。
 
 # 手动跑一次（验证用）：
-"$python" "$worker" --workspace "$workspacePath" --once --json
+"$python" "$worker" --workspace "$workspacePath" --targets-db "$runtimeDb" --once --json
 
 # 注册（需管理员或当前用户有权限）：
 $createLine

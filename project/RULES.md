@@ -3,7 +3,7 @@ GENERATED-BY: portable project organization
 LAST-EDIT: 2026-11-09
 PURPOSE: 根规则的固定住所及文件分类
 ORIGIN: maintained layered workspace organization, neutral extraction
-CUMULATIVE-DELTA: 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
+CUMULATIVE-DELTA: 2026-11-09 恢复本地中文目录，工具按明确布局标记适配； 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
 -->
 # 项目共同规则
 
@@ -15,13 +15,13 @@ CUMULATIVE-DELTA: 固定项目组织模板；实例事实留空，现行规则�
 | 平台运行与提交记录 | `Kaggle平台/实验/` |
 | 实验规则、基线名单、运行登记和环境说明 | `AutoDL实验/实验记录/` |
 | 分析与专题索引 | `AutoDL实验/实验分析/` |
-| 具体专题的目标、假设、证据、报告 | `topics/<专题>/`（内核固定落点） |
+| 具体专题的目标、假设、证据、报告 | `AutoDL实验/实验分析/topics/<专题>/` |
 | 框架读取和操作导航 | `AutoDL实验/框架/` |
-| 固定工具生成的代码、环境、状态 | `worktrees/`、`environments/`、`.autoresearch/` |
-| 事前计划 | `plans/` |
+| 固定工具生成的代码、环境、状态 | `AutoDL实验/实验分析/worktrees/`、`AutoDL实验/实验记录/environments/`、`.autoresearch/` |
+| 事前计划 | `AutoDL实验/框架/state/plans/`；专题内计划投影由工具维护 |
 | 临时件、一次性脚本、候选稿 | `temp/` |
 | 已退休且仍需留痕的材料 | `archive/` |
-| 原始比赛数据、运行结果、凭据引用 | `data/`、`results/`、`private/`；数据只读，凭据不入 Git |
+| 原始比赛数据、运行结果、凭据引用 | `data/`、`AutoDL实验/实验分析/results/`、`install/private/`；数据只读，凭据不入 Git |
 | 将发往平台的包 | `submission/`；不能把当前包默认当作基线包 |
 
 新增一级目录先说明为何现有二级不能容纳。没有硬性深度上限；避免重复根目录。

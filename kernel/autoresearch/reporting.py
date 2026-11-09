@@ -9,6 +9,8 @@
 #         轮数上限记为「总量 3 轮（含当前实验）」，不改校验器。
 #         2026-11-09 只读零副作用：`_lease_state` 不再拼裸 `?mode=ro`，委托 `ReadonlyStore`
 #         （WAL 读不创建 -shm/-wal）；不可读仍返回 UNKNOWN，不推断租约。
+#         2026-11-09 人读侧专题目录与 STATUS.md 落点由 `.autoresearch/workspace-layout.json`
+#         决定（无标记仍是 topics/<topic>）；机器侧 `.autoresearch/state/...` 与状态库不迁移。
 
 """研究现状页的供料、版本、验收回执与只读诊断。
 
@@ -78,6 +80,7 @@ from kernel.autoresearch.governance import (
     validate_status_page,
 )
 from kernel.autoresearch.runtime.store import ReadonlyStore, StoreError  # noqa: E402
+from kernel.autoresearch.workspace_layout import resolve_layout  # noqa: E402
 
 SCHEMA = 1
 
@@ -148,6 +151,8 @@ FLOW_MARKERS = (
     'AUTODL_AVAILABILITY', 'PROCESS_STATUS', 'watchdog',
 )
 
+#: 旧布局下专题人读目录的根名。⚠️ 只是**旧布局**的常量与兼容用：新的读写在
+#: `topic_root()` / `page_rel()` 里按 `.autoresearch/workspace-layout.json` 解析。
 TOPICS_DIR = 'topics'
 STATE_DIR = '.autoresearch/state'
 REPORTING_DIR = STATE_DIR + '/reporting'
@@ -267,13 +272,19 @@ def relative(root, path):
 
 
 def topic_root(root, topic):
-    """人读侧专题目录：`topics/<topic>/`。
+    """人读侧专题目录：`<topics>/<topic>/`（具体根由工作区布局标记决定）。
 
     专题主文档、用户要求、证据与事前计划都在这里（`workspace.provision_topic` 的产出），
-    人读研究页也在这里：`topics/<topic>/STATUS.md`。
+    人读研究页也在这里：`<topics>/<topic>/STATUS.md`。
+    ⚠️ 无 `.autoresearch/workspace-layout.json` 时就是旧布局 `topics/<topic>`；
+    ⛔ 不按「中文目录在不在」猜布局。
     """
     require_topic(topic)
-    return inside(root, f'{TOPICS_DIR}/{topic}')
+    try:
+        layout = resolve_layout(root)
+        return layout.topic_dir(topic)
+    except ValueError as exc:
+        raise ReportingError(f'工作区布局不可用：{exc}') from None
 
 
 def machine_dir(root, topic):
@@ -296,7 +307,7 @@ def topic_exists(root, topic):
 
 
 def page_path(root, topic):
-    """人读研究页：`topics/<topic>/STATUS.md`（与专题主文档同一目录）。"""
+    """人读研究页：`<topics>/<topic>/STATUS.md`（与专题主文档同一目录）。"""
     return topic_root(root, topic) / 'STATUS.md'
 
 
@@ -337,17 +348,26 @@ def process_status_note_path(root, topic):
     return process_status_path(root, topic).with_suffix('.md')
 
 
-def page_rel(topic):
-    """人读页的工作区相对路径（与专题主文档同目录）。"""
-    return f'{TOPICS_DIR}/{topic}/STATUS.md'
+def page_rel(root, topic=None):
+    """人读页的工作区相对路径（与专题主文档同目录）。
+
+    兼容旧单参写法 ``page_rel(topic)``：它只对**无标记（旧布局）**工作区的显示路径成立；
+    有标记时必须传 `root`，否则显示路径会与真实落点不符。
+    """
+    if topic is None:
+        return f'{TOPICS_DIR}/{root}/STATUS.md'
+    return relative(root, page_path(root, topic))
 
 
 def feed_rel(topic):
     return f'{REPORTING_DIR}/{topic}/FEED.md'
 
 
-def topic_rel(topic):
-    return f'{TOPICS_DIR}/{topic}'
+def topic_rel(root, topic=None):
+    """专题人读目录的工作区相对路径；旧单参写法 ``topic_rel(topic)`` 同 `page_rel`（只用于旧布局显示）。"""
+    if topic is None:
+        return f'{TOPICS_DIR}/{root}'
+    return relative(root, topic_root(root, topic))
 
 
 def ack_command(topic, session='<scribe 会话ID>'):
@@ -613,9 +633,10 @@ def _manifest_paths(root, topic):
 def source_snapshot(root, topic, *, extra_sources=None):
     """来源快照：逐文件**字节**哈希 + 聚合指纹。
 
-    * 人读侧扫 `topics/<topic>/`：TOPIC / OBJECTIVE / REQUIREMENTS / EVIDENCE* / plans/ 与分支材料；
+    * 人读侧扫专题目录（`<topics>/<topic>/`，`<topics>` 由布局标记决定）：TOPIC / OBJECTIVE /
+      REQUIREMENTS / EVIDENCE* / plans/ 与分支材料；
     * 机器侧扫 `.autoresearch/state/reporting/<topic>/`：EVENTS / INPUTS / CHECKPOINT；
-    * 读 `topics/<topic>/sources.json` 作为**固定来源表**（清单自身也哈希）；
+    * 读专题目录里的 `sources.json` 作为**固定来源表**（清单自身也哈希）；
     * CLI 追加来源（`extra`）也算来源。
 
     ⚠️ 只用文件内容。mtime、心跳、页面自身都不参与指纹 ⇒ 同内容 touch 不作废回执。
@@ -913,20 +934,20 @@ def missing_items(root, topic, snapshot=None, task=None):
     if not any(rel.endswith('TOPIC.md') for rel in files):
         items.append({'item': '专题主文档', 'level': 'info',
                       'why': '缺 TOPIC.md：研究问题、假设与边界没有落点',
-                      'read': f'补读/补齐：{TOPICS_DIR}/{topic}/TOPIC.md'
+                      'read': f'补读/补齐：{topic_rel(root, topic)}/TOPIC.md'
                               '（`workspace.provision_topic` 会生成）'})
     if not any('EVIDENCE' in rel for rel in files):
         items.append({'item': '证据正文', 'level': 'info',
                       'why': '还没有证据文件；第 3 节只能写「暂无实验，未起跑」',
-                      'read': f'补读/补齐：{TOPICS_DIR}/{topic}/EVIDENCE_<日期>.md'})
+                      'read': f'补读/补齐：{topic_rel(root, topic)}/EVIDENCE_<日期>.md'})
     if not any(('PLAN_' in rel or '/plans/' in rel) for rel in files):
         items.append({'item': '事前设计（设置 / 分支）', 'level': 'info',
                       'why': '缺 plan：第 3 节的「设置」与「结果分支」没有来源',
-                      'read': f'补读/补齐：{TOPICS_DIR}/{topic}/plans/<实验号>.json'})
+                      'read': f'补读/补齐：{topic_rel(root, topic)}/plans/<实验号>.json'})
     if not (topic_root(root, topic) / SOURCE_MANIFEST).is_file():
         items.append({'item': '来源清单 sources.json', 'level': 'info',
                       'why': '缺固定来源表；自动扫描仍生效，但清单里的额外来源不会被纳入',
-                      'read': f'补读/补齐：{TOPICS_DIR}/{topic}/{SOURCE_MANIFEST}'
+                      'read': f'补读/补齐：{topic_rel(root, topic)}/{SOURCE_MANIFEST}'
                               '（JSON 字符串路径列表，工作区相对）'})
     if not events:
         items.append({'item': '运行事件', 'level': 'info',
@@ -1093,7 +1114,7 @@ def build_feed(root, topic, snapshot, task, *, inline_limit=INLINE_LIMIT_BYTES):
     if page.is_file():
         old_text, problem = _source_text(page)
         if problem:
-            lines.append(problem + f' 补读路径：`{page_rel(topic)}`')
+            lines.append(problem + f' 补读路径：`{page_rel(root, topic)}`')
         else:
             lines.append(f'本页读到 {page.stat().st_size} 字节，原样附在下面。'
                          '旧流程字段只读兼容，⛔ 不要带进新页。')
@@ -1121,7 +1142,8 @@ def build_feed(root, topic, snapshot, task, *, inline_limit=INLINE_LIMIT_BYTES):
 def prepare(root, topic, *, extra_sources=None, inline_limit=INLINE_LIMIT_BYTES):
     """生成完整供料包并登记来源快照。返回稳定协议（`prepared_id` / `dispatch` / `missing`）。
 
-    人读页默认落 `topics/<topic>/STATUS.md`（与专题主文档同目录）；写页前先建它的父目录，
+    人读页默认落 `<topics>/<topic>/STATUS.md`（与专题主文档同目录；`<topics>` 由工作区布局
+    标记决定，无标记时是 `topics`）；写页前先建它的父目录，
     这样 `provision_topic` 之外的临时专题也能由 scribe 直接写页，⛔ 不必把研究正文拷进隐藏状态目录。
     """
     root = workspace_root(root)
@@ -1152,7 +1174,7 @@ def prepare(root, topic, *, extra_sources=None, inline_limit=INLINE_LIMIT_BYTES)
             'event_cutoff': cutoff,
             'prepared_id': prepared_id,
             'feed': {'path': feed_rel(topic), 'bytes': len(text.encode('utf-8')), 'sha256': feed_sha},
-            'page': {'path': page_rel(topic), 'exists': page.is_file(), 'sha256': page_sha},
+            'page': {'path': page_rel(root, topic), 'exists': page.is_file(), 'sha256': page_sha},
             'prepared_at': now_iso(),
         }
         if _load_json(sources_path(root, topic), None) != record:
@@ -1181,7 +1203,7 @@ def prepare(root, topic, *, extra_sources=None, inline_limit=INLINE_LIMIT_BYTES)
             'ack_command': ack_command(topic),
             'dispatch': {
                 'prepared_id': prepared_id,
-                'page_path': page_rel(topic),
+                'page_path': page_rel(root, topic),
                 'page_sha256': page_sha,
                 'must_mention': ['prepared_id', 'page_path'],
             },
@@ -1204,7 +1226,7 @@ def check(root, topic, *, required=False):
     if not topic_exists(root, topic):
         return {
             'ok': not required,
-            'problems': [] if not required else [f'专题目录不存在：{topic_rel(topic)}'],
+            'problems': [] if not required else [f'专题目录不存在：{topic_rel(root, topic)}'],
             'warnings': [],
             'state': '未开始',
             'legacy_exempt': not required,
@@ -1251,7 +1273,7 @@ def check(root, topic, *, required=False):
                             + ('、'.join(changed[:8]) if changed else '来源指纹变化') + '）')
         body = _digest(page.read_bytes()) if page.is_file() else None
         if not page.is_file():
-            problems.append(f'缺研究页正文：{page_rel(topic)}')
+            problems.append(f'缺研究页正文：{page_rel(root, topic)}')
         elif receipt.get('body_sha256') != body:
             problems.append('正文与验收回执不一致（按字节比对：文件被改过，或回执不是这一版）')
         if task and receipt.get('task_id') != task.get('task_id'):
@@ -1269,7 +1291,7 @@ def check(root, topic, *, required=False):
         problems.extend(page_problems(text))
         warnings.extend(separation_warnings(text))
     elif not required and not problems:
-        problems.append(f'缺研究页正文：{page_rel(topic)}')
+        problems.append(f'缺研究页正文：{page_rel(root, topic)}')
     return {
         'ok': not problems,
         'problems': problems,
@@ -1467,7 +1489,7 @@ def host_payload(root, topic, *, writer_session, proof=None, owner_session=None,
     prepared = _load_json(sources_path(root, topic), {}) or {}
     page = page_path(root, topic)
     if not page.is_file():
-        raise ReportingError(f'缺研究页正文：{page_rel(topic)}；先让 scribe 写页再核验')
+        raise ReportingError(f'缺研究页正文：{page_rel(root, topic)}；先让 scribe 写页再核验')
     snapshot = source_snapshot(root, topic)
     if prepared.get('fingerprint') != snapshot['fingerprint']:
         raise ReportingError('供料后来源已变化（写页用的来源 ≠ 现在的来源）；先重新 prepare')
@@ -1479,7 +1501,7 @@ def host_payload(root, topic, *, writer_session, proof=None, owner_session=None,
         'owner_session': owner_session,
         'prepared_id': prepared.get('prepared_id'),
         'workspace': str(root),
-        'page_path': page_rel(topic),
+        'page_path': page_rel(root, topic),
         'page_abs': str(page),
         'page_sha256': _digest(page.read_bytes()),
         'writer_session': session,
@@ -1532,7 +1554,7 @@ def acknowledge(root, topic, writer_session=None, *, writer_role=None, host_veri
                                  + '。缺项时 --ack 一定失败（正文结构可能全绿）')
         page = page_path(root, topic)
         if not page.is_file():
-            raise ReportingError(f'缺研究页正文：{page_rel(topic)}')
+            raise ReportingError(f'缺研究页正文：{page_rel(root, topic)}')
         text = page.read_text(encoding='utf-8-sig')
         problems = page_problems(text)
         if problems:
@@ -1857,7 +1879,7 @@ def diagnose(root, topic, *, checkpoint_max_age_hours=CHECKPOINT_MAX_AGE_HOURS, 
     }
     if not topic_exists(root, topic):
         report.update({'ok': False, 'verdict': '未开始', 'why': '专题目录不存在',
-                       'runtime_verified': False, 'error': f'专题目录不存在：{topic_rel(topic)}'})
+                       'runtime_verified': False, 'error': f'专题目录不存在：{topic_rel(root, topic)}'})
         return report
     checkpoint = latest_checkpoint(root, topic, now=now,
                                    max_age_hours=checkpoint_max_age_hours)
@@ -1972,7 +1994,7 @@ def process_status_projection(root, topic, *, checkpoint_max_age_hours=CHECKPOIN
         'checkpoint': diag.get('checkpoint'),
         'lease': diag.get('lease'),
         'page': {
-            'path': page_rel(topic),
+            'path': page_rel(root, topic),
             'delivery': (diag.get('documentation') or {}).get('state'),
             'body_sha256': (diag.get('documentation') or {}).get('body_sha256'),
         },
@@ -1994,7 +2016,7 @@ def write_process_status(root, topic, *, checkpoint_max_age_hours=CHECKPOINT_MAX
     root = Path(root).resolve()
     require_topic(topic)
     if not topic_exists(root, topic):
-        raise ReportingError(f'专题目录不存在：{topic_rel(topic)}；先 prepare 再投影流程状态')
+        raise ReportingError(f'专题目录不存在：{topic_rel(root, topic)}；先 prepare 再投影流程状态')
     projection = process_status_projection(root, topic,
                                            checkpoint_max_age_hours=checkpoint_max_age_hours,
                                            now=now, db=db)

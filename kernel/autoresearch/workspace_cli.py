@@ -1,12 +1,14 @@
 # GENERATED-BY: portable functional migration
-# LAST-EDIT: 2026-11-09
+# LAST-EDIT: 2026-11-09 documents 分支也按布局标记解析专题目录
 # PURPOSE: Explicit CLI for topic provisioning and research snapshots.
 # ORIGIN: none
 # CUMULATIVE-DELTA: 2026-11-09 documents只补缺失文档，不覆写；Actual Git worktrees and Python environments, separately from metadata registration.
+#   2026-11-09 专题目录由 workspace-layout 标记决定（无标记仍是 topics/<id>）；⛔ 不按目录存在与否猜布局。
 import argparse
 import json
 from pathlib import Path
 from .workspace import provision_topic, snapshot_topic
+from .workspace_layout import resolve_layout
 
 
 def main(argv=None):
@@ -38,10 +40,10 @@ def main(argv=None):
                                      code_repo=args.code_repo, revision=args.revision,
                                      create_environment=not args.no_environment)
         elif args.command == 'documents':
-            from .workspace import _id, _inside
+            from .workspace import _id
             from .topic_documents import ensure_topic_documents
             root = Path(args.workspace).resolve()
-            directory = _inside(root, 'topics/' + _id(args.topic))
+            directory = resolve_layout(root).topic_dir(_id(args.topic))
             if not (root / '.autoresearch').is_dir() or not directory.is_dir():
                 raise ValueError('只允许为现有工作区中的专题补建文档')
             result = ensure_topic_documents(directory, topic=args.topic)
