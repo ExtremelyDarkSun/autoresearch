@@ -3,7 +3,7 @@ GENERATED-BY: repository creation, 2026-11-09 +08:00
 LAST-EDIT: 2026-11-09 +08:00
 PURPOSE: 给首次查看项目的人说明用途、边界和可执行检查。
 ORIGIN: reusable research mechanisms and target-specific evaluation adapters
-CUMULATIVE-DELTA: 实际拆开内核、agent配置与实例；加入离线演示和部署检查入口。
+CUMULATIVE-DELTA: 实际拆开内核、agent配置与实例。新增首次真实启动prompt，覆盖Kaggle、AutoDL和首轮研究验收。
 -->
 # AutoResearch：可复用研究内核与 agent 比赛配置
 
@@ -12,6 +12,16 @@ CUMULATIVE-DELTA: 实际拆开内核、agent配置与实例；加入离线演示
 仓库有两层。**内核**处理任何研究项目都会遇到的事务、预算、任务接管、证据、审查、报告和部署。**agent 比赛配置**描述“要优化的是一个 agent harness”时才需要的题单、轨迹、工具、工作区、泄漏和评测预算。
 
 真实比赛资料、题库、模型、实验结果、现有结论、凭据、机器清单和个人宿主设置均不随仓库提供。它们放在另外建立的研究工作区。示例全部是合成数据。
+
+## 让 AI 带你完成第一次真实运行
+
+克隆仓库后，在仓库目录启动有终端工具的 AI，发送：
+
+> 请完整读取 docs/FIRST_RUN_PROMPT.md，执行“交给 AI 的 prompt”一节。目标是配置我的 Kaggle 与 AutoDL，并完成一轮真实研究循环。先检查现有环境，再问我缺失的信息。不要只给我安装清单，也不要拿合成演示当成完成。
+
+完整指令见 [首次启动 prompt](docs/FIRST_RUN_PROMPT.md)。它引导 AI 检查环境、配置安全凭据引用、补齐真实执行接口、运行对照与候选、分析结果并核查资源停止。你只需提供目标、平台访问和预算等必要决定。
+
+**这不是一键部署脚本。** 当前仓库不自带通用 Kaggle 客户端或完整远端评测启动器。prompt 明确要求 AI 在缺少接线时实际补齐并测试。首次循环需要比赛允许的数据、模型和评测器，不要求 Kaggle 线上提交。本次只核对了指令与仓库接口，尚未在全新机器完成真实平台验收。
 
 ## 第一次检查：三条命令
 

@@ -3,7 +3,7 @@ GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
 LAST-EDIT: portable extraction / repository bootstrap (2026-11-09 +08:00)
 PURPOSE: agent-harness profile 的使用说明 —— 每个配置键管什么、怎么离线自查、接到评测前要满足什么
 ORIGIN: none（新文件）
-CUMULATIVE-DELTA: 首版
+CUMULATIVE-DELTA: 首版。纠正执行入口说明，明确research.py profile只生成命令。增加首次启动prompt链接。
 -->
 
 # agent-harness profile
@@ -192,9 +192,7 @@ diff = ah.compare_results("run_1/task_results.jsonl", "run_2/task_results.jsonl"
 report = ah.check_trace(trace_dict, profile=profile)            # 越界 + 泄漏 + 工具名
 ```
 
-⛔ 本 CLI **不执行**评测命令。真正发起评测的地方是上层集成方的入口
-（`research.py` → `kernel.autoresearch.cli`）；它调用 `build_command()` 拿 argv，
-再自己起子进程。本 profile 只管「argv 怎么拼、读数怎么算」。
+本 CLI **不执行**评测命令。`research.py profile` 也只调用 `build_command()` 生成 argv，不启动子进程。部署方需要提供真实执行入口，或通过 [首次启动 prompt](../../docs/FIRST_RUN_PROMPT.md) 让执行 AI 补齐并测试接线。本 profile 只管 argv 生成与结果分析。
 
 ---
 
