@@ -2,9 +2,11 @@
 # LAST-EDIT: 2026-11-09 +08:00
 # PURPOSE: Keep deployment state, credentials and research artifacts out of Git.
 # ORIGIN: none
-# CUMULATIVE-DELTA: Public source boundary for kernel and agent profile.
+# CUMULATIVE-DELTA: Public source boundary for kernel and agent profile; 2026-11-09 track only the template temp README, not generated temporary files.
 .local/
 temp/
+!/project/temp/
+!/project/temp/README.md
 .autoresearch/
 __pycache__/
 *.py[cod]

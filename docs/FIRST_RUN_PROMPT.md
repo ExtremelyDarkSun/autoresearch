@@ -3,7 +3,7 @@ GENERATED-BY: repository documentation, 2026-11-09 +08:00
 LAST-EDIT: 2026-11-09 执行接线复核：仓库已有统一 workflow 主链、真实 cwd/venv、宿主核验器与默认关闭的远端/通道适配层；改掉「只有 argv、什么都不执行」的旧说法
 PURPOSE: 用户可直接交给执行型 AI 的首次接入 prompt，直到完成一轮真实研究循环。
 ORIGIN: repository CLI, profile interfaces and deployment documentation
-CUMULATIVE-DELTA: 补 workflow 主链与默认关闭适配层的边界、生产计划模板、以及「不要重复实现已有机制」的告诫。
+CUMULATIVE-DELTA: 2026-11-09 固定分层项目模板与默认初始化，保留显式bundle兼容；补 workflow 主链与默认关闭适配层的边界、生产计划模板、以及「不要重复实现已有机制」的告诫。
 -->
 # 首次启动：让 AI 带你跑完一轮研究
 
@@ -139,7 +139,7 @@ flowchart TD
 
 用 research.py init 创建独立工作区。
 如果工作区已存在，先检查并接续，不要重新初始化。
-复制目标 profile 到该工作区，再填写真实配置。
+默认 init 已按固定模板安装目标 profile 到 Kaggle平台/config/agent-harness，并生成分层目录、规则与索引。先核 layout-check 与来源清单，再填写真实配置；不要另行自由设计目录，也不要复制第二份 profile。
 不要把部署值写回公共模板。
 
 在工作区保存一份接入记录。

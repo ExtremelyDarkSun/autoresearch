@@ -1,0 +1,52 @@
+{
+  "format": 1,
+  "purpose": "Neutral extraction provenance; hashes identify inspected source versions, not copied content or completeness certification.",
+  "sources": [
+    {
+      "label": "根索引",
+      "bytes": 37550,
+      "sha256": "67b8f1d8812db31ecdc76cf25610f3b31b1cbb96395f9aed56332950c6d308d8"
+    },
+    {
+      "label": "共同规则",
+      "bytes": 61531,
+      "sha256": "fd75131421b7b8aaa162a5cb03bd7d90b27cd3123caa331692cf33d8061354ae"
+    },
+    {
+      "label": "维护规则",
+      "bytes": 31274,
+      "sha256": "4675bfea7ac375fb587ee75c4b2033d621d23e105ae3a442824b1cb9d1a80933"
+    },
+    {
+      "label": "平台分册",
+      "bytes": 24917,
+      "sha256": "1442bfc572f98729afa1bf9f404a4b2647a0d3416535b7bbe41f22e3393f9627"
+    },
+    {
+      "label": "实验分册",
+      "bytes": 40759,
+      "sha256": "93b5815871d7ee2d01303f02c0a066431c599dea5c089e5d219e74f25d1d7475"
+    },
+    {
+      "label": "框架分册",
+      "bytes": 29794,
+      "sha256": "3038e664cd31ee5a521305ded4b5297bf405194bd85f5b1dda34365df7344790"
+    },
+    {
+      "label": "上下文加载",
+      "bytes": 19129,
+      "sha256": "9260d651bdf7fdb13ab898752230ff31272c5a4a1d8ba439a59726dc7ca26e4e"
+    },
+    {
+      "label": "实验活件与历史迁移维护记录",
+      "bytes": 7826,
+      "sha256": "35663e081b650ebb87cc235f6f1788cb8faa18513101223b9218deff2f9f02cd"
+    }
+  ],
+  "not_included": [
+    "competition data",
+    "private results",
+    "old authorizations",
+    "session and machine identities"
+  ]
+}

@@ -2,7 +2,7 @@
 # LAST-EDIT: 2026-11-09 +08:00
 # PURPOSE: Portable project entrypoint or verification.
 # ORIGIN: none
-# CUMULATIVE-DELTA: Independent kernel and target profile integration.
+# CUMULATIVE-DELTA: Independent kernel and target profile integration; 2026-11-09 init默认固定分层模板，bundle显式兼容，layout-check只读验路由。
 """CLI for source validation, complete instructions and isolated local state."""
 from __future__ import annotations
 import argparse
@@ -71,8 +71,11 @@ def main(argv=None):
     a.add_argument('--path', default=str(DEFAULT_PROFILE)); a.add_argument('--tasks'); a.add_argument('--output')
     a = sub.add_parser('instructions', help='完整合并内核和配置要求，测量预算或核对捕获文本')
     a.add_argument('--profile', default=str(DEFAULT_PROFILE)); a.add_argument('--bundle'); a.add_argument('--manifest'); a.add_argument('--captured')
-    a = sub.add_parser('init', help='建立独立研究工作区，不修改此源码仓库')
+    a = sub.add_parser('init', help='复制固定分层项目模板并建立空状态，不修改源码仓库')
     a.add_argument('--workspace', required=True); a.add_argument('--profile', default=str(DEFAULT_PROFILE))
+    a.add_argument('--layout', choices=('layered', 'bundle'), default='layered', help='默认分层组织；bundle保留旧式全量根指令')
+    a = sub.add_parser('layout-check', help='只读核对项目的本地链接与上下文路由，不证明宿主注入')
+    a.add_argument('--workspace', required=True)
     a = sub.add_parser('check-plan', help='检查事前计划结构与回归集合')
     a.add_argument('path')
     a = sub.add_parser('results', help='读取中性的逐题结果')
@@ -119,7 +122,19 @@ def main(argv=None):
                 out['verification'] = verify_injection(manifest, Path(a.captured).read_text(encoding='utf-8-sig'))
             dump(out)
             return 2 if a.captured and not out['verification']['complete'] else 0
+        if a.command == 'layout-check':
+            from .project_layout import validate_layout
+            result = validate_layout(a.workspace)
+            dump(result)
+            return 0 if result['ok'] else 2
         if a.command == 'init':
+            if a.layout == 'layered':
+                from .project_layout import initialize_layout
+                result = initialize_layout(ROOT, a.workspace, a.profile)
+                result['manifest_path'] = str(Path(a.workspace).resolve() / '.autoresearch/layout-manifest.json')
+                dump({key: value for key, value in result.items()
+                      if key not in {'files', 'root_measurement', 'entry_measurement'}})
+                return 0
             from .context import instruction_manifest, render_bundle, public_manifest
             from .runtime.store import Store
             destination = Path(a.workspace).resolve()

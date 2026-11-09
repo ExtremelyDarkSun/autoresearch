@@ -3,11 +3,11 @@ GENERATED-BY: repository creation, 2026-11-09 +08:00
 LAST-EDIT: portable framework synchronization, 2026-11-09
 PURPOSE: 新仓库的研究行为入口与完整读取要求。
 ORIGIN: generic research and document-maintenance mechanisms
-CUMULATIVE-DELTA: 2026-11-09 加入完整行为预期与迁移缺口的直接入口；保留完整读取及研究报告规则。
+CUMULATIVE-DELTA: 2026-11-09 固定分层项目模板与默认初始化，保留显式bundle兼容；2026-11-09 加入完整行为预期与迁移缺口的直接入口；保留完整读取及研究报告规则。
 -->
 # 研究项目入口
 
-本仓库提供可复用的研究机制和 agent harness 目标配置。工作区、真实数据、结果和部署参数另建。
+本仓库提供可复用的研究机制和 agent harness 目标配置。[固定项目组织](<project/AGENTS.md>)随仓库交付；`init` 默认确定复制分层目录，不让 AI 重新设计。工作区、真实数据、结果和部署参数另建。
 
 **迁移尚未完成。** 开局整份读取[框架行为预期](<kernel/contracts/framework_expectations.md>)；核对已实现范围时读取[功能迁移验收表](<docs/EXPECTATIONS_ACCEPTANCE.md>)。该表逐项保留缺口；生成指令、登记资料或局部测试通过均不能代替实际功能验收。
 

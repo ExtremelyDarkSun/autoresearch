@@ -3,7 +3,7 @@ GENERATED-BY: repository creation, 2026-11-09 +08:00
 LAST-EDIT: 2026-11-09 本批同步：补 review v2、issues exp、questions、assurance、progress 跨轮预检/阶段排序与 D2 回复绑定；通用补项与真实部署分开
 PURPOSE: 给首次查看项目的人说明用途、边界和可执行检查。
 ORIGIN: reusable research mechanisms and target-specific evaluation adapters
-CUMULATIVE-DELTA: 2026-11-09 新增 [怎么跑](<docs/RUNNING.md>)（工作区 / 专题隔离 / 预算 / 执行主链 / 人读页 / 监控 / 审批 / 通道 / 远端 / 进度 / 问题台账的实际命令）；
+CUMULATIVE-DELTA: 2026-11-09 固定分层项目模板与默认初始化，保留显式bundle兼容；2026-11-09 新增 [怎么跑](<docs/RUNNING.md>)（工作区 / 专题隔离 / 预算 / 执行主链 / 人读页 / 监控 / 审批 / 通道 / 远端 / 进度 / 问题台账的实际命令）；
 改写迁移状态段：本地独立环境、完整服务链冷启动（含第二轮共享预算与未复盘阻断）及可信宿主探针已验；真实通道租户、真实 SSH/POSIX 停止/机器空闲、远端上传和平台仍待现场验收；
 把只登记 Topics 的首次隔离改成真实 worktree + 独立环境命令（claim 保留）；明确 demo 只是底层事务合成、不代科研主链；109 编号验收表继续保留。
 依赖口径：Python 内核只用标准库，飞书加密收件另需可选 cryptography（requirements-feishu.txt）；插件 Node 20+，可信 DSH 压缩日志 Node 24+。
@@ -24,6 +24,19 @@ CUMULATIVE-DELTA: 2026-11-09 新增 [怎么跑](<docs/RUNNING.md>)（工作区 /
 仓库有两层。**内核**处理任何研究项目都会遇到的事务、预算、任务接管、证据、审查、报告和部署。**agent 比赛配置**描述“要优化的是一个 agent harness”时才需要的题单、轨迹、工具、工作区、泄漏和评测预算。
 
 真实比赛资料、题库、模型、实验结果、现有结论、凭据、机器清单和个人宿主设置均不随仓库提供。它们放在另外建立的研究工作区。示例全部是合成数据。
+
+## clone 后直接保留项目组织
+
+固定的[项目模板](<project/AGENTS.md>)随 Git 提供，包含根规则、平台线、实验线、框架子项目、分层索引、读取路由、维护清单和空台账。它保留已维护的组织方式，不要求 AI 重新设计文件结构。
+
+```powershell
+python -X utf8 -B research.py init --workspace ../my-research
+python -X utf8 -B research.py layout-check --workspace ../my-research
+```
+
+默认初始化按模板复制目录和正文，安装所选 profile 与内核契约副本，重写本地链接并生成空状态库及来源哈希回执。目标必须尚不存在。工具固定的 `topics/`、`worktrees/`、`environments/` 与 `.autoresearch/` 保持兼容；中文业务目录承担分层入口和资料组织，不复制另一套专题正文。
+
+结构、内容边界及与原组织的对应关系见[组织映射](<project/ORGANIZATION_MAP.md>)；初始化、维护规则恢复及独立读取测试见[项目组织验收](<docs/PROJECT_ORGANIZATION.md>)。宿主是否实际分层加载须另测；链接检查不冒充注入证明。原工作区最新监控与审计减负仍有执行政策差异，已在[加载说明](<project/AutoDL实验/框架/CONTEXT_LOADING.md#执行兼容边界>)单列。
 
 ## 让 AI 带你走一轮
 
@@ -92,7 +105,7 @@ python -X utf8 -B research.py selftest --plugins     # 需要 Node.js
 python -X utf8 -B research.py init --workspace ../my-research
 ```
 
-工作区生成完整的 `AGENTS.md`、读取材料哈希清单和空数据库。运行状态放在该工作区的 `.autoresearch/`，不会导入任何旧实验。**完整指令材料已超过部分 DSH 版本默认的 65,536 B 总预算。开始使用前，必须按命令输出核对并提高总预算和单文件上限，再验证实际注入；`init` 不会修改宿主配置。**
+工作区默认生成固定的多级目录、分层 `AGENTS.md`、本地规则与配置、来源清单和空数据库。运行状态放在 `.autoresearch/`，不会导入旧实验。`init --layout bundle` 显式保留旧式完整合并根指令；全量 `instructions` 仍供材料完整性诊断，不能将其体积当作分层开局注入量。两种方式都不修改宿主预算或插件，实际加载仍须验证。
 
 轨迹检查入口是 `python profiles/agent-harness/checks/cli.py trace --help`，完整命令见 [配置与接口契约](docs/profiles.md)。
 
@@ -138,7 +151,7 @@ python -X utf8 -B research.py workspace snapshot --workspace ../my-research --to
 | 进度采集与推进器 | `research.py progress probe/tick/watch/rearm/outcome/status` + `preflight/next-round/schedule` | 事件库 + 租约 + `needs_rearm`；下一轮只读给命令 |
 | 宿主侧联动 | `research.py progress-host doctor/goal/overdue/plan/register/status` | 固定 deployment 配置 + append-only job 台账 |
 | 问题台账（§9） | `research.py issues record/status/assign/fix/verify/reopen/archive/index` | `<工作区>/.autoresearch/issues.sqlite3`；`--exp` 进入查重与关联 |
-| 统一检查清单 | `research.py assurance checklist` | 只读聚合；`assurance` 三项补项未完成 |
+| 统一检查清单 | `research.py assurance checklist` | 16项只读聚合，复用审计、预算与远端租约判据 |
 | 普通提问 | `research.py questions ask/open/answer/declare/link/expire/cancel` | `<工作区>/.autoresearch/runtime.sqlite3` 的提问台账 |
 
 三条边界：**起跑闸是 fail-closed 的**（缺审计/监控/准入任一就拒绝启动，且不起来子进程）；**没有可信验证器时授权、豁免、交付确认会拒绝**；**通道、云机、平台凭据属于部署配置**，仓库只放引用。

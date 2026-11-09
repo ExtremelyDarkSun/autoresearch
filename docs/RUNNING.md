@@ -3,7 +3,7 @@ GENERATED-BY: operations manual migration, 2026-11-09
 LAST-EDIT: 2026-11-09 本批同步：补 review v2、issues exp、questions、assurance、progress preflight/next-round/schedule 与 D2 回复绑定；通用补项与真实部署分别标
 PURPOSE: 主入口操作说明 —— 工作区、专题隔离、预算准入、研究执行主链、人读页供料、意图监控、审批入向、通道、远端、进度推进器、问题台账、检查清单、提问
 ORIGIN: kernel/autoresearch/{workspace,budget,workflow,reporting,monitoring,decisions,channels,progress,progress_host,remote,issues,assurance,questions}_cli.py 的实际参数
-CUMULATIVE-DELTA: 2026-11-09 复核版。命令取自当前 `--help`；已验/待现网/在补分别写清，⛔ 不把待配置或在补写成已验。
+CUMULATIVE-DELTA: 2026-11-09 固定分层项目模板与默认初始化，保留显式bundle兼容；2026-11-09 复核版。命令取自当前 `--help`；已验/待现网/在补分别写清，⛔ 不把待配置或在补写成已验。
 -->
 
 # 怎么跑：主入口操作说明
@@ -54,9 +54,11 @@ python -X utf8 -B research.py workflow check --workspace ../my-research --topic 
 python -X utf8 -B research.py init --workspace ../my-research
 ```
 
-- 建 `AGENTS.md`（完整合并指令）、`.autoresearch/instruction-manifest.json`、`.autoresearch/runtime.sqlite3`（空库，含 `Store`/`Governance`/`Topics`/`Runtime` 表）、`.gitignore`。
+- 默认 `--layout layered`：从[固定项目模板](<../project/AGENTS.md>)复制多级目录、分层入口、共同规则、索引与空台账；安装当前内核契约、指令、角色及所选 profile 副本，重写相对链接。`.autoresearch/layout-manifest.json` 留来源与目标指纹，`runtime.sqlite3` 是空库（Store/Governance/Topics/Runtime）。不复制旧数据或启用监控。
+- `python research.py layout-check --workspace ../my-research` 只读检查本地链接与组织路由。它不证明宿主真正注入。
+- 旧式单根合并材料须显式选 `--layout bundle`，仍生成 `.autoresearch/instruction-manifest.json`。
 - 目标目录必须**不存在**（不会覆盖已有工作区）。
-- 输出里给完整材料的字节数与建议预算。**完整指令超过部分 DSH 版本默认 65,536 B 总预算**，必须按输出提高宿主预算并核对注入：
+- 分层输出测量各入口实际体积；完整材料另由下列命令测量。全量合并可能超过宿主默认预算，按实际采用的加载方式配置，不能裁切已选中的必读正文：
 
 ```powershell
 python -X utf8 -B research.py instructions --bundle .local/required-instructions.md

@@ -1,0 +1,51 @@
+{
+  "format": 1,
+  "scope": "organization routes, not proof of host injection",
+  "full_document": true,
+  "routes": [
+    {
+      "id": "root",
+      "prefix": "",
+      "entry": "AGENTS.md",
+      "required": [
+        "RULES.md",
+        "PROJECT.md"
+      ]
+    },
+    {
+      "id": "platform",
+      "prefix": "Kaggle平台/",
+      "entry": "Kaggle平台/AGENTS.md",
+      "required": [
+        "../profiles/agent-harness/RULES.md"
+      ]
+    },
+    {
+      "id": "experiment",
+      "prefix": "AutoDL实验/",
+      "entry": "AutoDL实验/AGENTS.md",
+      "required": [
+        "AutoDL实验/实验记录/EXPERIMENT_RULES.md"
+      ]
+    },
+    {
+      "id": "framework",
+      "prefix": "AutoDL实验/框架/",
+      "entry": "AutoDL实验/框架/AGENTS.md",
+      "required": [
+        "../kernel/contracts/CONTRACT.md",
+        "../kernel/contracts/reading_policy.md"
+      ]
+    },
+    {
+      "id": "topic",
+      "prefix": "topics/",
+      "entry": "topics/AGENTS.md",
+      "required": [
+        "AutoDL实验/实验记录/EXPERIMENT_RULES.md"
+      ]
+    }
+  ],
+  "child_default": "fresh_session_task_packet_no_project_index_traversal",
+  "history_is_current_instruction": false
+}

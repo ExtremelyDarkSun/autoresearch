@@ -1,0 +1,15 @@
+.autoresearch/
+private/*
+!private/README.md
+data/*
+!data/README.md
+results/*
+!results/README.md
+temp/*
+!temp/README.md
+worktrees/*
+!worktrees/README.md
+environments/*
+!environments/README.md
+.env
+__pycache__/

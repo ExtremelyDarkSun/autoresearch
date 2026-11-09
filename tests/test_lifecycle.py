@@ -3,7 +3,7 @@
 # PURPOSE: 证明权威 wf_* 记录能被投影成人读/AI 材料与 reporting 事件，且 before/after、幂等、防篡改、
 #          hook 失败不挡安全停；并跑通真实 Workflow + provision_topic + 真 marker 的 I4 整轮交付。
 # ORIGIN: 合成临时工作区夹具（复用同目录 `test_workflow` 的夹具，见文件内说明）；⛔ 无真实实验/机器/读数。
-# CUMULATIVE-DELTA: 首版。审计用显式夹具，Admission/Accounts 用真实实现；scribe 回执只到 declared。
+# CUMULATIVE-DELTA: 首版。审计用显式夹具，Admission/Accounts 用真实实现；scribe 回执只到 declared。2026-11-09 默认init改分层模板，夹具复用已生成的submission/plans，完整主链仍走默认模式。
 
 """lifecycle 接线层测试。
 
@@ -384,10 +384,10 @@ class ProvisionedDeliveryTests(fixtures.FlowCase):
         (self.ws / "evidence").mkdir()
         self.readings = self.ws / "evidence" / "readings.md"
         self.readings.write_text("上一轮读数：通过题数 3（逐题核对）\n", encoding="utf-8")
-        (self.ws / "submission").mkdir()
+        (self.ws / "submission").mkdir(exist_ok=True)
         self.entry = self.ws / "submission" / "entry.py"
         self.entry.write_text("def parse_args(argv):\n    return argv\n", encoding="utf-8")
-        (self.ws / "plans").mkdir()
+        (self.ws / "plans").mkdir(exist_ok=True)
         self.marker = self.ws / provision['code_path'] / "marker.py"
         self.marker.write_text(MARKER_SRC, encoding="utf-8")
         self.marker_log = self.ws / "marker.log"
