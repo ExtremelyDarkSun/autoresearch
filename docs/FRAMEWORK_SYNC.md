@@ -28,7 +28,25 @@ CUMULATIVE-DELTA: 监控默认关闭、审计三项重点、判据来源可选�
 
 源码入口：[监控](<../kernel/autoresearch/monitoring.py>)、[研究主链](<../kernel/autoresearch/workflow.py>)、[审计](<../kernel/autoresearch/governance.py>)、[文档生成](<../kernel/autoresearch/topic_documents.py>)、[专题命令](<../kernel/autoresearch/workspace_cli.py>)。操作见[运行手册](<RUNNING.md>)；具体规则只在[监控契约](<../kernel/contracts/intent_monitor.md>)、[审计契约](<../kernel/contracts/plan_audit.md>)、[现状页契约](<../kernel/contracts/status_page.md>)与[读取政策](<../kernel/contracts/reading_policy.md>)维护。
 
+## 2026-11-11 文档层同步
+
+这次只动文档层，不动执行代码。三件事：
+
+| 变更 | 内容 |
+|---|---|
+| 新增 `project/DOC_DESIGN.md` | 一批文档之间的分工规则：三层结构（大纲 / 细节 / 机器账）· 五格台账一格一份 · 跨专题资产不放专题目录 · 挂起的事只有一个落点 · 就近归档 + 索引 · 四问口诀。此前 `project/` 只有维护入口，**没有设计规范** |
+| 五份正文补「说明书」四段 | `AGENTS.md` · `RULES.md` · `DOC_MAINTENANCE.md` · `INSTALL.md` · `DOC_DESIGN.md` 各加四段：**这份文档是什么** / **里面放什么** / **不放什么（放去哪）** / **一条判据：这条信息该放哪**。此前它们只有「去哪里读」，没有「这是什么」 |
+| 新增 `project/examples/` 六份文件 | 每份正文配一个**合成数据**示例，只示三件事：骨架 · 粒度 · 边界 |
+
+`RULES.md` §1.5 同步补上本地版的「只写三样」、五类「不写 → 写到哪去」表，以及「确实要写数字必须紧跟 `〔时点 · 口径〕`」；并写明理由：入口经常被读、但内容改变频率极低，会漂的量写进来**不会报错**。
+
+源指纹按本轮实际读取的版本更新（`organization-source-manifest.json`，并加 `inspected_at`）：8 个源里 **5 个变了**（根索引 37,550→41,532 · 共同规则 61,531→62,890 · 维护规则 31,274→32,336 · 实验分册 40,759→40,669 · 框架分册 29,794→28,835），**3 个未变**（平台分册 · 上下文加载 · 实验活件与历史迁移维护记录）—— 两个未变源的哈希与旧 manifest 逐字符相同，可当取法正确的交叉验证。
+
+⚠️ 边界未变：公开仓库仍不含比赛数据、私人结果、旧授权、会话与机器身份。五份示例里的 `acme-pipeline` 是虚构项目。
+
 ## 验证记录
+
+【实测 2026-11-11】`tools/check_repository.py` 退出码 0，`errors` 为空，301 个文件 / 5,322,459 B。首跑曾报 5 处断链（示例里的 `[...](<...>)` 被当成真链接）⇒ 已把示例内的链接改成代码标记，示例不该用可解析的链接语法。
 
 【实测】完整selftest --plugins退出码0：Python共1,445项（1,434通过、11项按平台跳过），三个插件221条断言通过。109个编号与源表顺序逐项对比一致，保留原编号而更新其现行语义。[逐项验收表](<EXPECTATIONS_ACCEPTANCE.md>)保留真实部署未验项目。
 

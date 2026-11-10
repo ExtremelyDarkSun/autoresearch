@@ -1,21 +1,22 @@
 {
   "format": 1,
   "purpose": "Neutral extraction provenance; hashes identify inspected source versions, not copied content or completeness certification.",
+  "inspected_at": "2026-11-11T21:00:00+08:00",
   "sources": [
     {
       "label": "根索引",
-      "bytes": 37550,
-      "sha256": "67b8f1d8812db31ecdc76cf25610f3b31b1cbb96395f9aed56332950c6d308d8"
+      "bytes": 41532,
+      "sha256": "ed3b1fb5938af48ed1e8a82b27792166b15c83a620f4d050685eed885ce1c850"
     },
     {
       "label": "共同规则",
-      "bytes": 61531,
-      "sha256": "fd75131421b7b8aaa162a5cb03bd7d90b27cd3123caa331692cf33d8061354ae"
+      "bytes": 62890,
+      "sha256": "779f288a95312ef19d8d5a8741cee7440a853f4a704217ca443884223da1fe9d"
     },
     {
       "label": "维护规则",
-      "bytes": 31274,
-      "sha256": "4675bfea7ac375fb587ee75c4b2033d621d23e105ae3a442824b1cb9d1a80933"
+      "bytes": 32336,
+      "sha256": "4b70760dbb9f7714465806896584c767649bd5ac6750e12a68f1e8011e35ed05"
     },
     {
       "label": "平台分册",
@@ -24,13 +25,13 @@
     },
     {
       "label": "实验分册",
-      "bytes": 40759,
-      "sha256": "93b5815871d7ee2d01303f02c0a066431c599dea5c089e5d219e74f25d1d7475"
+      "bytes": 40669,
+      "sha256": "d03c4f20eec6dde2c0fcdb3e101ac0def92f2089129d176e68fe6cb85a960848"
     },
     {
       "label": "框架分册",
-      "bytes": 29794,
-      "sha256": "3038e664cd31ee5a521305ded4b5297bf405194bd85f5b1dda34365df7344790"
+      "bytes": 28835,
+      "sha256": "7c99f413178d524e3ab9a55f705b87ac261f8aa0e167a14494fd6877feefcc0b"
     },
     {
       "label": "上下文加载",
