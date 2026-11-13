@@ -1,8 +1,8 @@
 # GENERATED-BY: portable extraction / repository bootstrap, 2026-11-09 +08:00
-# LAST-EDIT: 2026-11-09 +08:00
+# LAST-EDIT: 2026-11-13 +08:00
 # PURPOSE: Portable project entrypoint or verification.
 # ORIGIN: none
-# CUMULATIVE-DELTA: Independent kernel and target profile integration.
+# CUMULATIVE-DELTA: 2026-11-13 增加私人通道ID模式，防止部署通知字面量外泄。 Independent kernel and target profile integration.
 """Static public-source checks. Does not import project modules or read ignored state."""
 from __future__ import annotations
 import argparse
@@ -17,6 +17,7 @@ PRIVATE=[('source workspace',re.compile(r'kaggle_competition',re.I)),
          ('live session identity',re.compile(r'session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',re.I)),
          ('original machine names',re.compile(r'(?:008|010|176|180)机')),
          ('private Windows layout',re.compile(r'C:[\\/](?:Users[\\/]Administrator|Program Files[\\/](?:agent|harness|feishu_CLI))',re.I)),
+         ('private channel identity',re.compile(r'\b(?:oc_|ou_|on_)[0-9a-f]{32}\b',re.I)),
          ('private key',re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'))]
 TEXT={'.py','.md','.json','.jsonl','.toml','.js','.mjs','.cjs','.yml','.yaml','.ps1','.txt','.gitignore','.gitattributes'}
 

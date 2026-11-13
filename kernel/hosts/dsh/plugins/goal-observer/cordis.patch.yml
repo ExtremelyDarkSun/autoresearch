@@ -1,0 +1,34 @@
+# GENERATED-BY: portable synchronization (DSH agent, 2026-11-13 +08:00)
+# LAST-EDIT: portable synchronization (DSH agent, 2026-11-13 +08:00)
+# PURPOSE: 本 bundle 的 Loader 补丁**模板** —— 往 profile 插一行 Host 插件。安装由部署侧生成器/安装器完成，⛔ 不手改 profile。
+# ORIGIN: 部署 profile 的 goal-observer 条目（2026-11-13 读码）；私有值（发送器路径、聊天 ID、话题）全部移除
+# CUMULATIVE-DELTA: 首版。出厂 enabled: false（安装后必须显式改 true 才接管）；通知出厂关闭；
+#   只插入自己的行，⛔ 不覆盖任何出货行（覆盖会把那一行的 config 整份替换）。
+- insert:
+    - id: goal-observer
+      name: '@autoresearch/dsh-goal-observer'
+      config:
+        # 必须显式 true；缺省 / false / "true" 都按关闭处理（不注册监听器、不调用模型）。
+        enabled: false
+        # 只接管 objective 以此开头的 goal；普通 goal 一律不介入。
+        objectivePrefix: '[观察者]'
+        # 与 model 同时给或同时省；省略则用会话当前 selection。
+        provider: null
+        model: null
+        # 两次观察调用共用这一个超时；100..300000。
+        timeoutMs: 60000
+        # thinking 与正文共用预算，实测偏小会 max-tokens；256..16000。
+        maxTokens: 1800
+        # 历史输入上限；2000..200000。
+        contextChars: 24000
+        # 附加策略文本；不得覆盖用户授权与事实核查。
+        policy: ''
+        # 旧配置项，已失效：观察侧永不 pause/block，保留只为兼容旧 yml。
+        failureTolerance: 1
+        # 通知默认关闭。开启时 command 是 argv 前缀（command[0] 为可执行文件），
+        # 插件只追加一个 reason argv；不走 shell。话题/聊天 ID 等绑定由部署侧脚本自己决定。
+        notification:
+          enabled: false
+          command: []
+          cwd: null
+          throttleMs: 300000

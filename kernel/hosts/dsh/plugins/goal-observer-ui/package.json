@@ -1,0 +1,35 @@
+{
+  "name": "@autoresearch/dsh-goal-observer-ui",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "纯客户端显示插件：把 goal-observer 记录按 goalId/revision/round 拼到原生目标通知里；只生成显示副本，不改消息原件。",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "package.json.README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-api-session-controller"
+      ]
+    }
+  },
+  "license": "MIT"
+}

@@ -1,10 +1,17 @@
 # GENERATED-BY: research execution main chain migration, 2026-11-09
-# LAST-EDIT: 2026-11-09，schema_version=2 复盘交接；历史复盘保留 unknown，不改写旧记录
+# LAST-EDIT: 2026-11-13，R395 起跑/预检记录（`launch_record()` · 只在闸全过时产生 · 预检不冒充已启动）；
+#            门槛可分辨性由 `governance.validate_plan()` 统一判（R394），本层不另写一套
 # PURPOSE: 一次研究执行的主链 —— 事前四锚点与冻结、来源哈希过期、统一起跑闸（审计 / 意图 / 监控 / 实际 argv）、
-#          append-only 生命周期、真实结束原因与退出码、复盘验收与前轮阻断。本地 runner 只用显式 argv 数组、无 shell。
+#          append-only 生命周期、真实结束原因与退出码、复盘验收与前轮阻断、起跑/预检记录。
+#          本地 runner 只用显式 argv 数组、无 shell。
 # ORIGIN: 抽取自 AutoDL实验/tool/ai_work.py（prepare / check_start / start / finish / review 的通用逻辑）
 #         与 AutoDL实验/tool/exp_launch.py（先检查后起跑、传递真实退出码）；⛔ 不含专题号、机器、读数、渠道、预算值。
+#         记录机制对应上游请求 R395（起跑前置 + 启动记录）；判据门槛对应 R394（在 governance 侧实现）。
 # CUMULATIVE-DELTA: 2026-11-09 增加复盘v2下一步信息与真实判据来源；旧复盘兼容但缺项明确 unknown。
+#   2026-11-13：新增 `launch_record()` 与 `check()` 的 `preflight_record` / `start()` 的 `launch_record`：
+#   记录绑定冻结计划 sha256（与文件 sha256）、实际 argv、UTC 时间与本次 gates；构造时拒收任何
+#   `ok=False` 的检查 ⇒ 不为「没全过」的轮次产生记录。`kind="preflight"` 带 `run_id` 直接拒
+#   （预检不冒充实际已启动），`kind="launch"` 没有 `run_id` 直接拒。
 #   首版竞争无关：比赛语义留给 profile 与调用方的 argv/来源清单。
 #   2026-11-09：`_ReadOnlyStore` 与 `_read_conn` 不再自己拼 `?mode=ro`，委托 `runtime.store.ReadonlyStore`
 #   （WAL 库按 sidecar 实况选 mode=ro / immutable=1，只读不创建 -shm/-wal；-wal 有 -shm 缺判不可判）。
@@ -23,11 +30,14 @@
              → 来源清单 / 专题主文档 / 专题目标 / 该会话用户原话 / 旧复盘来源 逐个哈希 → append 记录
     check    只读起跑闸：计划与已冻结版本一致 → 准备记录未过期 → 实际 argv 命中事前声明 →
              前轮无未复盘（J5）→ 未重跑同一轮（J6）→ 审计 audit_state →
-             监控（**唯一意图权威**：`Monitoring.check_start`，可注入；未接线即拒）。⛔ 不写盘、⛔ 不起子进程。
+             监控（**唯一意图权威**：`Monitoring.check_start`，可注入；未接线即拒）→ 执行准入。
+             ⛔ 不写盘、⛔ 不起子进程。**全过时**返回 `preflight_record`（`kind="preflight"`、
+             `launched=false`、绑定计划 sha256 / 实际 argv / UTC 时间 / 本次 gates）；不过则 `None`。
     launch   同一套闸；全过才在 **sqlite 事务里原子占用**唯一活跃 run，并在事务内**只读复核**
              准备来源哈希 / 审计状态 / 监控状态（防闸后来源变化、新原话、审计撤销），
              再 subprocess.run(显式 argv, 无 shell)，结束后立即写真实原因与 exitcode。
-             闸任一不过 ⇒ 一个子进程也不启动。
+             闸任一不过 ⇒ 一个子进程也不启动。run 落库后返回 `launch_record`（`kind="launch"`、
+             `launched=true`、带 `run_id`）。
     finish   单独登记结束（跑在带外时用）：原因枚举 + 真实 exitcode；文档失败只追加事件，
              ⛔ 不覆盖已记录的 exitcode、⛔ 不阻断安全停。
     review   复盘验收：必须已有结束记录；事前计划未被改写；分支与 next_action 对账；
@@ -47,6 +57,11 @@
 * **K1（起跑检查部分）** 缺当前审计不启动；`owner_session` / 意图声明 / argv 都**必须显式给**，
   ⛔ 不沿用「省略就默认放行」的旧行为。
 * **I7** 结束、失败、停跑、替代都记真实原因与退出码；文档失败单独记一条事件，不改退出码、不阻止停机。
+* **R395（记录）** 只读闸全过才产出**预检记录**（`kind="preflight"`、`launched=false`），实际起跑才产出
+  **启动记录**（`kind="launch"`、带 `run_id`）。两者都绑定冻结计划 sha256 + 实际 argv + UTC 时间 +
+  本次 gates；构造函数拒收任何 `ok=False` 的检查 ⇒ 「绕过起跑路径」在事后有可核记录，而预检不冒充已启动。
+* **R394（判据）** 门槛不得被对照读数满足 —— 由 `governance.validate_plan()` 统一判（显式
+  `gate`/`control` 或显式 confirmatory 才新增义务），⛔ 本层不另写一套判据。
 
 边界（⛔ 不要读大）
 ==================
@@ -100,6 +115,10 @@
     wf_finishes      结束记录（原因 + exitcode + 文档状态；一个 run 一条）
     wf_reviews       复盘记录（verdict / branch / next_action / 证据）
     wf_events        生命周期事件流（prepared / launched / finished / documentation_failed / reviewed）
+
+⚠️ 预检记录**不落表**：`check()` 只读，返回内存里的 `preflight_record`；要留文件用
+`workflow_cli preflight --record-out <工作区内相对路径>`（同样只在全过时写）。启动记录的真身就是
+`wf_runs` 那一行（plan_sha256 + argv_json + started_at），返回值里的 `launch_record` 是它的投影。
 
 注入点（测试与宿主接线）
 ========================
@@ -389,6 +408,98 @@ def _iso(timestamp):
         return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(float(timestamp)))
     except (TypeError, ValueError, OSError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# 起跑 / 预检记录（R395）：只在全部当前必需检查通过时产生
+# ---------------------------------------------------------------------------
+
+#: 预检记录：只读闸全过后产出。⛔ 带它就说明**没有启动**任何东西。
+RECORD_PREFLIGHT = "preflight"
+#: 实际起跑记录：本地子进程已在事务里占用 run、或受管远端已登记 run 之后才产出。
+RECORD_LAUNCH = "launch"
+RECORD_KINDS = (RECORD_PREFLIGHT, RECORD_LAUNCH)
+
+
+def _gate_failures(gates):
+    """列出显式判为不通过的检查项：`ok` 为 False 或带非空 `failures`。"""
+    failed = []
+    for name, item in (gates or {}).items():
+        if not isinstance(item, dict):
+            continue
+        if item.get("ok") is False or item.get("failures"):
+            failed.append(str(name))
+    return failed
+
+
+def _sha256_text(value):
+    return isinstance(value, str) and len(value) == 64 \
+        and all(char in "0123456789abcdef" for char in value)
+
+
+def launch_record(*, kind, plan_id, plan_sha256, argv, gates, recorded_at,
+                  plan_version=None, plan_file_sha256=None, run_id=None, extra=None):
+    """R395：起跑 / 预检记录 —— 绑定计划内容、实际 argv、UTC 时间与本次结果。
+
+    三条硬约束写在构造函数里（⛔ 不放宽）：
+
+    * **只在全部当前必需检查通过时产生**：`gates` 里任何一项显式 `ok=False` 或带
+      `failures` 就抛 `ValueError`，避免「记录写了但闸没全过」；
+    * **`kind="preflight"` 不许带 `run_id`**：预检通过不等于已启动（没有子进程、没有远端请求），
+      记录里 `launched` 恒为 False；
+    * **`kind="launch"` 必须带 `run_id`**：run 记录是唯一能证明「这一轮真的起跑了」的落点。
+
+    记录本身不写盘：本地/远端主链把 `kind="launch"` 绑定在已有 `wf_runs` 行上（plan_sha256 +
+    argv + started_at 已落库），`workflow_cli preflight` 才按 `--record-out` 落文件。
+    """
+    if kind not in RECORD_KINDS:
+        raise ValueError(f"记录类型只能是 {' / '.join(RECORD_KINDS)}，实际 {kind!r}")
+    if not _filled(plan_id):
+        raise ValueError("记录必须绑定计划 id（plan_id）")
+    if not _sha256_text(plan_sha256):
+        raise ValueError("记录必须绑定冻结计划内容的 sha256（64 位小写十六进制）")
+    if plan_file_sha256 is not None and not _sha256_text(plan_file_sha256):
+        raise ValueError("plan_file_sha256 若给必须是 64 位小写十六进制（计划文件的字节哈希）")
+    if not isinstance(argv, (list, tuple)) or not argv \
+            or any(not isinstance(item, str) or not item.strip() for item in argv):
+        raise ValueError("记录必须绑定实际 argv（非空字符串数组）：⛔ 不接受近似命令或空 argv")
+    if not isinstance(gates, dict) or not gates:
+        raise ValueError("记录必须绑定本次检查结果（gates 不能为空）")
+    failed = _gate_failures(gates)
+    if failed:
+        raise ValueError(f"检查未通过：{'、'.join(failed)} ⇒ 不能产生记录")
+    recorded = _iso(recorded_at)
+    if recorded is None:
+        raise ValueError("记录必须带 UTC 时间：recorded_at 不是有限时间戳")
+    if kind == RECORD_PREFLIGHT and run_id is not None:
+        raise ValueError("预检记录不许带 run_id：预检不冒充实际已启动（launched=false）")
+    if kind == RECORD_LAUNCH and not _filled(run_id):
+        raise ValueError("启动记录必须带 run_id：没有 run 记录就不能声称这一轮已启动")
+
+    record = {
+        "kind": kind,
+        "launched": kind == RECORD_LAUNCH,
+        "verdict": "pass",
+        "plan": {"plan_id": str(plan_id), "version": plan_version, "sha256": plan_sha256,
+                 "file_sha256": plan_file_sha256},
+        "argv": [str(item) for item in argv],
+        "recorded_at_utc": recorded,
+        "gates": _jsonable(gates),
+    }
+    if run_id is not None:
+        record["run_id"] = str(run_id)
+    if extra:
+        # ⛔ 调用方的附加字段不许覆盖上面的绑定值（不能自报 kind / launched / verdict / gates）。
+        reserved = {"kind", "launched", "verdict", "plan", "argv", "recorded_at_utc",
+                    "gates", "run_id", "note"}
+        conflicts = sorted(reserved & set(extra))
+        if conflicts:
+            raise ValueError(f"记录字段不许覆盖绑定值：{conflicts}")
+        record.update(_jsonable(dict(extra)))
+    if kind == RECORD_PREFLIGHT:
+        record["note"] = ("预检通过：没有启动任何子进程 / 没有发出任何远端请求；"
+                          "它不等于已启动，也不签发执行授权")
+    return record
 
 
 def default_runner(argv, cwd, env, timeout=None):
@@ -1510,7 +1621,12 @@ class Workflow:
         return out
 
     def check(self, *, topic, plan, owner_session, argv, intent_id=None, intent_none=False):
-        """只读起跑检查（start-check）。返回 {ok, problems, checks}；⛔ 不写盘、不起进程。"""
+        """只读起跑检查（start-check）。返回 {ok, problems, checks}；⛔ 不写盘、不起进程。
+
+        **全过才有 `preflight_record`**（R395）：它是绑定「冻结计划 sha256 + 实际 argv + UTC 时间 +
+        本次检查结果」的记录，`kind="preflight"`、`launched=False` —— 预检不冒充实际已启动。
+        任一关不过时该字段为 `None`：⛔ 没有记录，也不给任何可起跑命令。
+        """
         with self._with_conn():
             result = self._gate(topic=topic, plan=plan, owner_session=owner_session, argv=argv,
                                 intent_id=intent_id, intent_none=intent_none, action="launch")
@@ -1518,7 +1634,25 @@ class Workflow:
         result.pop("implementation", None)
         result.pop("argv_variants", None)
         result["action"] = "check"
+        result["preflight_record"] = self._preflight_record(result) if result.get("ok") else None
         return result
+
+    def _preflight_record(self, gate):
+        """从一次**全过**的只读闸构造预检记录；⛔ 不写盘、⛔ 不起进程（只读入口共用）。"""
+        preparation = gate.get("preparation")
+        preparation = preparation if isinstance(preparation, dict) else {}
+        checks = gate.get("checks") or {}
+        plan_check = checks.get("plan") if isinstance(checks.get("plan"), dict) else {}
+        plan_file = checks.get("plan_file") if isinstance(checks.get("plan_file"), dict) else {}
+        return launch_record(
+            kind=RECORD_PREFLIGHT,
+            plan_id=gate.get("plan_id"),
+            plan_version=preparation.get("plan_version", plan_check.get("version")),
+            plan_sha256=preparation.get("plan_sha256"),
+            plan_file_sha256=plan_file.get("sha256"),
+            argv=gate.get("actual_argv"),
+            gates=checks,
+            recorded_at=self._now())
 
     # -- 写事务内的只读启动复核（本地 start 与受管远端 claim/send 共用） --------
 
@@ -1692,6 +1826,18 @@ class Workflow:
                                  "monitor_gate": "unwired" if gates.get("monitor", {}).get("unwired") else "wired"},
                         actor=actor)
 
+        # R395：run 记录已在事务里提交 ⇒ 这才是「真的起跑了」。记录绑定冻结计划、实际 argv、
+        # UTC 时间与本次检查结果；⛔ 闸没全过时走不到这里（`_gate` 已经抛了）。
+        launch = launch_record(
+            kind=RECORD_LAUNCH, plan_id=plan_id, plan_version=preparation["plan_version"],
+            plan_sha256=preparation["plan_sha256"],
+            plan_file_sha256=(gates.get("plan_file") or {}).get("sha256"),
+            argv=argv_actual, gates=gates, recorded_at=self._now(), run_id=run_id,
+            extra={"prepared_id": preparation["prepared_id"],
+                   "execution_scope": target.get("execution_scope", "local"),
+                   "cwd": execution_cwd,
+                   "remote_stop_verified": bool(target.get("remote_stop_verified"))})
+
         start_sync = self._lifecycle_call(
             "sync", "sync",
             {"topic": topic, "plan_id": plan_id, "prepared_id": preparation["prepared_id"],
@@ -1721,7 +1867,8 @@ class Workflow:
                     "plan_id": plan_id, "topic": topic, "argv": argv_actual,
                     "exitcode": None, "reason": recorded["reason"], "finished": True,
                     "timed_out": True, "timeout_seconds": timeout_seconds,
-                    "report_pending": True, 'execution': execution}
+                    "report_pending": True, 'execution': execution,
+                    "launch_record": launch}
         except KeyboardInterrupt:
             self._record_finish(run_id, exitcode=130, reason="interrupted", signal="SIGINT",
                                 documentation={"status": "skipped", "detail": "安全停：用户中断"},
@@ -1740,7 +1887,8 @@ class Workflow:
 
         result = {"ok": True, "run_id": run_id, "prepared_id": preparation["prepared_id"],
                   "plan_id": plan_id, "topic": topic, "argv": argv_actual, "exitcode": exitcode,
-                  'execution': execution, 'lifecycle_start': start_sync}
+                  'execution': execution, 'lifecycle_start': start_sync,
+                  "launch_record": launch}
         if finish:
             recorded = self._record_finish(run_id, exitcode=exitcode,
                                            reason=_reason_from_exit(exitcode), signal=_signal(exitcode),

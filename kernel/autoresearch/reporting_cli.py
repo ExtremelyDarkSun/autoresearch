@@ -1,10 +1,11 @@
 # GENERATED-BY: portable reporting migration, 2026-11-09 +08:00
-# LAST-EDIT: 2026-11-09 +08:00（ack 接真实宿主验证器）
-# PURPOSE: reporting 的命令行入口 —— 供料、只读检查、验收回执、运行/整轮事件、整轮交付检查、只读诊断与流程状态投影。
+# LAST-EDIT: 2026-11-13 加 handoff（只读接料检查，复用既有 blocker；不写文件、不另建台账）
+# PURPOSE: reporting 的命令行入口 —— 供料、只读检查、接料检查、验收回执、运行/整轮事件、整轮交付检查、只读诊断与流程状态投影。
 # ORIGIN: 上游供料与交付工具的 CLI 形态（同一工具多模式、JSON 输出、退出码区分「检查未过」与「参数错误」）。
 # CUMULATIVE-DELTA: 2026-11-09 ack 接真实宿主：显式 --proof-json + --owner-session 时用
 #         `DSHHost(workspace=工作区)` 核验（证据根只用宿主默认，⛔ CLI 不提供自选根）；
 #         不给 proof 时仍是 declared 自述。六个主命令参数全部带 help，另加 input / fail / status / process-status。
+#         2026-11-13 加 handoff：只读打印负责人判断是否齐（缺项返回负责人），退出码 9 = 缺项待返核。
 
 """reporting 命令行。
 
@@ -65,7 +66,7 @@ def build_parser():
                              '.autoresearch/workspace-layout.json 决定，无标记时是 topics/<专题>），'
                              '机器供料/回执在 <工作区>/.autoresearch/state/reporting/<专题>/')
     subparsers = parser.add_subparsers(dest='command', required=True,
-                                       metavar='{prepare,check,ack,event,round-check,diagnose,input,fail,status,process-status}')
+                                       metavar='{prepare,check,handoff,ack,event,round-check,diagnose,input,fail,status,process-status}')
 
     preparer = subparsers.add_parser(
         'prepare', help='生成完整供料包（来源清单 + 全文 + 旧页全文 + 缺项补读），并登记来源快照')
@@ -82,6 +83,10 @@ def build_parser():
     checker.add_argument('--topic', required=True, help='专题名')
     checker.add_argument('--required', action='store_true',
                          help='要求必须已有有效回执；不接受「历史页未接入」豁免（整轮交付用）')
+
+    handoff = subparsers.add_parser(
+        'handoff', help='只读接料检查：负责人判断是否齐（缺项返回负责人；⛔ 不代选下一轮）')
+    handoff.add_argument('--topic', required=True, help='专题名')
 
     ack = subparsers.add_parser('ack', help='验收 scribe 写的研究正文并写回执（角色必须是 scribe）')
     ack.add_argument('--topic', required=True, help='专题名')
@@ -178,6 +183,9 @@ def main(argv=None):
             return _emit(result, 0)
         if args.command == 'check':
             result = reporting.check(workspace, args.topic, required=args.required)
+            return _emit(result, 0 if result.get('ok') else 9)
+        if args.command == 'handoff':
+            result = reporting.handoff_check(workspace, args.topic)
             return _emit(result, 0 if result.get('ok') else 9)
         if args.command == 'ack':
             report = args.report

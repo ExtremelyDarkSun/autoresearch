@@ -1,10 +1,10 @@
 # GENERATED-BY: 完整功能迁移（持续推进 A1–A7 / 远端进度 H1–H9 / 入向超期 D2 / 迭代节奏 §0.6）
-# LAST-EDIT: 2026-11-09（可信D2 + 本地/远端预检与assurance组合 + 显式阶段排序；远端检查器缺失不降级）
+# LAST-EDIT: 2026-11-13（goal 与补足器并用：真实事件通知不被goal覆盖状态抑制）
 # PURPOSE: 通用进度探针与受管推进器 —— 把「外部有没有新东西」变成可声明、可定位、fail-closed 的观测，
 #          并在该叫醒负责人时叫一次、退出、留 needs_rearm 与结构化判词；不内置任何比赛、机器或结论。
 # ORIGIN: 上游单文件推进器（963 行）与通用进度探针（478 行）的机制；契约见 kernel/contracts/context_budget.md §4；
 #         行为预期 A1–A7 / D2 / H1–H9 见 kernel/contracts/framework_expectations.md。
-# CUMULATIVE-DELTA: 2026-11-09 默认关闭监控时接受无意图声明，不伪造none状态； 首版。与上游的刻意差异：① 命令探针不用管道采集，stdout/stderr 直接落到私有工作区的
+# CUMULATIVE-DELTA: 2026-11-13 外部变化先通知负责人，goal继续主导执行，不因coverage未知漏事件。 2026-11-09 默认关闭监控时接受无意图声明，不伪造none状态； 首版。与上游的刻意差异：① 命令探针不用管道采集，stdout/stderr 直接落到私有工作区的
 #          文件句柄（不截断），回传路径 + sha256，原文同时进事件账；② 采集失败 fail-closed，连续三次形成
 #          progress_unavailable 事件，单次失败也不许当成「没有变化」；③ goal 为主来源，外部推进器只在
 #          goal 覆盖状态**确切**为空位时补足，未知/部分覆盖一律不可判、不许假绿；④ 入向超期由一个可注入
@@ -23,7 +23,7 @@
 这个模块补的是「等待」那一格
 =============================
 
-宿主 goal 负责持续推进（H1）。它停下来的时段需要有人看见「外部到底有没有新东西」，
+宿主 goal 负责持续推进（H1）。外部推进器同时监听「外部到底有没有新东西」，
 并在该叫醒负责人时叫一次（A1–A4）。它**不认识**题目、分数、通过数、机器名或 SSH 主机 ——
 这些全部来自调用方写的 spec；内核只认识两件通用的事：**采集**与**相邻两次观测的差**
 （H5）。
@@ -108,10 +108,10 @@ spec（声明式操作；内核不写死任何地址与路径）
 1. **用户超期未回复**（可注入 `overdue` 回调）⇒ 唤醒，且**不看**静默窗口、**不被** goal 抑制。
    回调抛错 ⇒ 不可判，⛔ 不许假装「没有超期」。
 2. **采集失败** ⇒ 唤醒（带原始失败原因；第三次起带 `progress_unavailable`）。
-3. **goal 状态未知 / 覆盖状态不是「确切的满 / 确切的空」** ⇒ 不可判（`undecidable`），
+3. **有变化事件** ⇒ 唤醒并交付原始变化，不重复起跑。通知不依赖 goal 覆盖判定。
+4. **goal 状态未知 / 覆盖状态不是「确切的满 / 确切的空」** ⇒ 不可判（`undecidable`），
    ⛔ 不返回假绿；status 的 `ok=false` 并列出阻塞项。
-4. **goal 是 active 且确切全覆盖** ⇒ 静默（外部推进器**不重复推进**，H2）。
-5. **有变化事件** ⇒ 唤醒（载荷写清「变了什么」：原始字段、前后值、前后 hash）。
+5. **goal 是 active 且确切全覆盖** ⇒ 静默（外部推进器**不重复推进**，H2）。
 6. **无可走变化且静默窗口到点** ⇒ 唤醒（A4：把原始状态与「为什么现在叫」一起给出来）。
 7. 其余 ⇒ 继续等待。
 
@@ -2654,6 +2654,17 @@ class Progress:
                                "failure_streak": probe.get("failure_streak"),
                                "locator": probe.get("failure_locator"),
                                "failures": probe.get("failures")})
+        elif probe.get("changes") or pending_changes:
+            verdict = "wake"
+            changes = list(probe.get("changes") or [])
+            locator = probe.get("change_locator")
+            for event in pending_changes:
+                changes.extend(event["payload"].get("changes") or [])
+                locator = event["locator"]
+            summary = ", ".join(f"{item['key']}:{item['op']}" for item in changes[:8])
+            reason = (f"外部进度有变化（{len(changes)} 条：{summary}）⇒ 唤醒负责人看变化；"
+                      "载荷带原始字段、前后值与前后 hash")
+            causes.append({"kind": "progress_change", "changes": changes, "locator": locator})
         elif not goal_state["known"]:
             verdict = "undecidable"
             if goal_state["coverage"] == "partial":
@@ -2667,19 +2678,8 @@ class Progress:
         elif goal_state["state"] == "active" and goal_state["coverage"] == "full":
             verdict = "sleep"
             reason = ("goal 主导且确切全覆盖 ⇒ 外部推进器不重复推进（H2）；"
-                      "本轮的变化事件已落账，由 goal 那一侧处理")
+                      "当前没有待交付变化事件，由 goal 那一侧推进")
             causes.append({"kind": "goal_covers", "goal": goal_state})
-        elif probe.get("changes") or pending_changes:
-            verdict = "wake"
-            changes = list(probe.get("changes") or [])
-            locator = probe.get("change_locator")
-            for event in pending_changes:
-                changes.extend(event["payload"].get("changes") or [])
-                locator = event["locator"]
-            summary = ", ".join(f"{item['key']}:{item['op']}" for item in changes[:8])
-            reason = (f"外部进度有变化（{len(changes)} 条：{summary}）⇒ 唤醒负责人看变化；"
-                      "载荷带原始字段、前后值与前后 hash")
-            causes.append({"kind": "progress_change", "changes": changes, "locator": locator})
         elif age is None or age >= quiet["effective_sec"]:
             verdict = "wake"
             reason = (f"可推进却没人动它：距上一次真实动静 "
@@ -2735,7 +2735,7 @@ class Progress:
         if "quiet_window" in kinds:
             steps.append("照下一步动作推进；做完记录 outcome（advance / nothing / problem）")
         if "goal_covers" in kinds:
-            steps.append("什么都不用做：goal 那一侧在推进；等它停或覆盖状态变化")
+            steps.append("继续监听外部事件；当前无新事件，由 goal 那一侧推进")
         if not steps:
             steps.append("继续等待；若确认无事可做，记录 outcome nothing 并写下下次判定条件")
         steps.append("任何唤醒都会被记成 needs_rearm：处理完必须显式 rearm 再挂回（A6）")

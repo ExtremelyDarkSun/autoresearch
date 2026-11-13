@@ -1,5 +1,5 @@
 # GENERATED-BY: managed remote execution wiring, 2026-11-09
-# LAST-EDIT: 2026-11-09 18:40 `_readonly_conn` 只读连接委托 runtime.store.ReadonlyStore
+# LAST-EDIT: 2026-11-13 19:10 R395 预检 / 起跑记录（与本地 `workflow.launch_record()` 同源，远端不另建一套）
 # PURPOSE: 受管远端执行的可复用接线：部署配置只读校验 → 统一工作流闸（准备 / 审计 / 监控 / 执行准入）
 #          → Runtime 预算预留与调度器资源租约 → SSHAdapter 提交 → 只认 worker 明确终态且核过 request token
 #          才登记结束；query 不可判时保留预算与资源，⛔ 不假 finish、⛔ 不用本地超时冒充远端停机。
@@ -8,6 +8,9 @@
 # CUMULATIVE-DELTA: 首版。三条硬边界：① 缺部署 / 所有权 / 预算 / 资源租约 / 当前审计监控一律不提交；
 #          ② 实际 argv 与冻结计划逐项绑定（再进 RunSpec.execution_config.argv，worker 无 shell 执行）；
 #          ③ 终态只能来自远端 worker 记录并用 cancel 探针核 request token，query unknown 时保留租约与预留。
+#          2026-11-13 R395：只读 `check()` 全过时返回 `preflight_record`（`kind=preflight`、`launched=false`），
+#          claim 事务里 run 落库后返回 `launch_record`（`kind=launch`、带 run_id）；两者都复用
+#          `workflow.launch_record()`，⛔ 远端不另写一种记录形状，也⛔ 不在预检里冒充已启动。
 #          2026-11-09 只读零副作用：`_readonly_conn` 不再拼裸 `?mode=ro`，委托 `ReadonlyStore`
 #          （WAL 读不创建 -shm/-wal）；缺库仍是原来的 RemoteWorkflowError(code=2)。
 #          2026-11-09 专题主文档模式默认交给统一 Workflow 按 `.autoresearch/workspace-layout.json`
@@ -28,6 +31,9 @@
       → 紧邻 send 前再复核一次（同一写事务）→ SSHAdapter.submit
       → query / cancel 只认 worker 状态文件里的明确终态，并用 cancel 的 --token 探针核 request token
       → 明确终态才 `Workflow.finish` 登记结束；query 不可判就保留预算与资源，⛔ 不写结束记录
+
+    记录（R395）：`check` 全过 ⇒ preflight 记录（kind=preflight · launched=false · 无 run_id）；
+                  claim 里 run 真的落库之后 ⇒ launch 记录（kind=launch · launched=true · 带 run_id）。
 
 判据（不是「跑通就行」）
 ========================
@@ -136,7 +142,13 @@ from kernel.autoresearch.runtime.store import (  # noqa: E402
     canonical_json,
 )
 from kernel.autoresearch.runtime.service import BUDGET_SCOPES, Runtime  # noqa: E402
-from kernel.autoresearch.workflow import Workflow, WorkflowError  # noqa: E402
+from kernel.autoresearch.workflow import (  # noqa: E402
+    RECORD_LAUNCH,
+    RECORD_PREFLIGHT,
+    Workflow,
+    WorkflowError,
+    launch_record,
+)
 
 __all__ = (
     "DEPLOYMENT_REL",
@@ -1080,6 +1092,34 @@ class RemoteWorkflow:
         out["problems"] = list(dict.fromkeys(problems))
         out["ok"] = not out["problems"]
         out["code"] = 0 if out["ok"] else 9
+        out["preflight_record"] = None
+        if out["ok"] and out["plan_id"] and out["argv"]:
+            # R395：预检记录与本地同源（同一 `launch_record` 构造函数），只在**全部检查通过**时产生。
+            # 远端额外把部署 / 预览 run spec 的结论一起绑进 gates；`launched` 恒为 False。
+            preflight_gates = dict(out["checks"] or {})
+            preflight_gates["remote"] = {
+                "ok": True,
+                "deployment": (deployment.as_public() if deployment is not None else None),
+                "request_key": out.get("request_key"), "run_spec": out.get("run_spec"),
+                "budget": out.get("budget"), "worker": out.get("worker"),
+                "execution_scope": "remote", "stage": "preview",
+                "note": "只读预检：没有发出任何远端请求，也没有占用资源租约",
+            }
+            try:
+                out["preflight_record"] = launch_record(
+                    kind=RECORD_PREFLIGHT, plan_id=out["plan_id"],
+                    plan_version=(preparation or {}).get("plan_version"),
+                    plan_sha256=(preparation or {}).get("plan_sha256"),
+                    plan_file_sha256=((out["checks"].get("plan_file") or {}).get("sha256")),
+                    argv=out["argv"], gates=preflight_gates, recorded_at=self.workflow._now(),
+                    extra={"execution_scope": "remote",
+                           "deployment_id": (deployment.deployment_id if deployment else None)})
+            except ValueError as exc:
+                # 记录构造失败不是「通过」：把它变成一条拒绝，⛔ 不静默吞掉。
+                out["ok"] = False
+                out["code"] = 9
+                out["problems"].append(f"预检记录不可构造：{exc}")
+                out["preflight_record"] = None
         return out
 
     def _budget_view(self, plan, exp_id):
@@ -1193,7 +1233,7 @@ class RemoteWorkflow:
                 raise RemoteWorkflowError(f"拒绝排队（没有发出任何远端请求）：{exc}", [str(exc)],
                                           code=9) from None
             try:
-                run_id, lifecycle_sync = self._claim_run(
+                run_id, lifecycle_sync, launch = self._claim_run(
                     gate=gate, preparation=preparation, frozen=frozen,
                     topic=topic, exp_id=exp_id, owner_session=owner_session,
                     argv=actual, deployment=deployment,
@@ -1214,6 +1254,7 @@ class RemoteWorkflow:
                   "submitted": False, "finished": False,
                   "authorization_scope": scope, "lifecycle_sync": lifecycle_sync,
                   "fixture_gates": self._fixture_gates(), "reservation": reservation,
+                  "launch_record": launch,
                   "lease": {"task_id": task["id"], "token": claim["token"],
                             "resources": list(claim["resources"]),
                             "lease_until": claim["lease_until"]},
@@ -1455,6 +1496,19 @@ class RemoteWorkflow:
                      "fixture_gates": self._fixture_gates(),
                      "note": "受管远端：终态只能来自 worker 记录 + cancel token 探针"})),
                  actor, self._now()))
+            # R395：run 记录在同一事务里提交 ⇒ 这才是「真的起跑了」。记录与本地 `start()` 同源，
+            # 绑定计划 sha256 / 实际 argv / UTC 时间 / 本次 gates（含 remote 段）。
+            record = launch_record(
+                kind=RECORD_LAUNCH, plan_id=exp_id,
+                plan_version=preparation["plan_version"],
+                plan_sha256=preparation["plan_sha256"],
+                plan_file_sha256=(gate.get("checks", {}).get("plan_file") or {}).get("sha256"),
+                argv=argv, gates=gates, recorded_at=self._now(), run_id=run_id,
+                extra={"prepared_id": preparation["prepared_id"],
+                       "execution_scope": "remote", "remote_stop_verified": False,
+                       "cwd": remote_block(frozen)["unit_root"],
+                       "deployment_id": deployment.deployment_id,
+                       "request_key": request_key, "attempt_id": attempt_id})
         # 起跑投影：与 `workflow.start()` 同形 —— run 落库提交后立刻 sync 一次，
         # 让「running 事件 / AI_WORK / 起跑收据」在远端还跑着的时候就反映出来，而不是等终态。
         # ⚠️ 只是投影：`_lifecycle_call` 永不抛；失败只写 `lifecycle_error` 诊断，
@@ -1464,7 +1518,7 @@ class RemoteWorkflow:
             {"topic": topic, "plan_id": exp_id, "prepared_id": preparation["prepared_id"],
              "run_id": run_id, "stage": "start"},
             topic, plan_id=exp_id)
-        return run_id, lifecycle_sync
+        return run_id, lifecycle_sync, record
 
     def _record_launch_error(self, run_id, topic, detail, actor):
         try:

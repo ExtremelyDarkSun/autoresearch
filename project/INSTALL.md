@@ -1,9 +1,11 @@
 <!--
 GENERATED-BY: portable recovery integration, 2026-11-09 +08:00
-LAST-EDIT: 2026-11-09 +08:00
+LAST-EDIT: 2026-11-13 +08:00（§1 目录树补 WAITING.md 与 MECHANISMS.md 安装落点）
 PURPOSE: 新电脑部署固定结构及恢复现有实现的操作入口。
 ORIGIN: maintained installation structure and verified public CLI interfaces
 CUMULATIVE-DELTA: 区分新项目初始化和旧实现恢复，补实际参数生成、私有恢复包、逐项验收。
+  2026-11-13 目录树写明 AutoDL实验/实验分析/ 下两份跨专题文档：WAITING.md（挂起事项唯一落点）与
+  MECHANISMS.md（跨专题机制清单）；都随模板安装、进安装回执，不放在任何专题目录里。
 -->
 # 安装与恢复
 
@@ -59,6 +61,8 @@ my-research/
 │  │  ├─ 历史/               已写完的独立记录
 │  │  └─ environments/       工具按需创建的专题环境
 │  ├─ 实验分析/
+│  │  ├─ WAITING.md           挂起事项的唯一落点（等审批 / 等读数 / 等机器）
+│  │  ├─ MECHANISMS.md        跨专题机制清单（过程指标 / 适用边界 / 结论与证据）
 │  │  ├─ topics/             专题主文档、证据、研究页和快照
 │  │  ├─ worktrees/          工具按需创建的代码副本
 │  │  └─ results/            原始运行产物

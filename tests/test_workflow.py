@@ -1,9 +1,11 @@
 # GENERATED-BY: research execution main chain migration, 2026-11-09
-# LAST-EDIT: 2026-11-09 首版：J1–J6 / K1 起跑检查 / I7 的集成测试（真实子进程 marker）
+# LAST-EDIT: 2026-11-13 计划夹具显式确认性补 `criteria.gate` / `.control`（R394 门槛可分辨性）
 # PURPOSE: 证明主链的三件事 —— ① 任何拒绝路径都不会启动子进程；② 通过后真的启动并保留退出码；
 #          ③ 来源变更 / touch / 前轮未复盘 / 事后补造 / 并发重复启动都被拦住（含数据库层）。
 # ORIGIN: 合成临时工作区夹具；⛔ 不含任何真实实验、机器、读数、渠道或比赛信息。
 # CUMULATIVE-DELTA: 首版。宿主核验器与监控检查在本文件内是可验证夹具（不是生产实现）。
+#   2026-11-13：确认性计划夹具补机器可读门槛与对照读数（gate 3/6 ge · control 1/6 + source）；
+#   `governance.validate_plan()` 对显式 confirmatory 现在要求这两项，夹具按真实计划形状写。
 
 """研究执行主链的集成测试。
 
@@ -213,7 +215,10 @@ class FlowCase(unittest.TestCase):
             "criteria": criteria or {
                 "mode": "confirmatory", "metric": "通过题数", "direction": "increase",
                 "threshold": 1, "source": "evidence/readings.md 上一轮逐题读数",
-                "rationale": "上一轮只差 1 题，门槛取 1"},
+                "rationale": "上一轮只差 1 题，门槛取 1",
+                # R394：显式 confirmatory 必须同时给机器可读的门槛与对照读数（门槛要更严）。
+                "gate": {"k": 3, "n": 6, "direction": "ge"},
+                "control": {"k": 1, "n": 6, "source": "上一轮同 6 题基线实测 1/6"}},
             "baseline": {"label": "上一轮冻结包", "fingerprint": "sha256:deadbeef"},
             "case_sets": {"target": ["t1", "t2"], "regression": ["r1", "r2"], "control": ["c1"]},
             "previous_passes": ["r1"],

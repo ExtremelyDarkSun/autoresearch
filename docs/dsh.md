@@ -1,15 +1,15 @@
 <!--
 GENERATED-BY: portable extraction (agent, 2026-11-09 01:20 +08:00)
-LAST-EDIT: portable extraction (agent, 2026-11-09 01:20 +08:00)
-PURPOSE: DSH 宿主侧三套插件 + 加载配置生成器 + 定时任务脚本的说明：版本能力契约、装载、三层验收、回滚、缺口
+LAST-EDIT: 2026-11-13（当前框架同步）
+PURPOSE: DSH 宿主侧五套插件 + 加载配置生成器 + 定时任务脚本的说明：版本能力契约、装载、三层验收、回滚、缺口
 ORIGIN: install/agent-instruction-filter/* · install/dsh-doc-gap/* · install/autodl-events/* · INSTALL.md 的装法与验收口径
         （重写为通用说明；实例路径、会话数量、机器名与历史读数全部剥离）
-CUMULATIVE-DELTA: 首版。⛔ 不含任何本机绝对路径、项目名、会话 ID 与历史结论；
-  明确「文件在磁盘上 ≠ 已加载」「HMR 不保证旧会话切换」两条验收纪律。三套插件的**出厂默认**是「不启用 / 不注册 / hold」；
+CUMULATIVE-DELTA: 2026-11-13 接入观察者、补足推进器与当前读取导航。 首版。⛔ 不含任何本机绝对路径、项目名、会话 ID 与历史结论；
+  明确「文件在磁盘上 ≠ 已加载」「HMR 不保证旧会话切换」两条验收纪律。五套插件的**出厂默认**是「不启用 / 不注册 / hold」；
 生成器会**照抄**部署参数里的值 —— 抄成 `enabled: true` 也只表示「配置这么写」，⛔ 不等于已加载、更不等于目标会话已用到。
 -->
 
-# DSH 宿主侧：三套插件与加载工具
+# DSH 宿主侧：五套插件与加载工具
 
 > 本文件说明**这一套东西怎么装、怎么验、怎么退**，以及它依赖 DSH 的哪些能力。
 > ⛔ **本次交付没有在运行宿主上安装、启用或重启任何插件。** 所有插件都在 `kernel/hosts/dsh/plugins/` 里，
@@ -17,17 +17,19 @@ CUMULATIVE-DELTA: 首版。⛔ 不含任何本机绝对路径、项目名、会�
 
 ---
 
-## 1. 三套插件（全部随内核交付，启用与否由部署配置决定）
+## 1. 五套插件（全部随内核交付，启用与否由部署配置决定）
 
 | 插件 | 做什么 | 出厂默认 | 关键配置 |
 |---|---|---|---|
 | `agent-instruction-filter` | 对**子 agent** 的指令注入按**显式策略**裁剪（默认不裁） | `mode: off`（不注册监听器）+ 策略 `rules: []`（全 keep） | `mode` / `childOnly` / `policyPath` / `onError` |
 | `dsh-doc-gap` | 回合结束时判一次「这个提问指向的点，判据文档说了没有」，没说清就提示 | `enabled: false`（不注册 ⇒ 无模型调用） | `docs` / `maxDocChars` / `policy`（范围+判据+锚点）/ `judge` |
 | `autodl-events` | 轮询事件队列，把「机器从开不了变成能开」的事件投给**绑定的那个**会话 | `fallback: hold` + `maxTargets: 1` + 无内置项目路径 | `eventDir` / `targetsFile` / `logFile` / `delivery` / `projects` |
+| `goal-observer` | 为前缀匹配的原生goal生成后续自动轮指令，失败继续、完成核宿主接受 | `enabled:false`，通知关闭；Node20.3+ | `objectivePrefix` / `provider` / `model` / `timeoutMs` / `maxTokens` / `notification` |
+| `goal-observer-ui` | 按goal id、revision、round匹配并显示观察记录，不改原件 | Loader `disabled:true`；配置enabled不是浏览器开关 | Loader的`disabled` / 浏览器插件加载日志 |
 
 **默认都不联网、不查云机**：指令过滤与事件投递不发起任何网络请求；`dsh-doc-gap` 在**显式启用**后才可能调模型 ——
 `session` 后端复用本回合主模型（不新增端点），`openai` / `jev` 后端会向**部署方配置的 `baseURL`** 发 HTTP 请求。
-⇒ 启用 doc-gap 前先确认端点是你要的、预算也是你要的；未启用时它连监听器都不注册。
+`goal-observer`显式启用且匹配目标后也调用宿主LLM；UI仅显示已有记录，不调用模型。启用模型插件前核对端点与预算，配置生成成功不代表已加载。
 
 ### 1.1 「默认不漏应有规则」怎么保证
 
@@ -82,7 +84,7 @@ CUMULATIVE-DELTA: 首版。⛔ 不含任何本机绝对路径、项目名、会�
 | `ctx.llm.stream` / `llm` 服务 | doc-gap 的 `session` 后端 | 同上 |
 | `ctx.effect(disposer)` | 事件插件的定时器随插件卸载停止 | 卸载后不再投递 |
 | `session.seq` / `agent.status` | 事件插件挑目标时的排序键 | 回执 `pickSummary` |
-| 插件 `config` 按**键替换**（不保证递归深合并） | 三套插件的 config 都要写全或依赖插件内部默认 | 读宿主版本说明；本内核的插件内部都有默认合并 |
+| 插件 `config` 按**键替换**（不保证递归深合并） | 五套插件的 config 都要写全或依赖插件内部默认 | 读宿主版本说明；本内核的插件内部都有默认合并 |
 
 ### 2.1 关于「热加载」与「旧会话」
 
@@ -99,6 +101,8 @@ CUMULATIVE-DELTA: 首版。⛔ 不含任何本机绝对路径、项目名、会�
 本内核**不承诺**某个具体预算值；以宿主实际报告为准。
 
 ---
+
+观察者运行及显示插件的操作、异常、goal续接与补足推进器规则见[专门说明](<dsh-goal-observer.md>)。运行插件默认不启用，通知默认关闭。UI必须用Loader行的 `disabled` 控制，生成器已按部署输入的enabled转换，不能只写config.enabled。
 
 ## 3. 装载（人复核 + 安装器，⛔ 不手改 profile）
 
@@ -125,6 +129,7 @@ $node = (Get-Command node).Source   # 用部署机现有的 Node，⛔ 不复制
 | 插件形态 | 怎么装 | 说明 |
 |---|---|---|
 | `agent-instruction-filter` / `dsh-doc-gap`（bundle，有 `dsh.bundle.patch`） | 安装器的 `install_bundle`，`target` = 插件目录 | 由安装器改 profile；⛔ 不手改 `package.json` / `cordis.patch.yml` |
+| `goal-observer` / `goal-observer-ui`（bundle） | 安装器的 `install_bundle`，target为各插件目录；或从源码按包内说明重建 | 生成器中的enabled控制显式启用；UI输出行级disabled |
 | `autodl-events`（非 bundle） | 把生成器输出的 `- insert:` 段并入 patch（安装器的 apply/merge 入口） | 按绝对路径或包名挂载都行 |
 
 ⚠️ 安装动作本身需要授权/审批（各宿主权限模型不同，本内核不假设）。⚠️ 一次只加一段，别顺手整份重述预设
@@ -173,6 +178,8 @@ $node = (Get-Command node).Source   # 用部署机现有的 Node，⛔ 不复制
 & $node kernel\hosts\dsh\plugins\autodl-events\selftest-plugin.mjs
 ```
 
+也可直接运行 `python research.py selftest --plugins`，统一包含五个插件与UI消息测试。
+
 期望：每条都 `PASS: …` 且 exit 0。这些只证明**代码与接线**对，⛔ 不证明宿主已加载。
 
 ### 5.2 行为验证（过滤插件，真机才做）
@@ -213,7 +220,7 @@ $node = (Get-Command node).Source   # 用部署机现有的 Node，⛔ 不复制
 
 ## 7. 缺口与不承诺（⛔ 读之前别当成已验证）
 
-1. **本次没有在运行宿主上安装/加载/重启任何插件**：三套插件的「真机加载」与「目标会话实际使用」都**未验**。
+1. **本次没有在运行宿主上安装/加载/重启任何插件**：五套插件的「真机加载」与「目标会话实际使用」都**未验**。
 2. **过滤插件的真实接线未验**：离线假 ctx 只复现「谁在什么时候被调用」，不复现宿主的事件分发与 scope。
 3. **doc-gap 的真实回合未验**：它需要一次真实模型调用；本次只验了纯函数、接线与超限诊断。
 4. **事件插件的 `apply` 回执是「已加载」的间接证据**：它证明 `apply()` 跑过，⛔ 不证明目标会话收到。
@@ -225,6 +232,8 @@ $node = (Get-Command node).Source   # 用部署机现有的 Node，⛔ 不复制
 
 ---
 
+观察者的加载与使用证据须另查插件日志和相同目标的 `source.kind=goal-observer` 消息；UI查相同id/revision/round的显示。`check-loading.mjs`是原事件插件的助手，不能单独证明观察者或UI生效。
+
 ## 8. 目录
 
 | 路径 | 内容 |
@@ -232,6 +241,8 @@ $node = (Get-Command node).Source   # 用部署机现有的 Node，⛔ 不复制
 | `kernel/hosts/dsh/plugins/agent-instruction-filter/` | 过滤插件（实现 · 策略模板 · 两个自检 · 量具 · 真实文件关卡 · 两个 docs） |
 | `kernel/hosts/dsh/plugins/dsh-doc-gap/` | 文档遗漏插件（实现 · 政策模板 · 两个自检 · 两个量具） |
 | `kernel/hosts/dsh/plugins/autodl-events/` | 事件投递插件（实现 · 纯函数/接线自检 · 只读预览 · README） |
+| `kernel/hosts/dsh/plugins/goal-observer/` | goal观察、默认关闭通知、模拟宿主自检、可重建包 |
+| `kernel/hosts/dsh/plugins/goal-observer-ui/` | 观察消息显示、原件保留、三元组匹配测试、可重建包 |
 | `kernel/hosts/dsh/tools/gen-profile-patch.mjs` | 参数化加载配置生成器（只生成，不写 profile） |
 | `kernel/hosts/dsh/tools/schtasks.ps1` | 定时任务生成/预览/安装/卸载/查询（默认只预览与生成） |
 | `kernel/hosts/dsh/tools/check-loading.mjs` | 三层验收助手 |

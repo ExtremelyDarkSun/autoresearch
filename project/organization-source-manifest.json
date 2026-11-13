@@ -1,7 +1,7 @@
 {
   "format": 1,
   "purpose": "Neutral extraction provenance; hashes identify inspected source versions, not copied content or completeness certification.",
-  "inspected_at": "2026-11-11T21:00:00+08:00",
+  "inspected_at": "2026-11-13T19:30:51+08:00",
   "sources": [
     {
       "label": "根索引",
@@ -30,8 +30,8 @@
     },
     {
       "label": "框架分册",
-      "bytes": 28835,
-      "sha256": "7c99f413178d524e3ab9a55f705b87ac261f8aa0e167a14494fd6877feefcc0b"
+      "bytes": 29658,
+      "sha256": "947af915c3d467d1144ebbaca1ad8e23bce07c07c7b490eb914ac2364756548d"
     },
     {
       "label": "上下文加载",
@@ -49,5 +49,52 @@
     "private results",
     "old authorizations",
     "session and machine identities"
+  ],
+  "history": [
+    {
+      "inspected_at": "2026-11-11T21:00:00+08:00",
+      "sources": [
+        {
+          "label": "根索引",
+          "bytes": 41532,
+          "sha256": "ed3b1fb5938af48ed1e8a82b27792166b15c83a620f4d050685eed885ce1c850"
+        },
+        {
+          "label": "共同规则",
+          "bytes": 62890,
+          "sha256": "779f288a95312ef19d8d5a8741cee7440a853f4a704217ca443884223da1fe9d"
+        },
+        {
+          "label": "维护规则",
+          "bytes": 32336,
+          "sha256": "4b70760dbb9f7714465806896584c767649bd5ac6750e12a68f1e8011e35ed05"
+        },
+        {
+          "label": "平台分册",
+          "bytes": 24917,
+          "sha256": "1442bfc572f98729afa1bf9f404a4b2647a0d3416535b7bbe41f22e3393f9627"
+        },
+        {
+          "label": "实验分册",
+          "bytes": 40669,
+          "sha256": "d03c4f20eec6dde2c0fcdb3e101ac0def92f2089129d176e68fe6cb85a960848"
+        },
+        {
+          "label": "框架分册",
+          "bytes": 28835,
+          "sha256": "7c99f413178d524e3ab9a55f705b87ac261f8aa0e167a14494fd6877feefcc0b"
+        },
+        {
+          "label": "上下文加载",
+          "bytes": 19129,
+          "sha256": "9260d651bdf7fdb13ab898752230ff31272c5a4a1d8ba439a59726dc7ca26e4e"
+        },
+        {
+          "label": "实验活件与历史迁移维护记录",
+          "bytes": 7826,
+          "sha256": "35663e081b650ebb87cc235f6f1788cb8faa18513101223b9218deff2f9f02cd"
+        }
+      ]
+    }
   ]
 }

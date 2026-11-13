@@ -1,9 +1,11 @@
 <!--
 GENERATED-BY: operations manual migration, 2026-11-09
-LAST-EDIT: 2026-11-09 本批同步：补 review v2、issues exp、questions、assurance、progress preflight/next-round/schedule 与 D2 回复绑定；通用补项与真实部署分别标
+LAST-EDIT: 2026-11-13 补两处入口：`workspace documents --check`（专题直接层 DESIGN_* 只读判红）与 `reporting handoff`（只读接料检查）
 PURPOSE: 主入口操作说明 —— 工作区、专题隔离、预算准入、研究执行主链、人读页供料、意图监控、审批入向、通道、远端、进度推进器、问题台账、检查清单、提问
 ORIGIN: kernel/autoresearch/{workspace,budget,workflow,reporting,monitoring,decisions,channels,progress,progress_host,remote,issues,assurance,questions}_cli.py 的实际参数
-CUMULATIVE-DELTA: 2026-11-09 操作路径随中文布局标记适配，旧工作区不移动； 2026-11-09 固定分层项目模板与默认初始化，保留显式bundle兼容；2026-11-09 复核版。命令取自当前 `--help`；已验/待现网/在补分别写清，⛔ 不把待配置或在补写成已验。
+CUMULATIVE-DELTA: 2026-11-13 新增workflow preflight及当前完整材料测量，区分候选预检与起跑留证。 2026-11-09 操作路径随中文布局标记适配，旧工作区不移动； 2026-11-09 固定分层项目模板与默认初始化，保留显式bundle兼容；2026-11-09 复核版。命令取自当前 `--help`；已验/待现网/在补分别写清，⛔ 不把待配置或在补写成已验。
+  2026-11-13 §2 补 documents --check（等待簿规则的程序判据）；§5 补 reporting handoff（接料检查，缺负责人判断退出码 9）；
+  §1 的测量行标成「某一次记录、会过期」，最终字节由主会话统一重测。
 -->
 
 # 怎么跑：主入口操作说明
@@ -22,22 +24,22 @@ CUMULATIVE-DELTA: 2026-11-09 操作路径随中文布局标记适配，旧工作
 
 ## 0 前置与最短路径
 
-- Python **3.11+**（内核只用标准库）。飞书**加密事件收件**另需可选 `cryptography`（`python -m pip install -r requirements-feishu.txt`）；插件自检需要 Node **20+**，读取真实 DSH 压缩会话日志的可信核验需要支持 Zstandard 的 Node **24+**。
+- Python **3.11+**（内核只用标准库）。飞书**加密事件收件**另需可选 `cryptography`（`python -m pip install -r requirements-feishu.txt`）；插件自检需要 Node **20.3+**，读取真实 DSH 压缩会话日志的可信核验需要支持 Zstandard 的 Node **24+**。
 - 源码仓库与研究工作区**分开**：工作区放数据、状态、页面和结果，不进 Git。
 - 最短路径（每步都能单独查，失败会明确报错）：
 
 ```powershell
 python -X utf8 -B research.py doctor                      # 看边界与环境
 python -X utf8 -B research.py init --workspace ../my-research
-python -X utf8 -B research.py workspace topic --workspace ../my-research --topic demo \
+python -X utf8 -B research.py workspace topic --workspace ../my-research --topic demo `
     --objective "验证一个明确的研究问题" --requirements-file 需求原文.md --owner-session session-owner
-python -X utf8 -B research.py budget grant --workspace ../my-research --event-file grant.json \
+python -X utf8 -B research.py budget grant --workspace ../my-research --event-file grant.json `
     --proof-json '{"session_id":"session-owner","seq":12}' --request-key grant-1
-python -X utf8 -B research.py budget reserve --workspace ../my-research --series-id S1 \
+python -X utf8 -B research.py budget reserve --workspace ../my-research --series-id S1 `
     --exp-id P1 --scope small --units 3 --request-key res-1
-python -X utf8 -B research.py workflow prepare --workspace ../my-research --topic demo \
+python -X utf8 -B research.py workflow prepare --workspace ../my-research --topic demo `
     --plan AutoDL实验/框架/state/plans/P1.json --owner-session session-owner
-python -X utf8 -B research.py workflow check --workspace ../my-research --topic demo \
+python -X utf8 -B research.py workflow check --workspace ../my-research --topic demo `
     --plan AutoDL实验/框架/state/plans/P1.json --owner-session session-owner --intent-none -- python -m pytest -q
 ```
 
@@ -65,7 +67,8 @@ python -X utf8 -B research.py instructions --bundle .local/required-instructions
 python -X utf8 -B research.py instructions --captured 宿主实际请求.txt
 ```
 
-- 本轮测量（2026-11-09，**仅测量**）：来源合计 110,747 B，合并 bundle 113,166 B，建议总预算 141,457 B，最大单来源 15,948 B。它不是宿主实际注入证据；文档或 profile 一改就要重新测量。
+- 当前测量（2026-11-13，**仅测量**）：来源合计 163,178 B，合并bundle 166,016 B，建议总预算 207,520 B，最大单来源 18,105 B。它不是宿主实际注入证据；文档或profile一改就要重新测量。
+- ⚠️ 这一行只是**某一次的测量记录**：契约 / 指令 / profile 一改就失效，以 `research.py instructions` 当场输出为准，⛔ 不拿旧数字当预算证据。
 - 第二条只检查「你给的这段宿主请求」是否含完整正文；它**不**证明宿主真注入了。
 
 新分层工作区的目录由`.autoresearch/workspace-layout.json`确定。下文采用中文默认布局，旧无标记工作区保留根topics等路径。旧机的当前实现与记录迁移见[新电脑恢复](<NEW_MACHINE_RECOVERY.md>)，不能用init覆盖。
@@ -75,8 +78,8 @@ python -X utf8 -B research.py instructions --captured 宿主实际请求.txt
 旧版只登记 `Topics`（目录 + 分支字符串）。**现在真的建隔离单元**：
 
 ```powershell
-python -X utf8 -B research.py workspace topic --workspace ../my-research --topic demo \
-    --objective "…" --requirements-file 需求原文.md --owner-session session-owner \
+python -X utf8 -B research.py workspace topic --workspace ../my-research --topic demo `
+    --objective "…" --requirements-file 需求原文.md --owner-session session-owner `
     [--code-repo C:\path\to\repo] [--revision HEAD] [--no-environment]
 ```
 
@@ -93,17 +96,19 @@ python -X utf8 -B research.py workspace topic --workspace ../my-research --topic
 
 已有专题缺文档时，可运行 `python research.py workspace documents --workspace ../my-research --topic demo`。只补缺失类别；已有证据页不再另建空页，现有文件不覆盖。scribe完成有来源的正文后删除SCAFFOLD标记，再走reporting验收。
 
+专题文档纪律（等待簿规则）用同一条命令的只读检查：`python research.py workspace documents --workspace ../my-research --topic demo --check`。它只判专题目录**直接层**：出现 `DESIGN_*` 等待期设计即判红（退出码 2）并点名等待簿 `AutoDL实验/实验分析/WAITING.md`；该专题 `archive/` 里的历史件不追溯、不判红。`--check` 不建目录、不写文件，专题不存在时如实判红而不会顺手建一个。
+
 实验前后各留一次主文档原始快照：
 
 ```powershell
-python -X utf8 -B research.py workspace snapshot --workspace ../my-research --topic demo \
+python -X utf8 -B research.py workspace snapshot --workspace ../my-research --topic demo `
     --exp-id P1 --stage before   # 之后 after
 ```
 
 登记与接手仍然用 `topics`（保留）：
 
 ```powershell
-python -X utf8 -B research.py topics --db ../my-research/.autoresearch/runtime.sqlite3 \
+python -X utf8 -B research.py topics --db ../my-research/.autoresearch/runtime.sqlite3 `
     --commit claim --topic demo --session session-owner --generation 0
 ```
 
@@ -113,24 +118,24 @@ python -X utf8 -B research.py topics --db ../my-research/.autoresearch/runtime.s
 
 ```powershell
 # 1) 授权：命令必须与一条真实顶层用户消息逐键相等；只能给宿主可核的 proof
-python -X utf8 -B research.py budget grant --workspace ../my-research \
+python -X utf8 -B research.py budget grant --workspace ../my-research `
     --event-file grant.json --proof-json '{"session_id":"session-owner","seq":12}' --request-key grant-1
 
 # 2) 预留：在已授权系列下给某轮实验留额度
-python -X utf8 -B research.py budget reserve --workspace ../my-research \
+python -X utf8 -B research.py budget reserve --workspace ../my-research `
     --series-id S1 --exp-id P1 --scope small --units 3 --request-key res-1
 
 # 3) 查看（只读，按系列；可带预留号）
-python -X utf8 -B research.py budget status --workspace ../my-research \
+python -X utf8 -B research.py budget status --workspace ../my-research `
     --series-id S1 [--reservation-id R1]
 
 # 4) 释放
-python -X utf8 -B research.py budget release --workspace ../my-research \
+python -X utf8 -B research.py budget release --workspace ../my-research `
     --reservation-id R1 --request-key rel-1
 
 # 5) 结算：必须带真实成本证据（文件 + 定位）；没有受信计量适配器时只输出 pending
-python -X utf8 -B research.py budget settle --workspace ../my-research \
-    --reservation-id R1 --series-id S1 --actual-units 2 \
+python -X utf8 -B research.py budget settle --workspace ../my-research `
+    --reservation-id R1 --series-id S1 --actual-units 2 `
     --evidence-file results/run.log --locator L1-L9 --request-key set-1
 ```
 
@@ -158,25 +163,34 @@ argv / 实现 / 执行落点 / 本轮授权，`check-plan` 通过**不能**当�
 
 ```powershell
 # 事前材料：四锚点 + 实现五项/files + argv → 冻结来源哈希（专题主文档/目标/用户原话/旧复盘来源）
-python -X utf8 -B research.py workflow prepare --workspace ../my-research --topic demo \
+python -X utf8 -B research.py workflow prepare --workspace ../my-research --topic demo `
     --plan AutoDL实验/框架/state/plans/P1.json --owner-session session-owner [--source results/prev.jsonl]
 
 # 只读闸（不写盘、不起子进程）：计划未改 → 材料未过期 → argv 命中 → 前轮已复盘 → 审计/监控/准入
-python -X utf8 -B research.py workflow check --workspace ../my-research --topic demo \
+python -X utf8 -B research.py workflow check --workspace ../my-research --topic demo `
     --plan AutoDL实验/框架/state/plans/P1.json --owner-session session-owner (--intent-id I1 | --intent-none) -- <argv...>
 
+# 起跑预检留证（同一只读闸；全过才可选写工作区内记录文件）
+python -X utf8 -B research.py workflow preflight --workspace ../my-research --topic demo `
+    --plan AutoDL实验/框架/state/plans/P1.json --owner-session session-owner --intent-none `
+    --record-out AutoDL实验/框架/state/plans/P1-preflight.json -- <argv...>
+
 # 真的启动（同一个闸；通过后 sqlite 事务原子占用唯一 run）→ 退出码原值
-python -X utf8 -B research.py workflow launch --workspace ../my-research --topic demo \
+python -X utf8 -B research.py workflow launch --workspace ../my-research --topic demo `
     --plan AutoDL实验/框架/state/plans/P1.json --owner-session session-owner --intent-none -- <argv...>
 
 # 结束 / 复盘 / 状态
-python -X utf8 -B research.py workflow finish --workspace ../my-research --run-id RUN-… \
+python -X utf8 -B research.py workflow finish --workspace ../my-research --run-id RUN-… `
     --exitcode 3 --reason failed [--documentation-status failed --documentation-detail "页面没更新"]
 python -X utf8 -B research.py workflow review --workspace ../my-research --run-id RUN-… --file review.json
 python -X utf8 -B research.py workflow status --workspace ../my-research --topic demo
 ```
 
 新复盘用[版本2模板](<../kernel/templates/workflow.review.template.json>)：除实际结果、分支和证据外，填写下一步判据与来源、费用范围、继续推进的负责人、是否需要批准及原因。公开 `workflow review` 默认要求 `schema_version=2`；显式 `--legacy-record` 可导入旧格式，缺失字段仍为 unknown。下一步写「等待批准」是合法研究交接，不能当作执行已经获批。字段进入 `AI_WORK` 和报告供料，执行前仍另核真实预算与批准。
+
+`workflow preflight`和`workflow check`共享起跑闸；前者输出精简留证，失败时不写记录也不给可起跑命令：普通闸拒绝退出9，输入非法或状态不可判退出2。记录的`kind=preflight`、`launched=false`不代表已经启动或新授权。真实起跑记录另有run_id。显式确认性或gate/control声明须提供可分辨的门槛与有来源的对照；null也算声明并拒。完整字段见[计划契约§3.1与§11](<../kernel/contracts/plan.md>)。
+
+`progress preflight`是下一轮的候选预检，见§9；与起跑留证同名但职责不同，两者都不执行实验。
 
 判据（都是实测过的拒绝路径）：
 
@@ -208,7 +222,7 @@ python -X utf8 -B research.py workflow status --workspace ../my-research --topic
 
 ```powershell
 python -X utf8 -B research.py remote doctor --workspace ../my-research
-python -X utf8 -B research.py remote check --workspace ../my-research --topic demo --plan AutoDL实验/框架/state/plans/P1.json \
+python -X utf8 -B research.py remote check --workspace ../my-research --topic demo --plan AutoDL实验/框架/state/plans/P1.json `
     --owner-session session-owner --intent-none --resource <资源租约键> -- <argv...>
 python -X utf8 -B research.py remote provision --workspace ../my-research [--force]
 python -X utf8 -B research.py remote start （同 check） -- <argv...>
@@ -230,9 +244,11 @@ python -X utf8 -B research.py remote status / query / cancel / collect / release
 ```powershell
 python -X utf8 -B research.py reporting --workspace ../my-research prepare --topic demo
 python -X utf8 -B research.py reporting --workspace ../my-research check --topic demo
+# 只读接料检查：负责人判断齐不齐（缺项返回负责人；不代选下一轮）
+python -X utf8 -B research.py reporting --workspace ../my-research handoff --topic demo
 # scribe 写完后验收（只有 scribe 能验收；给 --proof-json 才走真实宿主核验）
-python -X utf8 -B research.py reporting --workspace ../my-research ack --topic demo \
-    --writer-role scribe --writer-session session-scribe \
+python -X utf8 -B research.py reporting --workspace ../my-research ack --topic demo `
+    --writer-role scribe --writer-session session-scribe `
     [--proof-json '{"session_id":"session-scribe","seq":31}' --owner-session session-owner]
 python -X utf8 -B research.py reporting --workspace ../my-research round-check --topic demo --exp P1
 python -X utf8 -B research.py reporting --workspace ../my-research diagnose --topic demo
@@ -240,6 +256,7 @@ python -X utf8 -B research.py reporting --workspace ../my-research process-statu
 ```
 
 - `prepare` 生成**完整供料包**：来源清单 + 来源正文 + 旧页全文 + 缺项补读路径（超内联上限的来源显式标「未内联」并给路径，⛔ 不静默截断）。
+- `handoff` 是**只读接料检查**：负责人判断还没登记（或最新运行事件没有 `leader_conclusion`）时列出 blocker、退出码 9。⛔ 它不替负责人推导假设、不代选下一轮，也不另建台账 —— 缺项与 `pending_owner` 由同一套 `request` / `missing_items` 判据维护，`ack` 在缺项时直接拒收。
 - `ack` 不声明 `--proof-json` 时回执只记 `declared`（调用方自述）；给了才可能出现 `verified`。
 - `RECEIPT.json` 同时带 `sources` / `source_fingerprint` / `body_sha256`：来源改了或页面字节变了，`check` 就不再算「已验收」。
 - `workflow` 的 `Lifecycle` 会自动写 `AI_WORK.md`、收据、`plan-vN.json` 与 before/after 快照，并把起跑 / 终态 / 复盘投影成 `reporting` 事件；`FEED.md` 与供料包仍由 `reporting prepare` 生成。人读页正文仍只由 scribe 会话写，工具不代写。
@@ -252,20 +269,20 @@ python -X utf8 -B research.py reporting --workspace ../my-research process-statu
 
 ```powershell
 # 有宿主适配器才可能"可判"：--adapter 指向部署方写法（见 --help），--log-root 是真实证据根
-python -X utf8 -B research.py monitoring --root ../my-research --adapter 部署适配器.py --log-root <真实日志根> \
+python -X utf8 -B research.py monitoring --root ../my-research --adapter 部署适配器.py --log-root <真实日志根> `
     register --state none --reason "本轮没有跨轮专项意图" --session session-owner
 python -X utf8 -B research.py monitoring --root ../my-research --adapter … sync --session session-owner
-python -X utf8 -B research.py monitoring --root ../my-research --adapter … \
+python -X utf8 -B research.py monitoring --root ../my-research --adapter … `
     event --kind result_analysis --exp P1 --stage evidence
-python -X utf8 -B research.py monitoring --root ../my-research --adapter … \
+python -X utf8 -B research.py monitoring --root ../my-research --adapter … `
     check --exp P1 --action launch        # 起跑闸：launch 必须过，安全动作豁免
 python -X utf8 -B research.py monitoring --root ../my-research status --session session-owner
 
 # close：旧 proof 路径与自然语言原话路径互斥
-python -X utf8 -B research.py monitoring --root ../my-research close --session session-owner \
+python -X utf8 -B research.py monitoring --root ../my-research close --session session-owner `
     --reason withdrawn --to closed --report-id R1 --proof-seq 9
-python -X utf8 -B research.py monitoring --root ../my-research close --session session-owner \
-    --reason withdrawn --to closed --report-id R1 \
+python -X utf8 -B research.py monitoring --root ../my-research close --session session-owner `
+    --reason withdrawn --to closed --report-id R1 `
     --user-quote '{"session":"session-owner","seq":6,"text":"逐字原话"}'   # 也可 @文件 或 --user-quote-file
 ```
 
@@ -279,7 +296,7 @@ python -X utf8 -B research.py monitoring --root ../my-research close --session s
 ## 7 审批、入向与通道
 
 ```powershell
-python -X utf8 -B research.py decisions --db ../my-research/.autoresearch/runtime.sqlite3 \
+python -X utf8 -B research.py decisions --db ../my-research/.autoresearch/runtime.sqlite3 `
     prepare --exp P1 --decision-id D1 --plan 方案集.json [--scope large] [--out .autoresearch/web]
 python -X utf8 -B research.py decisions --db … --channel 部署通道:factory send --decision-id D1
 python -X utf8 -B research.py decisions --db … --channel-config '{"app_id_ref":"env:FEISHU_APP_ID",…}' send --decision-id D1
@@ -300,9 +317,9 @@ python -X utf8 -B research.py decisions --db … hook [--exp P1]
 
 ```powershell
 python -X utf8 -B research.py channels --config channel.json doctor
-python -X utf8 -B research.py channels --db ../my-research/.autoresearch/runtime.sqlite3 \
+python -X utf8 -B research.py channels --db ../my-research/.autoresearch/runtime.sqlite3 `
     --config channel.json listen [--host 127.0.0.1] [--port 8080]
-python -X utf8 -B research.py channels --db ../my-research/.autoresearch/runtime.sqlite3 \
+python -X utf8 -B research.py channels --db ../my-research/.autoresearch/runtime.sqlite3 `
     --config channel.json poll [--cursor 12] [--limit 50]
 ```
 
@@ -323,15 +340,15 @@ python -X utf8 -B research.py progress --root ../my-research --spec progress.spe
 python -X utf8 -B research.py progress --root ../my-research --spec progress.spec.json status
 
 # 下一轮只读预检：全过才给真实 launch 命令；不写盘、不起进程
-python -X utf8 -B research.py progress --root ../my-research --spec progress.spec.json preflight \
-    --workspace ../my-research --next-plan plans/P2.json --topic demo \
+python -X utf8 -B research.py progress --root ../my-research --spec progress.spec.json preflight `
+    --workspace ../my-research --next-plan plans/P2.json --topic demo `
     --owner-session session-owner --intent-none -- <argv...>
-python -X utf8 -B research.py progress --root ../my-research --spec progress.spec.json next-round \
-    --workspace ../my-research --next-plan plans/P2.json --topic demo \
+python -X utf8 -B research.py progress --root ../my-research --spec progress.spec.json next-round `
+    --workspace ../my-research --next-plan plans/P2.json --topic demo `
     --owner-session session-owner --intent-none -- <argv...>
 
 # 跨专题排序：候选显式给出；stage 取显式或冻结计划字段
-python -X utf8 -B research.py progress --root ../my-research --spec progress.spec.json schedule \
+python -X utf8 -B research.py progress --root ../my-research --spec progress.spec.json schedule `
     --entries schedule.json [--stage-order mechanism,composition,large,paired] [--user-stop]
 ```
 
@@ -353,7 +370,7 @@ python -X utf8 -B research.py progress-host --deployment deployment.json doctor
 python -X utf8 -B research.py progress-host --deployment deployment.json goal
 python -X utf8 -B research.py progress-host --deployment deployment.json overdue
 python -X utf8 -B research.py progress-host --deployment deployment.json plan --poll 60
-python -X utf8 -B research.py progress-host --deployment deployment.json \
+python -X utf8 -B research.py progress-host --deployment deployment.json `
     register --job-id job-7 [--command "确切启动命令"] [--argv-json '["…","…"]']
 python -X utf8 -B research.py progress-host --deployment deployment.json status
 ```
@@ -366,17 +383,17 @@ python -X utf8 -B research.py progress-host --deployment deployment.json status
 ## 10 问题台账：`research.py issues`
 
 ```powershell
-python -X utf8 -B research.py issues --workspace ../my-research record \
-    --summary "…" --owner session-owner --scope "单题评测" --exp P1 --exitcode 1 \
+python -X utf8 -B research.py issues --workspace ../my-research record `
+    --summary "…" --owner session-owner --scope "单题评测" --exp P1 --exitcode 1 `
     --source results/run.log [--dedupe-key 逻辑名] -- python -m pytest tests -q
 python -X utf8 -B research.py issues --workspace ../my-research status [--issue ISSUE-000001] [--exp P1]
-python -X utf8 -B research.py issues --workspace ../my-research link --issue ISSUE-000001 --exp P2 \
+python -X utf8 -B research.py issues --workspace ../my-research link --issue ISSUE-000001 --exp P2 `
     --text "为什么也算这个实验" --source results/run.log
-python -X utf8 -B research.py issues --workspace ../my-research assign --issue ISSUE-000001 \
+python -X utf8 -B research.py issues --workspace ../my-research assign --issue ISSUE-000001 `
     --owner session-b --text "换人负责" --source results/run.log
-python -X utf8 -B research.py issues --workspace ../my-research fix --issue ISSUE-000001 \
+python -X utf8 -B research.py issues --workspace ../my-research fix --issue ISSUE-000001 `
     --text "改了什么" --source results/fix.log
-python -X utf8 -B research.py issues --workspace ../my-research verify --issue ISSUE-000001 \
+python -X utf8 -B research.py issues --workspace ../my-research verify --issue ISSUE-000001 `
     --text "复验了什么" --source results/run.log --exitcode 0 -- python -m pytest tests -q
 python -X utf8 -B research.py issues --workspace ../my-research archive --issue ISSUE-000001
 python -X utf8 -B research.py issues --workspace ../my-research index
@@ -391,7 +408,7 @@ python -X utf8 -B research.py issues --workspace ../my-research index
 ### 检查清单：`research.py assurance`
 
 ```powershell
-python -X utf8 -B research.py assurance --workspace ../my-research --topic demo --exp P1 \
+python -X utf8 -B research.py assurance --workspace ../my-research --topic demo --exp P1 `
     --owner-session session-owner checklist
 ```
 
@@ -402,12 +419,12 @@ python -X utf8 -B research.py assurance --workspace ../my-research --topic demo 
 ### 普通提问：`research.py questions`
 
 ```powershell
-python -X utf8 -B research.py questions --workspace ../my-research ask \
+python -X utf8 -B research.py questions --workspace ../my-research ask `
     --exp P1 --body "这个方向要不要继续？" --owner session-owner [--blocking]
 python -X utf8 -B research.py questions --workspace ../my-research open [--exp P1]
-python -X utf8 -B research.py questions --workspace ../my-research answer Q-000001 \
+python -X utf8 -B research.py questions --workspace ../my-research answer Q-000001 `
     --source feishu --event-id <入向事件> --channel-config channel.json
-python -X utf8 -B research.py questions --workspace ../my-research declare Q-000001 \
+python -X utf8 -B research.py questions --workspace ../my-research declare Q-000001 `
     --body "用户口头说继续" --actor session-owner
 ```
 

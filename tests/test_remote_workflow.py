@@ -1,5 +1,5 @@
 # GENERATED-BY: managed remote execution wiring, 2026-11-09
-# LAST-EDIT: 2026-11-09 首版：受管远端接线的离线测试（假传输 + 真预算 / 真所有权 / 真执行状态机）
+# LAST-EDIT: 2026-11-13 补 R394/R395：门槛被对照读数满足时零远端请求；submit 返回 launch 记录、check 返回 preflight 记录
 # PURPOSE: 证明三条承诺：① 缺部署 / 所有权 / 预算 / 资源租约 / 当前审计监控时不提交（零远端请求）；
 #          ② 实际 argv 与计划逐项绑定，预算用**同一笔** authorization 预留（不造第二笔 run 预留）；
 #          ③ 终态只在 worker 明确报终态 + cancel token 探针 + 停止证据齐备后登记，
@@ -7,6 +7,8 @@
 # ORIGIN: 合成临时工作区夹具；⛔ 不连任何真实机器、不读凭据、不发网络请求。
 # CUMULATIVE-DELTA: 首版。`FakeWorkerTransport` 用**当前** ssh_worker 的函数算请求哈希与指纹，
 #          但它是**进程内假传输**：真实 SSH / POSIX 进程组语义不在这里验证。
+#          2026-11-13：确认性计划夹具补 `criteria.gate` / `.control`；新增「门槛不可分辨 ⇒
+#          transport 一次都没被调用」与「预检记录 launched=false / 起跑记录带 run_id」两组回归。
 """受管远端接线的离线测试。
 
 **这些测试不验证真实 SSH 网络**：`FakeWorkerTransport` 在进程内模拟远端 worker 的
@@ -465,7 +467,10 @@ class RemoteCase(unittest.TestCase):
                             "hypothesis_id": "H1"}],
             "criteria": {"mode": "confirmatory", "metric": "通过题数", "direction": "increase",
                          "threshold": 1, "source": "evidence/readings.md 上一轮逐题读数",
-                         "rationale": "上一轮只差 1 题，门槛取 1"},
+                         "rationale": "上一轮只差 1 题，门槛取 1",
+                         # R394：显式 confirmatory 同时给机器可读门槛与对照读数。
+                         "gate": {"k": 3, "n": 6, "direction": "ge"},
+                         "control": {"k": 1, "n": 6, "source": "上一轮同 6 题基线实测 1/6"}},
             "baseline": {"label": "上一轮冻结包", "fingerprint": "sha256:deadbeef"},
             "case_sets": {"target": ["t1"], "regression": ["r1"], "control": ["c1"]},
             "previous_passes": ["r1"],
@@ -688,6 +693,40 @@ class OwnershipTests(RemoteCase):
 
 
 class SubmitTests(RemoteCase):
+    def test_indistinguishable_criterion_refuses_before_any_remote_request(self):
+        """R394 的远端入口：门槛被对照读数满足时，check 不绿、submit 零远端请求、零 run 记录。"""
+        plan = self.plan()
+        plan["criteria"]["gate"] = {"k": 3, "n": 6, "direction": "ge"}
+        plan["criteria"]["control"] = {"k": 3, "n": 6, "source": "BASE 同 6 题"}
+        plan_rel = self.write_plan(plan)
+        checked = self.flow.check(topic=TOPIC, plan=plan_rel, owner_session=SESSION,
+                                  argv=self.argv, resources=[RESOURCE], intent_none=True)
+        self.assertFalse(checked["ok"])
+        self.assertIsNone(checked.get("preflight_record"))
+        self.assertIn("门槛被对照读数满足", "；".join(checked["problems"]))
+        with self.assertRaises(rw.RemoteWorkflowError) as caught:
+            self.submit(plan_rel)
+        self.assertEqual(caught.exception.code, 9)
+        # 真实适配器一次都没被调用：没有远端请求，也没有 run / finish 记录。
+        self.assertEqual(self.transport.calls, [])
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM wf_runs"), 0)
+        self.assertEqual(self.finishes(), 0)
+
+    def test_successful_submit_returns_launch_record_bound_to_the_run(self):
+        plan_rel = self.ready()
+        self.provision()
+        result = self.submit(plan_rel)
+        self.assertTrue(result["ok"], result)
+        record = result["launch_record"]
+        self.assertEqual(record["kind"], "launch")
+        self.assertTrue(record["launched"])
+        self.assertEqual(record["run_id"], result["run_id"])
+        self.assertEqual(record["argv"], self.argv)
+        self.assertEqual(record["plan"]["sha256"],
+                         self.scalar("SELECT plan_sha256 FROM wf_runs WHERE run_id=?",
+                                     (result["run_id"],)))
+        self.assertEqual(record["gates"]["remote"]["execution_scope"], "remote")
+
     def test_successful_submit_binds_argv_budget_and_lease(self):
         plan_rel = self.ready()
         self.provision()
@@ -1219,6 +1258,13 @@ class ReadOnlyTests(RemoteCase):
         self.assertEqual(preview["run_spec"]["execution_config"]["argv"], self.argv)
         self.assertEqual(preview["run_spec"]["reservation_id"], self.reservation["id"])
         self.assertEqual(preview["budget"]["status"], "reserved")
+        # R395：预检记录与本地同源，且**不冒充已启动**
+        record = preview["preflight_record"]
+        self.assertEqual(record["kind"], "preflight")
+        self.assertFalse(record["launched"])
+        self.assertNotIn("run_id", record)
+        self.assertEqual(record["argv"], self.argv)
+        self.assertEqual(record["gates"]["remote"]["stage"], "preview")
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM wf_runs"), 0)
         self.assertEqual(self.finishes(), 0)
 

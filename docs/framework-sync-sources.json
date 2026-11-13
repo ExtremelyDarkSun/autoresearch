@@ -1,13 +1,13 @@
 {
   "format": 1,
-  "purpose": "Sanitized latest synchronization source fingerprints; no private source content or machine identity.",
+  "purpose": "Sanitized source fingerprints; identify source versions only, not copied content or semantic completeness certification.",
   "expectations": 109,
   "order_preserved": true,
   "sources": [
     {
       "label": "framework-expectations",
-      "bytes": 112010,
-      "sha256": "07ee2c49ddd9568ef5dcee4e0d24ced924e47a1697699363e6ba611d3a11e9a7"
+      "bytes": 118065,
+      "sha256": "6c7a1e55e2a545fcdcf4d7d185e78cb30b8b6353cf22fc1d5067026e2b34ad31"
     },
     {
       "label": "context-loading",
@@ -16,8 +16,8 @@
     },
     {
       "label": "reading-contract",
-      "bytes": 10748,
-      "sha256": "9d1a55b57bfb25888add6843e86a3566a051f80e03b34491120b76e680acfd0b"
+      "bytes": 4067,
+      "sha256": "abda05b6239be23dcb3b96a4f9ad525c7d43bed9479ce711d8154d7329a8850a"
     },
     {
       "label": "plan-audit-contract",
@@ -46,13 +46,118 @@
     },
     {
       "label": "research-status-role",
-      "bytes": 16376,
-      "sha256": "abf19a21966c16376af6c77e4aa44972bb577431b736d76e9935ee35c6790fdc"
+      "bytes": 19808,
+      "sha256": "85d12691de816d1898c0a36e9c7e4906acb6615a74928e98a631a5972b0934e2"
     },
     {
       "label": "topic-scaffold",
-      "bytes": 28243,
-      "sha256": "1dba33b56d61910bde3ef2a8c3f7d97f37747ff5421a07ec8ebaa5628bee7c71"
+      "bytes": 29765,
+      "sha256": "167d7bf2214d6413033b4c49781e281b43db8fdf474572d4ec4b2903d4eaada2"
+    },
+    {
+      "label": "loop-runbook",
+      "bytes": 86467,
+      "sha256": "fb0f7d9db26b17eedbc4dcf12727a0298ca595bba55fe7189e297ac0caf45dc6"
+    },
+    {
+      "label": "context-budget",
+      "bytes": 15023,
+      "sha256": "4800e3c60557e1ddfe607c20b87e0cd479b5534dcbfc55b6acbbf0322bd94a16"
+    },
+    {
+      "label": "waiting-book-format",
+      "bytes": 30850,
+      "sha256": "6e7e90f9bd0fe29822c0adf259f3658fe425005673f83fd467abdd49ca6a2442"
+    },
+    {
+      "label": "launch-preflight",
+      "bytes": 7612,
+      "sha256": "286dec37ffa09541499a5905e8e84cc7690e2134553f167b9863e94a23320a44"
+    },
+    {
+      "label": "plan-threshold-guard",
+      "bytes": 5104,
+      "sha256": "82e96c2477097ec0efae81f7b5bcbf770dbe471f6797f17ea3b6b5e6f484f529"
+    },
+    {
+      "label": "goal-observer-runtime",
+      "bytes": 29253,
+      "sha256": "7f4a147011a847e401c40e287e91ef70387667dd5d6272223ed42991c3bab1c8"
+    },
+    {
+      "label": "goal-observer-ui-client",
+      "bytes": 4063,
+      "sha256": "bbfba01ab3e24ec3190237b9328c9e6c147d2b404ffd435f16653e57a3edafc6"
+    },
+    {
+      "label": "goal-observer-ui-host",
+      "bytes": 460,
+      "sha256": "bea87423a85473ed5f364d223ebc176e926eb0cd257c903eb34788f19ecb499b"
     }
+  ],
+  "history": [
+    {
+      "recorded_before": "2026-11-13T19:30:51+08:00",
+      "sources": [
+        {
+          "label": "framework-expectations",
+          "bytes": 112010,
+          "sha256": "07ee2c49ddd9568ef5dcee4e0d24ced924e47a1697699363e6ba611d3a11e9a7"
+        },
+        {
+          "label": "context-loading",
+          "bytes": 19129,
+          "sha256": "9260d651bdf7fdb13ab898752230ff31272c5a4a1d8ba439a59726dc7ca26e4e"
+        },
+        {
+          "label": "reading-contract",
+          "bytes": 10748,
+          "sha256": "9d1a55b57bfb25888add6843e86a3566a051f80e03b34491120b76e680acfd0b"
+        },
+        {
+          "label": "plan-audit-contract",
+          "bytes": 45069,
+          "sha256": "80fe9a39c92e86af0bdda0f49e3c5d8a5215c9eca169b68cfee36856d9cf31e9"
+        },
+        {
+          "label": "plan-reviewer-role",
+          "bytes": 14271,
+          "sha256": "575941ea2a0fc12563ec100bc1368d5a110aaeceaf7ca34b75cb95ca643b30a7"
+        },
+        {
+          "label": "plan-authoring",
+          "bytes": 11677,
+          "sha256": "8c92e68ef5ffe17bed5c382f5c1fc23763da41fca116efc0c6e36619eb168bae"
+        },
+        {
+          "label": "intent-monitor-contract",
+          "bytes": 55195,
+          "sha256": "4dd352b8675af141a118143b8a4b4962c1b52da7fd0001e26bf72bab9539c276"
+        },
+        {
+          "label": "intent-monitor-role",
+          "bytes": 16488,
+          "sha256": "eb9e13784e38f866f7c3e5b83008314f686a7e7083244ac4f683cd907dde1d49"
+        },
+        {
+          "label": "research-status-role",
+          "bytes": 16376,
+          "sha256": "abf19a21966c16376af6c77e4aa44972bb577431b736d76e9935ee35c6790fdc"
+        },
+        {
+          "label": "topic-scaffold",
+          "bytes": 28243,
+          "sha256": "1dba33b56d61910bde3ef2a8c3f7d97f37747ff5421a07ec8ebaa5628bee7c71"
+        }
+      ]
+    }
+  ],
+  "inspected_at": "2026-11-13T19:30:51+08:00",
+  "normalization": [
+    "Observer goal and external driver are used together; later policy overrides same-day retirement text.",
+    "Observer pause/errors continue the already authorized automatic round; host/user stop and limits remain authoritative.",
+    "109 public IDs and order are retained; H8/H9 remain historical.",
+    "Exploratory plans do not gain mandatory numeric thresholds; corrected minor_fix remains eligible.",
+    "No private waiting items, channel recipients, machine paths or prior authorizations are copied."
   ]
 }

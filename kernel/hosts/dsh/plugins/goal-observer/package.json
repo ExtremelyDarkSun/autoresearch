@@ -1,0 +1,29 @@
+{
+  "name": "@autoresearch/dsh-goal-observer",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Host 插件：为带 objectivePrefix 的原生 goal 生成每轮观察指令；只追加独立来源消息，失败继续，绝不暂停 goal，通知默认关闭。",
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./core": "./observer-core.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.mjs",
+    "observer-core.mjs",
+    "cordis.patch.yml",
+    "README.md",
+    "package.json.README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=20.3"
+  },
+  "license": "MIT"
+}

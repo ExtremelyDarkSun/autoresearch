@@ -1,12 +1,18 @@
 # GENERATED-BY: portable extraction / repository bootstrap (2026-11-09 +08:00)
-# LAST-EDIT: audit-host binding, 2026-11-09（宿主证据绑定：expected 由服务层构造、created_at 取自宿主、K11/K12 与 check_start）
+# LAST-EDIT: 判据可分辨性门槛（R394）并入 validate_plan，2026-11-13（显式 gate/control 或 confirmatory 才新增义务）
 # PURPOSE: 通用研究治理层 —— 事前方案校验与冻结哈希、独立方案审计的版本绑定与次数上限、专项意图的来源与节点监控、
 #          经验候选的四处置与修订失效、角色包/委派登记、必读与文档冷件台账。全部是本地 append-only 登记，不联网、不伪造授权。
 # ORIGIN: none（新文件）。机制抽取自上游组件 plan_audit.md / plan_audit.py / plan_audit_host.py / intent_monitor.md /
 #         research_lessons.md / trajectory_review.md / reading_required.json / CONTRACT.md / CONTEXT_LOADING.md /
 #         DOC_MAINTENANCE.md 与 EXPERIMENT_RULES.md 的事前设计、三类对照、结果分支表；只保留与具体赛事无关的通用部分，
 #         源头的个人渠道与实例值一律不带。
-# CUMULATIVE-DELTA: 2026-11-09 宿主证据绑定改造：① 敏感动作（关闭审计 / 豁免 / 扩额）的 expected 命令对象由本层按动作参数
+# CUMULATIVE-DELTA: 2026-11-13 判据可分辨性（R394）：`criterion_distinguishability_problems()` 并入 `validate_plan()` ——
+#         计划显式写 `criteria.gate` / `criteria.control`（或 `research.criterion` 下）或显式 `mode=confirmatory` 时，
+#         核 k/n 有限数值与界、方向只认 le/ge（可沿用 criteria.direction 的 increase/decrease 映射）、对照必须有 source，
+#         且门槛不得被对照读数满足（相等也算没有分辨力）；缺/非法材料一律出错误。探索性与旧格式（没写 mode）不新增义务。
+#         声明按**键存在**判（显式 `gate: null` / `control: null` 也拒，⛔ 不能靠空值绕开）；比值用
+#         `fractions.Fraction` 精确比较（巨大整数不触发 float 溢出，近差与相等都不被抹平）。
+#         2026-11-09 宿主证据绑定改造：① 敏感动作（关闭审计 / 豁免 / 扩额）的 expected 命令对象由本层按动作参数
 #         构造，调用方只能给 proof（{session_id, seq}），不接受 caller 自带的 expected / created_at / report；
 #         ② 时序判定用宿主返回的 created_at，缺时间一律拒；③ audit_independence 的 payload 绑定 owner / actor /
 #         prepared_id / 报告全文（record_audit_file 用六键短声明），审计会话与 actor 对不上直接拒；④ 新增可信
@@ -34,6 +40,7 @@
 ========
 
     validate_plan(plan) -> list[str]              # 纯函数，不碰 store
+    criterion_distinguishability_problems(plan)   # 纯函数：门槛不得被对照读数满足（R394）
     plan_fingerprint(plan) -> str                 # 只哈希「关键字段」
     plan_key_fields(plan) -> dict
     Governance(store, *, verifier=None, policy=None, experiment_id=None)
@@ -83,6 +90,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from fractions import Fraction
 from pathlib import Path
 import re
 import sqlite3
@@ -271,6 +279,194 @@ def _hypothesis_key(plan: dict):
     if isinstance(hypothesis, dict):
         return hypothesis.get("id")
     return None
+
+
+# ---------------------------------------------------------------------------
+# 判据可分辨性（R394）
+# ---------------------------------------------------------------------------
+
+#: 门槛方向：`le` = 越小越好（实际值 ≤ 门槛即通过），`ge` = 越大越好。
+GATE_DIRECTIONS = ("le", "ge")
+#: `criteria.direction`（旧字段）到门槛方向的映射：`decrease` 越小越好、`increase` 越大越好。
+_DIRECTION_TO_GATE = {"decrease": "le", "increase": "ge"}
+
+
+def _criterion_holders(plan: dict) -> tuple[dict, dict]:
+    """判据容器的两种合法写法：顶层 `criteria` 与 `research.criterion`（后者为兼容写法）。"""
+    criteria = plan.get("criteria")
+    research = plan.get("research")
+    nested = research.get("criterion") if isinstance(research, dict) else None
+    return (criteria if isinstance(criteria, dict) else {},
+            nested if isinstance(nested, dict) else {})
+
+
+def _criterion_block(holder: dict, nested: dict, key: str):
+    """先认顶层 `criteria.<key>`，再认 `research.criterion.<key>`；返回 (块, 标签)。
+
+    ⚠️ **标签只表示「键存在」**：显式写 `"gate": null` 也返回标签（块是 None）。调用方必须用
+    标签判「有没有声明」，⛔ 不能用「块不是 None」判 —— 否则 `gate: null` 会被当成没声明而放行。
+    """
+    if key in holder:
+        return holder.get(key), f"criteria.{key}"
+    if key in nested:
+        return nested.get(key), f"research.criterion.{key}"
+    return None, None
+
+
+def _criterion_number(value) -> bool:
+    """k / n 的数值口径：有限实数。
+
+    * 布尔不算数值；
+    * `float` 必须是有限数（`NaN` / `Infinity` 拒）；
+    * `int` **任意大小**都精确接受（不转 float，避免巨大整数 `float()` 溢出或抹平差异）。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return True
+
+
+def _ratio(value) -> Fraction:
+    """把 k / n 变成精确分数：int 精确；float 取其精确二进制值（不做浮点除法）。"""
+    return Fraction(value)
+
+
+def _ratio_display(value: Fraction) -> str:
+    """比值的可读显示：一般用小数；巨大整数转 float 会溢出时退回精确分数。"""
+    try:
+        return f"{float(value):.3f}"
+    except (OverflowError, ValueError):  # pragma: no cover - 只影响显示
+        return f"{value.numerator}/{value.denominator}（精确分数）"
+
+
+def _criterion_counts(block, label: str, errors: list[str]):
+    """读 `{k, n}` 并核「有限实数 + 0 ≤ k ≤ n + n > 0」。返回 (k, n) 或 None。"""
+    if label is None:  # pragma: no cover - 调用方已先判「键在不在」
+        errors.append("缺少门槛 / 对照块：要写机器可读的 k / n，⛔ 不从门槛文本里猜数")
+        return None
+    if block is None:
+        errors.append(
+            f"{label} 是 null：显式写空等于没有材料（⛔ 不能靠 null 绕开声明义务），"
+            "要写机器可读的 k / n")
+        return None
+    if not isinstance(block, dict):
+        errors.append(f"{label} 必须是对象 {{k, n, …}}，实际 {type(block).__name__}")
+        return None
+    values = []
+    for name in ("k", "n"):
+        value = block.get(name)
+        if not _criterion_number(value):
+            errors.append(
+                f"{label}.{name} 必须是有限数值，实际 {value!r}（布尔值不算数值，"
+                "NaN / Infinity 一律拒）")
+            return None
+        values.append(value)
+    k, n = values
+    if n <= 0:
+        errors.append(f"{label}.n 必须 > 0，实际 {n!r}")
+        return None
+    if k < 0 or k > n:
+        errors.append(f"{label} 越界：k={k!r} / n={n!r}（要求 0 ≤ k ≤ n）")
+        return None
+    return k, n
+
+
+def criterion_distinguishability_problems(plan: dict) -> list[str]:
+    """R394：门槛不得被对照读数满足，且两端材料必须机器可读。**纯函数**。
+
+    只在这两种情形新增义务，其余保持原语义：
+
+    * 计划**声明**了 `criteria.gate` 或 `criteria.control`（或写在 `research.criterion` 下）——
+      判「声明」看**键在不在**：显式写 `gate: null` / `control: null` 也触发义务并被拒，
+      ⛔ 不能用 null 绕开；
+    * 计划**显式**声明 `criteria.mode == "confirmatory"`。
+
+    探索性（`mode=exploratory`）与旧格式（没写 `mode`）**不**新增门槛义务：探索性不强制
+    数字阈值，旧计划不凭空恢复已撤销的阈值要求，因此这里直接返回空列表（除非它们自己声明了
+    `gate` / `control`）。
+
+    显式声明时逐项核：`k/n` 是有限实数且在界内、方向只认 `le` / `ge`、对照读数必须有出处；
+    **等于对照也算没有分辨力**（`le` 时 gate ≥ control、`ge` 时 gate ≤ control 都拒）。
+    比值用 `fractions.Fraction` **精确比较**：⛔ 不用 float 除法（小比值会下溢成 0、
+    巨大整数的近差会被抹平），巨大整数的 `k/n` 也按精确分数判。
+    材料缺失或非法一律出错误 —— ⛔ 「没写对照」不能在闸里当绿灯。
+    """
+    if not isinstance(plan, dict):
+        return []
+    holder, nested = _criterion_holders(plan)
+    gate, gate_label = _criterion_block(holder, nested, "gate")
+    control, control_label = _criterion_block(holder, nested, "control")
+    # ⚠️ 判「声明」只看键在不在（标签非 None）：gate/control 写成 null 也必须触发并被拒。
+    declared = gate_label is not None or control_label is not None
+    confirmatory = holder.get("mode") == "confirmatory" or nested.get("mode") == "confirmatory"
+    if not declared and not confirmatory:
+        return []
+
+    errors: list[str] = []
+    if gate_label is None:
+        errors.append(
+            "确认性判据缺少 criteria.gate：要写 {k, n, direction}（le=越小越好 / ge=越大越好）；"
+            "门槛必须机器可读，⛔ 不从 threshold 或中文句子猜")
+    elif gate is None:
+        errors.append(
+            f"{gate_label} 是 null：显式写空等于没有材料（⛔ 不能靠 null 绕开声明义务），"
+            "要写 {k, n, direction}（le=越小越好 / ge=越大越好）")
+    if control_label is None:
+        errors.append(
+            "确认性判据缺少 criteria.control：要写对照组在同一量上的实测读数 {k, n, source}；"
+            "没写对照就无法判「跑完分不分得出」")
+    elif control is None:
+        errors.append(
+            f"{control_label} 是 null：显式写空等于没有材料（⛔ 不能靠 null 绕开声明义务），"
+            "要写对照组在同一量上的实测读数 {k, n, source}")
+    if errors:
+        return errors
+
+    gate_counts = _criterion_counts(gate, gate_label, errors)
+    control_counts = _criterion_counts(control, control_label, errors)
+    source = control.get("source") if isinstance(control, dict) else None
+    if not _text(source):
+        errors.append(
+            f"{control_label}.source 必须是非空字符串：对照读数要有出处"
+            "（哪一轮 / 哪个文件），⛔ 不能只写一个数字")
+    if errors:
+        return errors
+
+    legacy_direction = holder.get("direction") or nested.get("direction")
+    mapped = _DIRECTION_TO_GATE.get(legacy_direction) if isinstance(legacy_direction, str) else None
+    raw_direction = gate.get("direction") if isinstance(gate, dict) else None
+    if raw_direction is None:
+        if mapped is None:
+            errors.append(
+                f"缺少方向：{gate_label}.direction 写 le / ge，"
+                "或写 criteria.direction = increase / decrease")
+            return errors
+        direction = mapped
+    else:
+        direction = str(raw_direction).strip().lower()
+        if direction not in GATE_DIRECTIONS:
+            errors.append(
+                f"{gate_label}.direction 只认 {' / '.join(GATE_DIRECTIONS)}，实际 {raw_direction!r}")
+            return errors
+        if mapped is not None and mapped != direction:
+            errors.append(
+                f"方向声明冲突：{gate_label}.direction={direction!r} 与 "
+                f"criteria.direction={legacy_direction!r}（应为 {mapped!r}）不一致")
+            return errors
+
+    gate_k, gate_n = gate_counts
+    control_k, control_n = control_counts
+    gate_value = _ratio(gate_k) / _ratio(gate_n)
+    control_value = _ratio(control_k) / _ratio(control_n)
+    violated = gate_value >= control_value if direction == "le" else gate_value <= control_value
+    if violated:
+        relation = "不更严（门槛 ≥ 对照读数）" if direction == "le" else "不更高（门槛 ≤ 对照读数）"
+        errors.append(
+            f"门槛被对照读数满足：{gate_label} {gate_k}/{gate_n}={_ratio_display(gate_value)} vs "
+            f"{control_label} {control_k}/{control_n}={_ratio_display(control_value)}，门槛{relation} ⇒ "
+            "对照自己不做事也可能过线（等于对照也算没有分辨力）；门槛必须严格比对照严")
+    return errors
 
 
 def validate_plan(plan: dict) -> list[str]:
@@ -550,6 +746,9 @@ def validate_plan(plan: dict) -> list[str]:
             if "scope" in authorization \
                     and authorization.get("scope") not in ("small", "large", "submission"):
                 errors.append("authorization.scope 必须是 small / large / submission")
+
+    # ---- 判据可分辨性（R394）：只在显式 gate/control 或显式 confirmatory 时新增义务 ----
+    errors.extend(criterion_distinguishability_problems(plan))
 
     return errors
 

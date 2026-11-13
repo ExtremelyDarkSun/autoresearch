@@ -15,14 +15,23 @@
       "notify": "hint",
       "logLevel": "info",
       "maxDocChars": 20000,
-      "projects": ["C:/path/to/your/project"],
+      "projects": [
+        "C:/path/to/your/project"
+      ],
       "docs": [
-        { "label": "示例判据文档", "path": "C:/path/to/your/project/docs/rules.md" }
+        {
+          "label": "示例判据文档",
+          "path": "C:/path/to/your/project/docs/rules.md"
+        }
       ],
       "policy": {
         "scope": {
-          "include": ["填写：本项目的哪些方面算「可能与文档有关」"],
-          "exclude": ["填写：哪些话题一律判 covered"]
+          "include": [
+            "填写：本项目的哪些方面算「可能与文档有关」"
+          ],
+          "exclude": [
+            "填写：哪些话题一律判 covered"
+          ]
         },
         "criteria": {
           "covered": "文档明确写了这一点，含理由或边界",
@@ -31,7 +40,11 @@
         },
         "anchor": "填写：放在提示词最后一段的范围锚点"
       },
-      "judge": { "backend": "session", "timeoutMs": 20000, "maxTokens": 4000 }
+      "judge": {
+        "backend": "session",
+        "timeoutMs": 20000,
+        "maxTokens": 4000
+      }
     },
     "autodl-events": {
       "enabled": false,
@@ -40,7 +53,24 @@
       "delivery": "steer",
       "maxTargets": 1,
       "fallback": "hold",
-      "projects": ["C:/path/to/your/project"]
+      "projects": [
+        "C:/path/to/your/project"
+      ]
+    },
+    "goal-observer": {
+      "enabled": false,
+      "objectivePrefix": "[观察者]",
+      "timeoutMs": 240000,
+      "maxTokens": 16000,
+      "contextChars": 24000,
+      "notification": {
+        "enabled": false,
+        "command": [],
+        "throttleMs": 300000
+      }
+    },
+    "goal-observer-ui": {
+      "enabled": false
     }
   }
 }

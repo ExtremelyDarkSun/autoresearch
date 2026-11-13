@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: repository creation, 2026-11-09 +08:00
-LAST-EDIT: 2026-11-09 本批同步：补 review v2、issues exp、questions、assurance、progress 跨轮预检/阶段排序与 D2 回复绑定；通用补项与真实部署分开
+LAST-EDIT: 2026-11-13（当前框架同步）
 PURPOSE: 给首次查看项目的人说明用途、边界和可执行检查。
 ORIGIN: reusable research mechanisms and target-specific evaluation adapters
-CUMULATIVE-DELTA: 2026-11-09 恢复本地中文目录、空台账格式与新电脑恢复入口； 2026-11-09 固定分层项目模板与默认初始化，保留显式bundle兼容；2026-11-09 新增 [怎么跑](<docs/RUNNING.md>)（工作区 / 专题隔离 / 预算 / 执行主链 / 人读页 / 监控 / 审批 / 通道 / 远端 / 进度 / 问题台账的实际命令）；
+CUMULATIVE-DELTA: 2026-11-13 接入观察者、补足推进器与当前读取导航。 2026-11-09 恢复本地中文目录、空台账格式与新电脑恢复入口； 2026-11-09 固定分层项目模板与默认初始化，保留显式bundle兼容；2026-11-09 新增 [怎么跑](<docs/RUNNING.md>)（工作区 / 专题隔离 / 预算 / 执行主链 / 人读页 / 监控 / 审批 / 通道 / 远端 / 进度 / 问题台账的实际命令）；
 改写迁移状态段：本地独立环境、完整服务链冷启动（含第二轮共享预算与未复盘阻断）及可信宿主探针已验；真实通道租户、真实 SSH/POSIX 停止/机器空闲、远端上传和平台仍待现场验收；
 把只登记 Topics 的首次隔离改成真实 worktree + 独立环境命令（claim 保留）；明确 demo 只是底层事务合成、不代科研主链；109 编号验收表继续保留。
 依赖口径：Python 内核只用标准库，飞书加密收件另需可选 cryptography（requirements-feishu.txt）；插件 Node 20+，可信 DSH 压缩日志 Node 24+。
@@ -38,6 +38,8 @@ python -X utf8 -B research.py layout-check --workspace ../my-research
 
 结构、内容边界及与原组织的对应关系见[组织映射](<project/ORGANIZATION_MAP.md>)；初始化、维护规则恢复及独立读取测试见[项目组织验收](<docs/PROJECT_ORGANIZATION.md>)。宿主是否实际分层加载须另测；链接检查不冒充注入证明。最新监控默认关闭、审计减负及专题文档创建已同步，范围与验证见[框架同步记录](<docs/FRAMEWORK_SYNC.md>)。
 
+专题持续推进、异常继续和事件重挂见[观察者与推进器](<docs/dsh-goal-observer.md>)。等待事项统一放[等待簿](<project/AutoDL实验/实验分析/WAITING.md>)，专题直接目录的 `DESIGN_*` 会被文档检查拒绝。scribe 缺负责人判断或下一步时先退回补料，不替负责人做研究决定。
+
 ## 换新电脑
 
 先读[新电脑恢复](<docs/NEW_MACHINE_RECOVERY.md>)及[安装步骤](<project/INSTALL.md>)。新项目用init建空工作区。恢复旧工程用recovery保存当前工作树、专题和SQLite，私有ZIP不上传GitHub。新机按实际路径生成插件部署参数，再核真实会话输入、定时任务和一个实际评测样例。旧会话、授权、资源与凭据须另行核对。
@@ -54,7 +56,7 @@ python -X utf8 -B research.py layout-check --workspace ../my-research
 
 ## 第一次检查：三条命令
 
-需要 Python 3.11 或更新版本。Python 内核与通用工具只用标准库；飞书**加密事件收件**另需可选 `cryptography`（`python -m pip install -r requirements-feishu.txt`）。三个插件的离线测试需要 Node.js 20 或更新版本；读取真实 DSH 压缩会话日志的可信核验需要支持 Zstandard 的 Node.js 24 或更新版本。
+需要 Python 3.11 或更新版本。Python 内核与通用工具只用标准库；飞书**加密事件收件**另需可选 `cryptography`（`python -m pip install -r requirements-feishu.txt`）。五个插件的离线测试需要 Node.js 20 或更新版本；读取真实 DSH 压缩会话日志的可信核验需要支持 Zstandard 的 Node.js 24 或更新版本。
 
 在本仓库根目录运行：
 
@@ -69,7 +71,7 @@ python -X utf8 -B research.py selftest --plugins     # 需要 Node.js
 
 `demo` 从一个**尚不存在**的目录开始，走通登记、预算预留、模拟执行、结果取回、资源核对和结案，生成 `REPORT.md` 与 `REPORT.json`。⚠️ **它只是底层事务的合成演示**：没有事前四锚点、没有 argv 起跑闸、没有审计/监控/准入三闸、没有真实子进程、没有复盘与页面供料。**别拿它当统一科研主链已可用的证据**——主链看[怎么跑](<docs/RUNNING.md>)。第二次运行请换一个新目录。
 
-`selftest` 运行 Python 回归；加 `--plugins` 再跑三个插件的模拟宿主测试。测试不启动云机，不调用真实模型，不外发消息。
+`selftest` 运行 Python 回归；加 `--plugins` 再跑五个插件的模拟宿主测试。测试不启动云机，不调用真实模型，不外发消息。
 
 ## 目录怎么分
 
@@ -92,7 +94,7 @@ python -X utf8 -B research.py selftest --plugins     # 需要 Node.js
 | [kernel/autoresearch/remote_workflow.py](kernel/autoresearch/remote_workflow.py) · [remote_cli.py](kernel/autoresearch/remote_cli.py) | 受管远端执行 | Workflow 闸 → Runtime 预算/租约 → SSHAdapter；默认关闭 |
 | [kernel/contracts](kernel/contracts/) · [kernel/instructions](kernel/instructions/) | 内核现行契约与读取要求 | 原则、可执行条件、证据边界 |
 | [kernel/roles](kernel/roles/) · [kernel/templates](kernel/templates/) | 角色委派与空模板 | 角色材料、事前设计、人读现状页与交接 |
-| [kernel/hosts/dsh](kernel/hosts/dsh/) | 首个宿主适配 | 三套项目插件、配置生成和加载检查工具 |
+| [kernel/hosts/dsh](kernel/hosts/dsh/) | 首个宿主适配 | 五套项目插件、配置生成和加载检查工具 |
 | [kernel/autoresearch/backends](kernel/autoresearch/backends/) | 基础设施适配 | AutoDL 查询、变化事件、负责人绑定与单次监控 |
 | [profiles/agent-harness](profiles/agent-harness/) | agent 目标配置 | 题单、结果和轨迹协议；工具、路径、泄漏与预算规则 |
 | [kernel/autoresearch/adapters](kernel/autoresearch/adapters/) | 配置层需要的代码适配器 | agent 结果分析、轨迹检查及旧式结果包兼容协议 |
@@ -178,7 +180,7 @@ python research.py results profiles/agent-harness/examples/results.example.jsonl
 
 结果分开记录通过、失败、环境错误和超时。比较前检查题集和测量配置；条件不同就显示不可比。轨迹规则为空时显示“未配置检查”，不会当成干净。详见 [配置与接口契约](docs/profiles.md)。
 
-## 三个插件都随内核提供
+## 五个插件都随内核提供
 
 - **agent-instruction-filter**：处理子会话指令注入，默认保留规则。只有明确配置后才过滤。
 - **dsh-doc-gap**：在回合末检查刚讨论的内容是否需要补文档。判定范围由部署配置提供；文档不完整时不得把“没找到”当成可靠证据。
@@ -207,7 +209,7 @@ python research.py instructions --captured path/to/captured-host-request.txt
 
 需要可信证据的授权、审查豁免、交付确认，在没有可信验证器时**默认拒绝**；普通资料可登记为本地声明（`declared`），但那不等于宿主已验证。离线演示与测试里的签名、审查、通道都是临时夹具，不能拿去给真实动作授权。
 
-本项目**没有**安装一个会自动在生产环境开实验的常驻服务。持续研究靠受管推进器 + 显式重挂：一次唤醒处理完就退出并写 `needs_rearm`，由负责人挂回；通知送达、进程退出、租约到期都不证明实验成功或机器空闲。
+本项目**没有**安装一个会自动在生产环境开实验的常驻服务。持续研究默认由带观察者的原生goal主推，受管推进器同时补足外部事件并显式重挂：一次唤醒处理完就退出并写 `needs_rearm`，由负责人挂回；通知送达、进程退出、租约到期都不证明实验成功或机器空闲。
 
 - 操作命令与待验清单：[怎么跑](docs/RUNNING.md)。
 - 研究流程与制度边界：[研究说明](docs/research.md)。

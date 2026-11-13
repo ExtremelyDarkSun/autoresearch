@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: portable project organization
-LAST-EDIT: 2026-11-09
+LAST-EDIT: 2026-11-13（当前框架同步）
 PURPOSE: 框架子项目入口与维护规则
 ORIGIN: maintained layered workspace organization, neutral extraction
-CUMULATIVE-DELTA: 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
+CUMULATIVE-DELTA: 2026-11-13 接入观察者、补足推进器与当前读取导航。 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
 -->
 # 框架入口
 
@@ -15,6 +15,7 @@ CUMULATIVE-DELTA: 固定项目组织模板；实例事实留空，现行规则�
 | 定义框架范围与研究层 | [项目组织映射](<../../ORGANIZATION_MAP.md>) |
 | 写计划与独立方案审计 | [方案契约](<../../../kernel/contracts/plan.md>)、[审计契约](<../../../kernel/contracts/plan_audit.md>) |
 | 起跑、状态、复盘与下一轮 | [操作入口](<OPERATIONS.md>) |
+| 持续推进、外部事件与停止 | [观察者与推进器](<../../../docs/dsh-goal-observer.md>)、[上下文预算](<../../../kernel/contracts/context_budget.md>) |
 | 给人写页与给AI供料 | [研究页契约](<../../../kernel/contracts/status_page.md>) |
 | 做轨迹复盘与经验确认 | [轨迹复盘](<../../../kernel/contracts/trajectory_review.md>)、[经验](<../../../kernel/contracts/research_lessons.md>) |
 | 控制重复交付与上下文成本 | [上下文预算](<../../../kernel/contracts/context_budget.md>) |

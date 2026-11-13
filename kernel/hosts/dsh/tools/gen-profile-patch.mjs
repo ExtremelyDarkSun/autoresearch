@@ -1,10 +1,10 @@
 // GENERATED-BY: portable extraction (agent, 2026-11-09 01:20 +08:00)
-// LAST-EDIT: portable extraction (agent, 2026-11-09 01:20 +08:00)
+// LAST-EDIT: 2026-11-13（当前框架同步）
 // PURPOSE: 参数化 DSH 加载配置生成器 —— 按一份部署参数生成 patch 片段，**写给人审核**；
 //          ⛔ 不写 profile、不调安装器、不重启宿主、不联网。
 // ORIGIN: 原项目 `install/*/cordis.patch.yml` 里被物化的本机值（绝对路径、项目名、队列目录）；
 //          这里把这些值全部改成输入，只留结构
-// CUMULATIVE-DELTA: 首版。四点边界：
+// CUMULATIVE-DELTA: 2026-11-13 接入观察者、补足推进器与当前读取导航。 首版。四点边界：
 //   ① 所有路径/项目范围/阈值/目标策略都来自 `--deployment` JSON，⛔ 生成器不内置任何本机值；
 //   ② 输出默认打到 stdout；给了 `--out` 也只写**指定文件**；若目标路径看着像 profile（含 `.dsh` 或 profile 目录）就拒绝，需 `--allow-profile-path`；
 //   ③ 出厂形态 = 全部关闭或 hold：doc-gap `enabled:false`、instruction-filter `mode:off`、autodl-events `fallback:hold`；
@@ -20,11 +20,13 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { isAbsolute, normalize, resolve, sep } from 'node:path'
 
-const PLUGIN_IDS = ['agent-instruction-filter', 'doc-gap', 'autodl-events']
+const PLUGIN_IDS = ['agent-instruction-filter', 'doc-gap', 'autodl-events', 'goal-observer', 'goal-observer-ui']
 const BUNDLED_NAMES = {
   'agent-instruction-filter': '@autoresearch/dsh-agent-instruction-filter',
   'doc-gap': '@autoresearch/dsh-doc-gap',
   'autodl-events': '@autoresearch/dsh-autodl-events',
+  'goal-observer': '@autoresearch/dsh-goal-observer',
+  'goal-observer-ui': '@autoresearch/dsh-goal-observer-ui',
 }
 
 function parseArgs(argv) {
@@ -93,6 +95,16 @@ function schemaExample() {
         },
         judge: { backend: 'session', timeoutMs: 20000, maxTokens: 4000 },
       },
+      'goal-observer': {
+        enabled: false,
+        pluginPath: null,
+        objectivePrefix: '[观察者]',
+        timeoutMs: 240000,
+        maxTokens: 16000,
+        contextChars: 24000,
+        notification: { enabled: false, command: [], throttleMs: 300000 },
+      },
+      'goal-observer-ui': { enabled: false, pluginPath: null },
       'autodl-events': {
         enabled: true,
         pluginPath: null,
@@ -140,6 +152,7 @@ function joinPath(base, ...parts) {
 function scalar(value) {
   if (value === null || value === undefined) return 'null'
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (/[\r\n\t\0]/.test(String(value))) return JSON.stringify(String(value))
   return `'${String(value).replace(/'/g, "''")}'`
 }
 
@@ -188,6 +201,8 @@ function pluginName(id, config) {
   if (typeof config.pluginPath === 'string' && config.pluginPath.trim()) {
     const base = config.pluginPath.trim().replace(/[\\/]+$/, '')
     if (id === 'autodl-events' && !base.endsWith('.js')) return `${base}/lib/index.js`
+    if (id === 'goal-observer' && !base.endsWith('.mjs')) return `${base}/index.mjs`
+    if (id === 'goal-observer-ui' && !base.endsWith('.js')) return `${base}/index.js`
     return base
   }
   return BUNDLED_NAMES[id]
@@ -295,10 +310,51 @@ function buildEvents(config) {
   }
 }
 
+function buildObserver(config) {
+  if (config.enabled !== undefined && typeof config.enabled !== 'boolean') problems.push('goal-observer.enabled 必须为布尔值')
+  const positive = (key, fallback, min, max) => {
+    if (config[key] === undefined) return fallback
+    if (!Number.isSafeInteger(config[key]) || config[key] < min || config[key] > max) problems.push(`goal-observer.${key} 必须是 ${min}..${max} 的整数`)
+    return config[key]
+  }
+  if (Boolean(config.provider) !== Boolean(config.model)) problems.push('goal-observer.provider 与 model 必须同时指定')
+  for (const key of ['provider', 'model']) {
+    if (config[key] !== undefined && config[key] !== null && (typeof config[key] !== 'string' || !config[key].trim())) problems.push(`goal-observer.${key} 必须为非空字符串或null`)
+  }
+  const objectivePrefix = config.objectivePrefix ?? '[观察者]'
+  if (typeof objectivePrefix !== 'string' || !objectivePrefix.trim()) problems.push('goal-observer.objectivePrefix 不能为空')
+  const raw = config.notification ?? {}
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) problems.push('goal-observer.notification 必须是对象')
+  const notification = { enabled: raw?.enabled === true, command: raw?.command ?? [], throttleMs: raw?.throttleMs ?? 300000 }
+  if (raw?.enabled !== undefined && typeof raw.enabled !== 'boolean') problems.push('notification.enabled 必须为布尔值')
+  if (!Array.isArray(notification.command) || notification.command.some(x => typeof x !== 'string' || !x.trim() || x.includes('\0'))) problems.push('notification.command 必须是非空字符串参数数组')
+  if (notification.enabled && (!Array.isArray(notification.command) || !notification.command.length)) problems.push('启用通知前必须指定 notification.command')
+  if (!Number.isSafeInteger(notification.throttleMs) || notification.throttleMs < 0 || notification.throttleMs > 86400000) problems.push('notification.throttleMs 必须是 0..86400000 的整数')
+  if (raw?.cwd !== undefined && raw?.cwd !== null) {
+    if (typeof raw.cwd !== 'string' || !isAbsolute(raw.cwd)) problems.push('notification.cwd 必须是绝对路径')
+    notification.cwd = raw.cwd
+  }
+  return {
+    enabled: config.enabled === true, objectivePrefix,
+    timeoutMs: positive('timeoutMs', 60000, 100, 300000), maxTokens: positive('maxTokens', 1800, 256, 16000),
+    contextChars: positive('contextChars', 24000, 2000, 200000),
+    ...(config.provider && config.model ? { provider: config.provider, model: config.model } : {}),
+    ...(typeof config.policy === 'string' && config.policy.trim() ? { policy: config.policy } : {}),
+    notification,
+  }
+}
+
+function buildObserverUI(config) {
+  if (config.enabled !== undefined && typeof config.enabled !== 'boolean') problems.push('goal-observer-ui.enabled 必须为布尔值')
+  return { enabled: config.enabled === true }
+}
+
 const builders = {
   'agent-instruction-filter': buildFilter,
   'doc-gap': buildDocGap,
   'autodl-events': buildEvents,
+  'goal-observer': buildObserver,
+  'goal-observer-ui': buildObserverUI,
 }
 
 const selected = args.only.length > 0 ? args.only : PLUGIN_IDS.filter((id) => id in plugins)
@@ -309,9 +365,14 @@ for (const id of args.only) {
 // ⚠️ 先跑 build（各 build 会往 problems 里加「启用但没配齐」这类问题），再统一判。
 const blocks = []
 for (const id of selected) {
+  if (!PLUGIN_IDS.includes(id)) continue
   if (!(id in plugins)) {
     console.error(`未执行：--only 指定了 ${id}，但部署参数里没有它`)
     process.exit(2)
+  }
+  if (!plugins[id] || typeof plugins[id] !== 'object' || Array.isArray(plugins[id])) {
+    problems.push(`${id} 配置必须是对象`)
+    continue
   }
   const config = builders[id](plugins[id])
   blocks.push({ id, name: pluginName(id, plugins[id]), config })
@@ -347,6 +408,7 @@ const body = blocks.map((block) => {
     '- insert:',
     `    - id: ${block.id}`,
     `      name: ${scalar(block.name)}`,
+    block.id === 'goal-observer-ui' ? `      disabled: ${block.config.enabled !== true}` : null,
     configYaml.length > 0 ? '      config:' : null,
     configYaml.length > 0 ? configYaml : null,
   ].filter(Boolean).join('\n')

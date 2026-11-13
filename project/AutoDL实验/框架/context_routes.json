@@ -42,7 +42,10 @@
       "prefix": "AutoDL实验/实验分析/topics/",
       "entry": "AutoDL实验/实验分析/topics/AGENTS.md",
       "required": [
-        "AutoDL实验/实验记录/EXPERIMENT_RULES.md"
+        "AutoDL实验/实验记录/EXPERIMENT_RULES.md",
+        "AutoDL实验/实验分析/MECHANISMS.md",
+        "AutoDL实验/实验分析/WAITING.md",
+        "../kernel/contracts/context_budget.md"
       ]
     }
   ],

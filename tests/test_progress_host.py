@@ -1,9 +1,9 @@
 # GENERATED-BY: 完整功能迁移（持续推进 A1–A7 / 远端进度 H1–H9 / 入向超期 D2 的宿主侧联动）
-# LAST-EDIT: 2026-11-09（首版；goal 重放 / 覆盖注入 / 超期只读 / job 精确核验 / 只读不变量 / CLI）
+# LAST-EDIT: 2026-11-13（goal全覆盖时仍交付真实外部事件，通知不签发补位执行）
 # PURPOSE: progress_host 的离线回归：全部合成夹具（临时 dsh_home、临时 runtime sqlite、临时部署模块），
 #          不连真实机器、不发消息、不写宿主目录；证明「读真实形状、判词不假绿、证据可被篡改拒」。
 # ORIGIN: kernel/autoresearch/progress_host.py 的契约；宿主源码 @deepseek-ai/dsh-goal 的 fold 规则与 dsh-tool-pwsh 的后台输出。
-# CUMULATIVE-DELTA: 首版。fixture decoder 通过部署的 host_module（可信构造器）注入，CLI 不暴露 decoder；
+# CUMULATIVE-DELTA: 2026-11-13 全覆盖事件从sleep改为wake并保留supplement_allowed=false。 首版。fixture decoder 通过部署的 host_module（可信构造器）注入，CLI 不暴露 decoder；
 #          超期库由测试自建最小表（不是生产 schema 迁移），并断言读取后宿主文件字节不变。
 
 import json
@@ -420,7 +420,7 @@ class ProgressIntegrationTests(unittest.TestCase):
             self.assertEqual(decision["causes"][0]["kind"], "goal_state_unknown")
             self.assertFalse(decision["supplement"]["allowed"])
 
-    def test_trusted_full_coverage_suppresses_duplicate_advance(self):
+    def test_trusted_full_coverage_delivers_event_without_duplicate_advance(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             deployment = make_deployment(root, rows=session_rows([goal_change(phase="active")]))
@@ -430,9 +430,10 @@ class ProgressIntegrationTests(unittest.TestCase):
             flag.write_text("x", encoding="utf-8")
             instance.probe()
             decision = instance.tick()
-            self.assertEqual(decision["verdict"], "sleep")
-            self.assertEqual(decision["causes"][0]["kind"], "goal_covers")
+            self.assertEqual(decision["verdict"], "wake")
+            self.assertEqual(decision["causes"][0]["kind"], "progress_change")
             self.assertTrue(decision["goal"]["known"])
+            self.assertFalse(decision["supplement"]["allowed"])
 
     def test_overdue_outranks_goal_suppression(self):
         with tempfile.TemporaryDirectory() as folder:

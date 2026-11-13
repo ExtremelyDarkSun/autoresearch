@@ -1,11 +1,14 @@
 # GENERATED-BY: research execution main chain migration, 2026-11-09
-# LAST-EDIT: 2026-11-09，review默认要求版本2；显式legacy-record保留历史未知信息
+# LAST-EDIT: 2026-11-13，新增 `preflight` 只读预检入口（R395）：全过才产出绑定记录，失败不给命令
 # PURPOSE: `workflow.py` 的命令行入口。**生产接线固定**：监控接 `Monitoring(workspace, host=DSHHost())`，
 #          审计核验接 `DSHHost()`；⛔ 不提供跳过闸的开关（没有 --allow-unwired-monitor / --monitor-module）。
 # ORIGIN: 抽取自 AutoDL实验/tool/exp_launch.py 的「先检查后起跑 + 保留真实退出码」入口形态；无比赛/渠道值。
 # CUMULATIVE-DELTA: 2026-11-09 默认关闭监控时不再要求意图声明参数； 首版。所有文件参数都是工作区内相对路径；argv 一律经 `--` 传入。
 #   本轮补：`check` 是明确只读入口 —— 只读 Store / 只读决策服务 / `Workflow(readonly=True)`，
 #   不建库、不建目录、不迁移 schema；缺库 / 缺表 / 旧 schema 返回 `undecidable`（退出码 2）。
+#   2026-11-13 再补（R395）：`preflight` 与 `check` 共用同一段只读闸，全过才回 `record`
+#   （`kind=preflight`、`launched=false`、绑计划 sha256 / 实际 argv / UTC 时间 / 本次 gates）；
+#   `--record-out` 只在全过时写文件；未全过时 `record` 与 `launch_command` 都是 null，不打印任何命令。
 
 """研究执行主链的命令行入口。
 
@@ -16,6 +19,9 @@
 
     python -m kernel.autoresearch.workflow_cli check  --workspace W --topic T --plan P \\
         --owner-session S [--intent-id I | --intent-none] -- ARGV...
+
+    python -m kernel.autoresearch.workflow_cli preflight --workspace W --topic T --plan P \\
+        --owner-session S [--intent-id I | --intent-none] [--record-out 工作区内相对路径] -- ARGV...
 
     python -m kernel.autoresearch.workflow_cli launch （同 check）
 
@@ -46,11 +52,15 @@
    `plan.budget.max_cost_units`），`plan.authorization.scope` 为 `large` / `submission` 时
    再调 decisions 的 approved 检查。模块缺失或构建失败 ⇒ fail-closed。
    ⛔ 没有 `--allow-unwired-*` 这类跳过闸的参数。
-4. `check` 是**明确只读入口**：只读 `ReadonlyStore` + `Workflow(readonly=True)` + 只读准入
+4. `check` / `preflight` 是**明确只读入口**：只读 `ReadonlyStore` + `Workflow(readonly=True)` + 只读准入
    （`DecisionService.readonly`）。它不建库、不建目录、不迁移 schema；缺库 / 缺表 / 旧 schema
    ⇒ `{"ok": false, "undecidable": true, ...}`（退出码 2），⛔ 不为了跑通检查去建库或补表。
    `Monitoring` 的**构造**本身不 DDL（`Monitor.__init__` 只记路径与注入 host；事件账在写命令里
    才 `CREATE TABLE`），`check_start` 是零写读；生产接线照旧固定接它。
+5. `preflight` 的记录口径（R395）：只读闸**全过**才返回 `record`（`kind="preflight"`、
+   `launched=false`、绑冻结计划 sha256 / 实际 argv / UTC 时间 / 本次 gates），`--record-out` 也只在
+   这时写；任一关不过 ⇒ `record=null`、`launch_command=null`、退出码 9（读不到状态库是 2），
+   ⛔ 不打印任何可以直接跑起来的命令文本（失败不泄露可起跑命令）。
 """
 
 from __future__ import annotations
@@ -256,6 +266,38 @@ def _split_argv(tokens):
     return tokens, None
 
 
+def _preflight_payload(result, *, record_out=None):
+    """`preflight` 的对外形状（R395）。
+
+    * 全过 ⇒ 只回**绑定记录**（`kind=preflight` / `launched=false`）+ 落盘路径，不回任何可起跑命令；
+    * 未全过 ⇒ 只回问题清单：`record=None`、`launch_command=None`，**不打印** argv / 命令文本，
+      避免「预检失败却把一条能直接跑起来的命令递出去」。
+    """
+    record = result.get("preflight_record") if result.get("ok") else None
+    undecidable = bool(result.get("undecidable"))
+    if record is None:
+        return {"ok": False, "action": "preflight", "code": 2 if undecidable else 9,
+                "undecidable": undecidable,
+                "problems": list(result.get("problems") or ["预检未通过：没有产生记录"]),
+                "record": None, "record_out": None, "launch_command": None,
+                "note": "预检未通过：不写记录、不给可起跑命令（本地与远端都没有任何请求）"}, \
+            (2 if undecidable else 9)
+    return {"ok": True, "action": "preflight", "code": 0, "record": record,
+            "record_out": record_out, "launch_command": None,
+            "note": "预检全过：记录已产出于返回值（kind=preflight, launched=false）；"
+                    "⛔ 没有启动任何子进程，也没有发出任何远端请求"}, 0
+
+
+def _write_preflight_record(flow, target, record):
+    """把预检记录写到**工作区内**相对路径；只在全过时调用。越界 / 绝对路径由 `_resolve` 拒。"""
+    if target is None:
+        return None
+    path = flow._resolve(target, "预检记录")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return flow._rel(path)
+
+
 def _parser():
     parser = argparse.ArgumentParser(
         prog="python -m kernel.autoresearch.workflow_cli",
@@ -277,7 +319,8 @@ def _parser():
     prepare.add_argument("--source-file", default=None, help="来源清单 JSON 数组（元素是路径或 {path, locator}）")
 
     for name, text in (("check", "只读起跑检查：不写盘、不起子进程"),
-                       ("launch", "通过闸后真的启动本地子进程，并保留真实退出码")):
+                       ("launch", "通过闸后真的启动本地子进程，并保留真实退出码"),
+                       ("preflight", "只读预检：全过才产出绑定记录（kind=preflight，不代表已启动）")):
         node = sub.add_parser(name, parents=[common], help=text,
                               epilog="`--` 之后是被启动进程的完整 argv，"
                                      "必须与计划里的 execution_argv 逐项相等。")
@@ -289,6 +332,10 @@ def _parser():
                             help="专项意图编号；必须等于 Monitoring.check_start 报告的真实当前 id")
         intent.add_argument("--intent-none", action="store_true",
                             help="显式声明当前没有专项意图（Monitoring 状态必须是 none/closed；关闭监控时可省略；启用后仍须声明）")
+        if name == "preflight":
+            node.add_argument("--record-out", default=None,
+                              help="工作区内相对路径：把预检记录写到这个文件（只在全过时写；"
+                                   "未全过不写文件、也不打印任何可起跑命令）")
 
     finish = sub.add_parser("finish", parents=[common],
                             help="登记结束：真实原因 + 退出码（文档失败不覆盖退出码）")
@@ -327,10 +374,10 @@ def main(argv=None):
             _dump(result)
             return 0
 
-        if args.action in ("check", "launch"):
-            # `check` 是明确只读入口：只读 Store + `Workflow(readonly=True)` + 只读准入构造。
+        if args.action in ("check", "launch", "preflight"):
+            # `check` / `preflight` 是明确只读入口：只读 Store + `Workflow(readonly=True)` + 只读准入构造。
             # ⛔ 不因为「检查一下」就建库 / 建目录 / 迁移 schema；缺库缺表返回不可判。
-            readonly = args.action == "check"
+            readonly = args.action in ("check", "preflight")
             store = _shared_store(workspace, args.db, readonly=readonly)
             monitor, monitor_why = host_monitor(workspace)
             admission, admission_why = host_authorization(workspace, store, readonly=readonly)
@@ -343,8 +390,23 @@ def main(argv=None):
             for reason in (monitor_why, admission_why):
                 if reason:
                     print(f"⚠️ {reason}", file=sys.stderr)
-            if args.action == "check":
+            if args.action in ("check", "preflight"):
                 result = _run_readonly_check(flow, args, tail)
+                if args.action == "preflight":
+                    # R395：全过才写记录；未全过连一条命令都不打印。
+                    payload, code = _preflight_payload(result)
+                    if payload["ok"] and getattr(args, "record_out", None):
+                        try:
+                            payload["record_out"] = _write_preflight_record(
+                                flow, args.record_out, payload["record"])
+                        except (WorkflowError, OSError, ValueError) as exc:
+                            payload.update({"ok": False, "code": 2,
+                                            "problems": [f"记录写不进去：{exc}"],
+                                            "record": None, "record_out": None,
+                                            "launch_command": None})
+                            code = 2
+                    _dump(payload)
+                    return code
                 _dump(result)
                 if result.get("ok"):
                     return 0

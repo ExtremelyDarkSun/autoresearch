@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: portable project organization
-LAST-EDIT: 2026-11-09
+LAST-EDIT: 2026-11-13（当前框架同步）
 PURPOSE: 人读层级和机读触发路由
 ORIGIN: maintained layered workspace organization, neutral extraction
-CUMULATIVE-DELTA: 2026-11-09 恢复本地中文目录，工具按明确布局标记适配； 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
+CUMULATIVE-DELTA: 2026-11-13 接入观察者、补足推进器与当前读取导航。 2026-11-09 恢复本地中文目录，工具按明确布局标记适配； 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
 -->
 # 本项目上下文加载
 
@@ -16,7 +16,7 @@ CUMULATIVE-DELTA: 2026-11-09 恢复本地中文目录，工具按明确布局标
 | 平台资料与工具 | Kaggle平台/AGENTS | 相应来源原文、所选profile规则 |
 | 实验与结果判读 | AutoDL实验/AGENTS | EXPERIMENT_RULES、BASELINES、相关专题 |
 | 框架与流程维护 | AutoDL实验/框架/AGENTS | CONTRACT、reading_policy、doc_maintenance |
-| 接手专题 | AutoDL实验/实验分析/topics/AGENTS | 对应目标、REQUIREMENTS、TOPIC、计划与原始证据 |
+| 接手专题 | AutoDL实验/实验分析/topics/AGENTS | 对应目标、REQUIREMENTS、TOPIC、计划与原始证据、MECHANISMS、WAITING、context_budget |
 
 ## 验证实际读取
 

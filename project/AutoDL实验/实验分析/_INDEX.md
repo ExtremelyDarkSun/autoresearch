@@ -1,13 +1,16 @@
 <!--
 GENERATED-BY: portable project organization
-LAST-EDIT: 2026-11-09
-PURPOSE: 分析入口指向唯一专题正文
+LAST-EDIT: 2026-11-13 +08:00（加等待簿与跨专题机制清单指针；两者都不在专题目录里建第二份）
+PURPOSE: 分析入口指向唯一专题正文、唯一等待簿与唯一机制清单
 ORIGIN: maintained layered workspace organization, neutral extraction
 CUMULATIVE-DELTA: 2026-11-09 恢复本地中文目录，工具按明确布局标记适配； 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
+  2026-11-13 加两行：挂起的事只在 WAITING.md；跨专题机制只在 MECHANISMS.md（本索引都不抄条目）。
 -->
 # 分析索引
 
 当前没有研究结论。专题正文唯一位于[本层专题目录](<topics/AGENTS.md>)，这里不建第二份TOPIC。
+挂起中的事（等审批 / 等读数 / 等机器）只在[等待簿](<WAITING.md>)登记；这里不抄条目，也不建设计文档。
+跨专题的机制（改善哪个过程指标 · 适用与不适用 · 结论与证据）只在[机制清单](<MECHANISMS.md>)维护；专题里第一次出现的机制留正文，这里只收「下一个专题也要用」的那层。
 
 | 研究问题 | 专题与主文档 | 原始证据 | 研究报告 | 条件与未决 |
 |---|---|---|---|---|

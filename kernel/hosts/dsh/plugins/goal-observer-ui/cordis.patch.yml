@@ -1,0 +1,12 @@
+# GENERATED-BY: portable synchronization (DSH agent, 2026-11-13 +08:00)
+# LAST-EDIT: portable synchronization (DSH agent, 2026-11-13 +08:00)
+# PURPOSE: 为观察者指令显示插件新增独立宿主入口；出厂关闭，避免新机默认就改 UI。
+# ORIGIN: install/dsh-goal-observer-ui/cordis.patch.yml（2026-11-13 读码），包名改为 @autoresearch/*
+# CUMULATIVE-DELTA: 首版之后补一条关键口径：UI 的开关是 Loader 的 disabled —— client-modules 只把
+#   `entry.fiber !== undefined && !entry.disabled` 的行组进页面；config.enabled 拦不住浏览器 bundle。
+#   所以模板默认 disabled: true；要显示时改成 false（或删掉这个字段）。
+- insert:
+    - id: goal-observer-ui
+      name: '@autoresearch/dsh-goal-observer-ui'
+      # true = 这一行不加载：宿主不 apply，浏览器也不会注入 client.js。
+      disabled: true

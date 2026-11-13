@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "_note": "机读唯一住所：角色与阶段只决定哪些文件。选中的现行文档必须整份读取。anchor 仅作导航，不限定读取范围。登记默认只能标 declared。",
+  "_note": "机读唯一住所：角色与阶段只决定哪些文件。选中的现行文档必须整份读取。anchor 仅作导航，不限定读取范围。登记默认只能标 declared。 2026-11-13 增加跨专题机制、集中等待簿与scribe交接；保留公开版角色路由，不直接套用源项目路径。",
   "entries": [
     {
       "id": "R1",
@@ -116,7 +116,7 @@
       "phase": "open",
       "path": "kernel/contracts/context_budget.md",
       "anchor": "## 1 交付一次",
-      "why": "避免重复交付、例行重算与重复推进，不因局部流程问题停止全部已授权工作。",
+      "why": "避免重复交付、例行重算与重复推进，不因局部流程问题停止全部已授权工作。观察者goal主推，外部事件推进器同时受管监听，每跳重挂。",
       "scope": "full_document"
     },
     {
@@ -125,7 +125,34 @@
       "phase": "open",
       "path": "kernel/contracts/framework_expectations.md",
       "anchor": "## 完整编号表",
-      "why": "以完整行为预期核对功能，不把规则、同名函数或局部测试当完整迁移；相关状态见迁移功能验收表。",
+      "why": "以完整行为预期核对功能，不把规则、同名函数或局部测试当完整迁移；相关状态见迁移功能验收表。全部109编号保留，H8/H9按历史解释，不恢复旧推进义务。",
+      "scope": "full_document"
+    },
+    {
+      "id": "R8",
+      "role": "researcher",
+      "phase": "plan",
+      "path": "project/AutoDL实验/实验分析/MECHANISMS.md",
+      "anchor": "# 跨专题机制清单",
+      "why": "设计下一轮前核对跨专题机制、适用条件与证据；空清单不代表已经排查。",
+      "scope": "full_document"
+    },
+    {
+      "id": "R9",
+      "role": "researcher",
+      "phase": "open",
+      "path": "project/AutoDL实验/实验分析/WAITING.md",
+      "anchor": "## 0 怎么用（三条，够用就行）",
+      "why": "等批准、读数、机器或额度的事项集中登记，不另建DESIGN_*。",
+      "scope": "full_document"
+    },
+    {
+      "id": "D2",
+      "role": "scribe",
+      "phase": "write",
+      "path": "kernel/roles/scribe.md",
+      "anchor": "# scribe（写页者）",
+      "why": "负责人提供判断和下一步，缺料先退回。建议由负责人采纳后才写成决定。",
       "scope": "full_document"
     }
   ]

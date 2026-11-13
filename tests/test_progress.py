@@ -1,11 +1,11 @@
 # GENERATED-BY: 完整功能迁移（持续推进 A1–A7 / 远端进度 H1–H9 / 入向超期 D2）
-# LAST-EDIT: 2026-11-09（定点补丁：D2 出口闸要求 advance 前核 overdue，静默窗口用例显式注入空快照）
-# CUMULATIVE-DELTA: 首版；2026-11-09 仅改一处夹具（不降生产判据）：旧用例在无 overdue 源时记 advance，
+# LAST-EDIT: 2026-11-13（覆盖goal与推进器并用时的事件通知、未知覆盖与静默负例）
+# CUMULATIVE-DELTA: 2026-11-13 通知不等于补位执行，真实变化优先交付。 首版；2026-11-09 仅改一处夹具（不降生产判据）：旧用例在无 overdue 源时记 advance，
 #            现按 D2 给该实例显式注入「已核对、无超期」的真实形状快照；其余断言未改。
 # PURPOSE: progress 机制的离线回归：用合成临时夹具证明采集、fail-closed、判定顺序、租约围栏、
 #          重挂协议与受管监视的退出语义；不连接真实机器、不发消息、不触发外部评测。
 # ORIGIN: kernel/autoresearch/progress.py 的契约；行为预期 A1–A7 / D2 / H1–H9。
-# CUMULATIVE-DELTA: 首版。全部测试只用标准库与临时目录；远端用例用「本地假 ssh / 假传输程序」，
+# 历史测试范围：首版。全部测试只用标准库与临时目录；远端用例用「本地假 ssh / 假传输程序」，
 #          因此验证的是 argv 模板展开、shell=False 与取回路径，而不是真实网络。
 
 import json
@@ -427,7 +427,7 @@ class DecisionTests(unittest.TestCase):
             self.assertEqual(decision["causes"][0]["kind"], "goal_state_unknown")
             self.assertFalse(decision["supplement"]["allowed"])
 
-    def test_goal_full_coverage_suppresses_supplement_even_on_change(self):
+    def test_goal_full_coverage_allows_event_notification_without_supplement(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             spec, data = self._changed_instance(root)
@@ -437,10 +437,34 @@ class DecisionTests(unittest.TestCase):
             data.write_text("1\n2\n", encoding="utf-8")
             instance.probe()  # 变化确实发生了
             decision = instance.tick()
+            self.assertEqual(decision["verdict"], "wake")
+            self.assertEqual(decision["causes"][0]["kind"], "progress_change")
+            self.assertEqual(len(events_of(instance, "wake")), 1)
+            self.assertTrue(instance.status()["needs_rearm"]["value"])
+            self.assertFalse(decision["supplement"]["allowed"])
+
+    def test_goal_unknown_still_delivers_real_event_but_never_claims_coverage(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            spec, data = self._changed_instance(root)
+            instance = progress.Progress(root, spec, owner="owner-unit")
+            instance.probe()
+            data.write_text("1\n2\n", encoding="utf-8")
+            decision = instance.tick()
+            self.assertEqual(decision["verdict"], "wake")
+            self.assertEqual(decision["causes"][0]["kind"], "progress_change")
+            self.assertFalse(decision["supplement"]["allowed"])
+            self.assertFalse(instance.status()["green"])
+
+    def test_goal_full_without_new_events_remains_quiet(self):
+        with tempfile.TemporaryDirectory() as folder:
+            spec, _ = self._changed_instance(Path(folder))
+            instance = progress.Progress(folder, spec, owner="owner-unit",
+                                         goal={"state": "active", "coverage": "full"})
+            instance.probe()
+            decision = instance.tick()
             self.assertEqual(decision["verdict"], "sleep")
             self.assertEqual(decision["causes"][0]["kind"], "goal_covers")
-            self.assertEqual(events_of(instance, "wake"), [])
-            self.assertFalse(instance.status()["needs_rearm"]["value"])
             self.assertFalse(decision["supplement"]["allowed"])
 
     def test_goal_partial_coverage_is_undecidable(self):

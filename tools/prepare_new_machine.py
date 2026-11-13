@@ -1,8 +1,8 @@
 # GENERATED-BY: new-machine recovery integration, 2026-11-09 +08:00
-# LAST-EDIT: 2026-11-09 +08:00
+# LAST-EDIT: 2026-11-13（当前框架同步）
 # PURPOSE: Render machine-specific plugin deployment without modifying the host.
 # ORIGIN: existing DSH deployment generator and explicit project filter policy
-# CUMULATIVE-DELTA: Bind installed workspace paths, preserve global preferences and emit verifiable setup receipts.
+# CUMULATIVE-DELTA: 2026-11-13 接入观察者、补足推进器与当前读取导航。 Bind installed workspace paths, preserve global preferences and emit verifiable setup receipts.
 """Prepare deployment inputs. Does not install plugins, register tasks or connect to services."""
 from __future__ import annotations
 import argparse
@@ -59,7 +59,9 @@ def prepare(workspace, *, framework=ROOT, original=False):
     plugins = framework / 'kernel/hosts/dsh/plugins'
     entries = {'agent-instruction-filter': plugins / 'agent-instruction-filter/index.js',
                'doc-gap': plugins / 'dsh-doc-gap/index.js',
-               'autodl-events': plugins / 'autodl-events/lib/index.js'}
+               'autodl-events': plugins / 'autodl-events/lib/index.js',
+               'goal-observer': plugins / 'goal-observer/index.mjs',
+               'goal-observer-ui': plugins / 'goal-observer-ui/index.js'}
     for name, path in entries.items():
         if not path.is_file():
             raise ValueError('缺少插件入口：' + name)
@@ -70,7 +72,12 @@ def prepare(workspace, *, framework=ROOT, original=False):
         'doc-gap': {'enabled': False, 'pluginPath': str(entries['doc-gap'].parent.as_posix()),
                     'projects': [root.as_posix()], 'docs': [],
                     'policy': {'scope': {'include': [], 'exclude': []}, 'anchor': ''}},
-        'autodl-events': {'enabled': True, 'pluginPath': entries['autodl-events'].as_posix(),
+        'goal-observer': {'enabled': True, 'pluginPath': entries['goal-observer'].as_posix(),
+                           'objectivePrefix': '[观察者]', 'timeoutMs': 240000,
+                           'maxTokens': 16000, 'contextChars': 24000,
+                           'notification': {'enabled': False, 'command': [], 'throttleMs': 300000}},
+         'goal-observer-ui': {'enabled': True, 'pluginPath': entries['goal-observer-ui'].as_posix()},
+         'autodl-events': {'enabled': True, 'pluginPath': entries['autodl-events'].as_posix(),
                           'pollMs': 5000, 'maxTargets': 1, 'fallback': 'hold',
                           'delivery': 'steer', 'projects': [root.as_posix()]}}}
     if original:
@@ -98,6 +105,8 @@ def prepare(workspace, *, framework=ROOT, original=False):
                           '--deployment', str(path), '--out', str(directory / 'profile.patch.yml')],
             'host_modified': False, 'host_verified': False, 'tasks_registered': False,
             'live_validation': ['宿主加载apply与新pid', '主会话保留及子会话过滤实际输入',
+                                 '观察者三轮continue与证据complete、真人暂停、额度停止',
+                                 '目标通知显示的goal id、revision与round匹配',
                                 '新专题与新会话targets绑定', '两次availability投影不改STATUS',
                                 '真实凭据、授权及一个正式评测样例'],
             'note': '只生成当前机器参数。不能据此宣称新电脑恢复完成。'}

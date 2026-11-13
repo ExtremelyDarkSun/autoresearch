@@ -1,0 +1,7 @@
+# GENERATED-BY: portable synchronization (DSH agent, 2026-11-13 21:22 +08:00)
+# LAST-EDIT: portable synchronization (DSH agent, 2026-11-13 21:22 +08:00)
+# PURPOSE: 打包产物不入库；需要时用 pack.mjs 从源码重建。
+# ORIGIN: none
+# CUMULATIVE-DELTA: 首版。只忽略本目录的 dist/ 与 tgz。
+dist/
+*.tgz

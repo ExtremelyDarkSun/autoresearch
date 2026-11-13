@@ -1,5 +1,6 @@
 # GENERATED-BY: 完整功能迁移（D2 出口闸 / 下一轮只读 preflight / 跨专题四阶段排序）
-# LAST-EDIT: 2026-11-09（首版；真实 Workflow/Accounts/Admission/Governance 组合夹具 + 真实 Monitoring
+# LAST-EDIT: 2026-11-13（计划夹具补 `criteria.gate` / `.control`：显式 confirmatory 现在要求机器可读门槛，R394）
+#            首版：真实 Workflow/Accounts/Admission/Governance 组合夹具 + 真实 Monitoring
 #            事件账与合成 host + 真实 Runtime 资源租约；不连接真云机、不发消息、不跑外部评测）
 # PURPOSE: 证明「超期未回复时不许记 advance 假绿」「下一轮只有五道真实闸全过才给可执行命令」
 #          「跨专题按显式阶段排序、同机器/GPU 冲突不推荐、零 GPU 可并行」，并证明这些只读入口
@@ -10,6 +11,7 @@
 #         生产用 host_evidence.DSHHost）；Monitoring 的事件账与 check_start 是真实实现，
 #         会话证据来自本文件的最小合成 host（顶层会话记录），⛔ 不声称真实宿主已核。
 #         三个专题共用同一个真实独立 venv（只为验证排序/冲突，不声称依赖隔离）。
+#         2026-11-13：确认性计划夹具补机器可读门槛与对照读数（gate 3/6 ge · control 1/6 + source）。
 
 from __future__ import annotations
 
@@ -275,7 +277,10 @@ class AdvanceFixture(unittest.TestCase):
                             "hypothesis_id": "H1"}],
             "criteria": {"mode": "confirmatory", "metric": "通过题数", "direction": "increase",
                          "threshold": 1, "source": "evidence/readings.md 上一轮逐题读数",
-                         "rationale": "上一轮只差 1 题，门槛取 1"},
+                         "rationale": "上一轮只差 1 题，门槛取 1",
+                         # R394：显式 confirmatory 同时给机器可读门槛与对照读数。
+                         "gate": {"k": 3, "n": 6, "direction": "ge"},
+                         "control": {"k": 1, "n": 6, "source": "上一轮同 6 题基线实测 1/6"}},
             "baseline": {"label": "上一轮冻结包", "fingerprint": "sha256:deadbeef"},
             "case_sets": {"target": ["t1", "t2"], "regression": ["r1", "r2"],
                           "control": ["c1"]},

@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: portable project organization
-LAST-EDIT: 2026-11-09
+LAST-EDIT: 2026-11-13（当前框架同步）
 PURPOSE: 项目唯一入口及开局必须知道的沟通规则
 ORIGIN: maintained layered workspace organization, neutral extraction
-CUMULATIVE-DELTA: 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
+CUMULATIVE-DELTA: 2026-11-13 接入观察者、补足推进器与当前读取导航。 固定项目组织模板；实例事实留空，现行规则直接链接唯一正文。
 -->
 # 研究项目入口
 
@@ -57,6 +57,8 @@ CUMULATIVE-DELTA: 固定项目组织模板；实例事实留空，现行规则�
 | 修改框架或调用研究主链 | [框架入口](<AutoDL实验/框架/AGENTS.md>)、[不变量](<../kernel/contracts/CONTRACT.md>) | 框架动作前 |
 | 谁读什么、如何恢复会话 | [读取正文](<../kernel/contracts/reading_policy.md>)、[本项目加载图](<AutoDL实验/框架/CONTEXT_LOADING.md>) | 开局或接手任务 |
 | 核完整行为预期 | [预期表](<../kernel/contracts/framework_expectations.md>) | 主负责人开局整份读 |
+| 接手或持续推进专题 | [观察者与推进器](<../docs/dsh-goal-observer.md>)、[上下文预算](<../kernel/contracts/context_budget.md>) | 开始或续接时；真人停止优先 |
+| 登记挂起事项与跨专题机制 | [等待簿](<AutoDL实验/实验分析/WAITING.md>)、[机制清单](<AutoDL实验/实验分析/MECHANISMS.md>) | 开始或设计下一轮前整份读 |
 | 如何在新机器复现 | [安装说明](<INSTALL.md>) | 新部署或恢复前 |
 
 ## 上下文边界

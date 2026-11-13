@@ -1,5 +1,5 @@
 # GENERATED-BY: portable reporting migration, 2026-11-09 +08:00
-# LAST-EDIT: 2026-11-09 18:40 `_lease_state` 只读连接委托 runtime.store.ReadonlyStore
+# LAST-EDIT: 2026-11-13 加只读接料检查 handoff_check()（复用既有 blocker，不另建台账）与供料包接料四条
 # PURPOSE: 研究现状页的完整供料、来源字节版本、正文验收回执、运行/整轮事件、只读诊断与流程状态投影。
 # ORIGIN: 上游供料与交付工具的通用机制（供料包、来源快照指纹、正文验收、只读诊断、流程状态分离、事件追加），
 #         去掉全部私人实例事实（机器名、会话号、比赛数据、历史台账与真实读数）。
@@ -11,6 +11,9 @@
 #         （WAL 读不创建 -shm/-wal）；不可读仍返回 UNKNOWN，不推断租约。
 #         2026-11-09 人读侧专题目录与 STATUS.md 落点由 `.autoresearch/workspace-layout.json`
 #         决定（无标记仍是 topics/<topic>）；机器侧 `.autoresearch/state/...` 与状态库不迁移。
+#         2026-11-13 scribe 交接：`handoff_check()` 只读复述 `request()`/`missing_items()` 已有的 blocker
+#         （缺用户要求来源、最新运行事件缺 leader_conclusion、来源清单缺件），供料包第 7 节写清
+#         接料检查 / 不代选下一轮 / 建议须单列并经负责人采纳留证；⛔ 不新增第二本台账，也不改验收判据。
 
 """研究现状页的供料、版本、验收回执与只读诊断。
 
@@ -980,6 +983,51 @@ def missing_items(root, topic, snapshot=None, task=None):
 
 
 # ---------------------------------------------------------------------------
+# 接料检查：负责人先完成研究判断（只读视图，不另建台账）
+# ---------------------------------------------------------------------------
+
+
+def handoff_check(root, topic):
+    """接料检查（只读）：负责人是否已经给出可写页的研究判断。
+
+    规则来源：`kernel/contracts/status_page.md` §6。scribe 先核，缺项返回负责人；
+    ⛔ 不替负责人推导假设、不代选下一轮、不补理由。
+
+    实现只**复述**既有判据，不新增台账：
+
+    * blocker 直接来自 `missing_items()`（缺显式用户要求、最新运行事件缺 `leader_conclusion`、
+      来源清单缺件）——`request()` 也是拿同一批缺项把任务停在 `pending_owner`；
+    * 「负责人判断是否已登记」直接读 append-only 的 `INPUTS.jsonl`；
+    * ⛔ 不写文件、不建目录、不加锁（`missing_items` 本身就是只读的）。
+
+    返回 `{'ok', 'topic', 'owner_judgment_registered', 'latest_event', 'blockers', 'read_only', 'note'}`。
+    """
+    root = Path(root).resolve()
+    require_topic(topic)
+    snapshot = source_snapshot(root, topic)
+    task = _load_json(task_path(root, topic), {}) or {}
+    blockers = [item for item in missing_items(root, topic, snapshot, task)
+                if item.get('level') == 'blocker']
+    latest = latest_event(root, topic)
+    conclusion = [row for row in _input_rows(root, topic)
+                  if row.get('kind') == 'leader_conclusion'
+                  and (latest is None
+                       or (row.get('exp') == latest.get('exp')
+                           and str(row.get('at') or '') >= str(latest.get('at') or '')))]
+    return {
+        'ok': not blockers,
+        'topic': topic,
+        'owner_judgment_registered': bool(conclusion),
+        'latest_event': None if latest is None else latest.get('event_id'),
+        'blockers': [{'item': item['item'], 'why': item['why'], 'read': item['read']}
+                     for item in blockers],
+        'read_only': True,
+        'note': '只读接料检查：缺项返回负责人补齐。⛔ scribe 不替负责人推导假设、不代选下一轮；'
+                '本条不另建台账（缺项与任务状态由 request() 维护），也不构成实验审批或安全停机条件。',
+    }
+
+
+# ---------------------------------------------------------------------------
 # 供料包
 # ---------------------------------------------------------------------------
 
@@ -1132,6 +1180,12 @@ def build_feed(root, topic, snapshot, task, *, inline_limit=INLINE_LIMIT_BYTES):
         '- 没有实验写「暂无实验，未起跑」及原因；⛔ 不把「没看到差别」写成「一样好」。',
         '- 第 8 节只写未启动的研究动作；⛔ 不写审计额度、审批、登记、等人解决这类流程。',
         '- ⛔ 新页不写旧流程字段（拍板 / 正文覆盖版本 / 当前阶段 / 十一格 / 自推进心跳）；旧页只读兼容。',
+        '- 接料检查：先核负责人是否已给出当前阶段、原假设、观察与解释边界、假设修改理由、'
+        '下一步与选择理由、适用的用户纠正；缺项按第 2 节列出并返回负责人（⛔ 不替负责人推导假设）。',
+        '- ⛔ 不代选下一轮：下一步/下一轮只能来自负责人已登记的判断（`INPUTS.jsonl` 的 '
+        '`leader_conclusion`，带来源与定位）；scribe 不得把自选方向写成页面上的结论或计划。',
+        '- 自己的新解释或下一步建议必须在回传中**单列**交回负责人；未经负责人采纳并登记来源，'
+        '⛔ 不写成结论或计划（采纳后由负责人写进既有专题材料或 `leader_conclusion`，页面再照写）。',
         f'- 写完由 scribe 会话调用：`{ack_command(topic)}`',
         '- ⚠️ 回执默认只记调用方自述（declared）；真实派工要注入宿主验证器，'
         '真实送达要另取通道回执。',

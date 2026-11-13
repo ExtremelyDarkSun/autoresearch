@@ -1,9 +1,9 @@
 <!--
 GENERATED-BY: full expectations migration audit
-LAST-EDIT: 2026-11-09 通用补项整库验收：复盘v2、普通提问、16项检查与本地/远端下一轮预检；109编号与顺序保留，现场未验另列
+LAST-EDIT: 2026-11-13（当前框架同步）
 PURPOSE: 保留全部预期编号并作为迁移功能验收依据。
 ORIGIN: upstream FRAMEWORK_EXPECTATIONS_2026-10-10.md, current working content
-CUMULATIVE-DELTA: 2026-11-09 监控默认关闭、三项重点审计、判据source可选及文档骨架生成；109编号顺序保留。2026-11-09 依据当前源码与实测复核逐项状态：workflow/reporting/monitoring/decisions/progress/progress_host/issues/admission/workspace/lifecycle/host_evidence/channels/backends
+CUMULATIVE-DELTA: 2026-11-13 接入观察者、补足推进器与当前读取导航。 2026-11-09 监控默认关闭、三项重点审计、判据source可选及文档骨架生成；109编号顺序保留。2026-11-09 依据当前源码与实测复核逐项状态：workflow/reporting/monitoring/decisions/progress/progress_host/issues/admission/workspace/lifecycle/host_evidence/channels/backends
 已有可调用入口（含 CLI 与专项测试）；把「旧双账统一 / 事务内复核 / 审批绑执行规范 / goal 持久事件」从在途改为已接；
 新增「部分验收」与「待验」两种说法；不恢复旧终点闸；不把合成语义核或单次探针写成完整真实云实验。
 -->
@@ -18,7 +18,7 @@ CUMULATIVE-DELTA: 2026-11-09 监控默认关闭、三项重点审计、判据sou
 
 操作命令见[怎么跑](<RUNNING.md>)；拆分落点见[迁移说明](<migration.md>)。验收依据是[中性化完整预期](<../kernel/contracts/framework_expectations.md>)，本文逐项保留 109 个编号与其顺序。
 
-源工作文件 SHA256：`07ee2c49ddd9568ef5dcee4e0d24ced924e47a1697699363e6ba611d3a11e9a7`。编号覆盖不代表功能覆盖；本轮重审覆盖 109 个编号，未漏号、未重号。
+2026-11-09源基线 SHA256：`07ee2c49ddd9568ef5dcee4e0d24ced924e47a1697699363e6ba611d3a11e9a7`。当前源版本见[中性指纹](<framework-sync-sources.json>)。编号覆盖不代表功能覆盖；本轮重审覆盖 109 个编号，未漏号、未重号。
 
 L2–L14、V1–V3按用户显式启用监控后的条件解释。默认关闭不恢复监控义务。本次增量验证与源文档版本见[同步记录](<FRAMEWORK_SYNC.md>)。
 
@@ -33,7 +33,7 @@ L2–L14、V1–V3按用户显式启用监控后的条件解释。默认关闭�
 - **宿主相关 / 未联调 / 未验收**：需要真实宿主、通道或独立会话证据；不计为通过。
 - **已退役 / 历史记录**：保留源编号作追溯，不恢复旧私有状态，也不拿历史结论当当前验收。
 
-本轮判断包含读源码、专项测试、同一空工作区的冷启动集成与完整 `selftest --plugins`：运行时、其余 unittest 与三个插件自检全部通过；POSIX 远端用例在 Windows 跳过。具体计数以[验收记录](<VERIFICATION.md>)为准。冷启动 6 项与真实宿主探针、V1–V3 合成语义核分别记录；测试数量不代替功能覆盖。
+本轮判断包含读源码、专项测试、同一空工作区的冷启动集成与完整 `selftest --plugins`：运行时、其余 unittest 与插件自检的实际结果见最新记录；POSIX 远端用例在 Windows 跳过。具体计数以[验收记录](<VERIFICATION.md>)为准。冷启动 6 项与真实宿主探针、V1–V3 合成语义核分别记录；测试数量不代替功能覆盖。
 
 ## 源码证据入口
 
@@ -56,19 +56,23 @@ L2–L14、V1–V3按用户显式启用监控后的条件解释。默认关闭�
 
 关键调用点（读源码）：`workflow.launch` 在**同一个写事务**里复核计划版本、来源哈希、审计状态、监控状态与执行准入，并复核 before 快照收据，通过后才占用 `wf_runs` 并起子进程；`workflow` 的意图闸**只认** `Monitoring.check_start`（旧 `Governance.check_start` 不接生产双重拦截），执行落点由 `ExecutionTarget` 解析出专题真实 `cwd` 与独立 venv，`Lifecycle` 在 prepare/起跑/复盘时自动写快照、AI_WORK、收据与 reporting 事件。公开 `workflow review` CLI 默认要求 schema2 的 `continuation`（判据证据、cost_scope、next_owner、needs_approval），旧格式 `--legacy-record` 只投影 unknown。`reporting.ack` 只有带 `--proof-json` 才可能出现 `verified`，否则只记 `declared`。`decisions.status` 按台账重算双回执，手写 `success` 不被承认；`decisions.authorization_check` 用 `execution_core` 对**这一份实际 plan** 重算指纹（argv / implementation / budget / case_sets 全保留）。`budget` 的 grant 在 `authorize` 的同一个 `BEGIN IMMEDIATE` 事务里先核 `trusted_ordering`（可信 session / seq / 宿主时间）再建实验，被拒整体回滚、零副作用；较新的 revoke 不能被迟到的旧 renew 复活。`issues` 的每次写都在 `BEGIN IMMEDIATE` 里重算哈希链，`--exp` 进查重键。`progress.outcome` 的 `advance` 先核只读 `read_overdue`（source + event_id 配对），超期或不可判即拒；`preflight`/`next-round`/`schedule` 只读给命令。`assurance.checklist` 只读聚合各层，未知不记绿。`admission` 与远端 Runtime 共用同一张 `budget_reservations`；`remote_workflow` 按计划 `authorization.scope` 构造 `Runtime(budget_scopes=(scope,))`，执行层核的就是授权那笔预留。`progress_host` 的 goal 来自 DSH 会话 `goal/change` 事件只读重放（projcache 只作诊断），`activation` 是进程内状态、从不落盘。
 
+## 当前新增组件的证据边界
+
+2026-11-13：观察者运行插件的纯函数与模拟宿主、UI的VM消息匹配、五插件配置生成和新机准备链均有本地测试。通知使用假spawn，不发消息；未修改或重启真实宿主。旧源摘要属于历史版本，当前来源以[最新指纹](<framework-sync-sources.json>)为准。
+
 ## 逐项验收
 
 编号与目标正文逐条对应。缺口栏同时说明现有局部能力；表格记录本轮读源码结果，不是虚构生产实测。
 
 | 编号 | 状态 | 实际能力与缺口 |
 |---|---|---|
-| A1 | 部分 | 本轮完成后有只读 `preflight` / `next_round`：复用 `Workflow.check` 同判据，返回真实 launch 命令；**不自动起进程、不新增常驻 daemon**，主会话/宿主执行。真实宿主唤醒与推进激活未验。 |
-| A2 | 本地实现 | `progress status` 显示阻塞项与恢复命令；缺推进来源时写 `progress_unavailable` 事件，并给出 `rearm` 动作。 |
-| A3 | 本地实现 | `watch` 不设固定寿命：叫醒一次就退出并写 `needs_rearm`，不会到点静默退出。 |
-| A4 | 部分 | 静默窗口（`spec.quiet.window_sec`）与唤醒事件已实现；「受管作业真的叫醒负责人」要宿主登记（`progress-host register`），宿主回传未验。 |
-| A5 | 部分 | `overdue` 维度优先于静默窗口与 goal 抑制；数据来自 `decisions` 台账的只读视图；通道 CLI 与 `decisions --channel-config` 已可用，真实入向未验。 |
-| A6 | 本地实现 | 唤醒后必须 `outcome` 三选一（推进 / 无事+下一条件 / 登记新问题），并显式 `rearm`；每次唤醒与重挂都追加留痕。 |
-| A7 | 部分 | `progress-host register` 先核 exact 命令 + jobId 再落 append-only 台账；已用真实 DSH 持久日志做一次 job 来源绑定探针（`verified=true`，来源为宿主持久日志、工具为 pwsh）。「宿主退出码语义」与真叫醒仍未验。 |
+| A1 | 部分 | 原生goal与观察者源码已迁入，模拟自动轮可continue/complete；真实宿主加载与三轮模型推进未验。 |
+| A2 | 本地实现 | 前缀严格匹配，普通goal不介入；模拟宿主证明默认关闭与启用差异。前缀不是加载证明。 |
+| A3 | 本地实现 | 观察者在pre-step直接调用模型，无常驻子会话；推进器watch不设固定寿命，唤醒一次退出。 |
+| A4 | 部分 | 插件核当前goal id/revision/round与active；停止、取消和卸载有合成负例。持久日志不能证明进程内armed；真实部署另验。 |
+| A5 | 部分 | 契约要求真人resume，不重建目标绕额度；插件不调用resume、不改额度。宿主状态机与额度现场验收未做。 |
+| A6 | 部分 | complete要求非空证据并调用宿主CAS，宿主拒绝时不写已完成。推进器保留needs_rearm。科学证据是否足够仍需判断。 |
+| A7 | 部分 | 插件不hook提问工具、不实现代答。观察错误保存独立来源；推进器有结构化判词。真实提问等待状态仍须宿主验证。 |
 | B1 | 本地实现 | `decisions send` 先页后卡；缺通道直接拒发，不假装送达。 |
 | B2 | 本地实现 | `prepare` 的 `readiness` / `page_problems` 在缺背景、上下文或进展时拒绝生成审批页。 |
 | B3 | 本地实现 | 自包含 HTML：六块必填、每条方案 13 字段、执行规范绑 `execution_fingerprint`（`execution_core` 保留 argv/实现/预算/题单全对象），且禁止外部依赖。 |
@@ -102,7 +106,7 @@ L2–L14、V1–V3按用户显式启用监控后的条件解释。默认关闭�
 | F2 | 语义纪律 | 编号校验可做，内容归属仍须读内容。 |
 | F3 | 语义纪律 | 答复是否基于原始产物，字符串检查证明不了。 |
 | F4 | 语义纪律 | 六块存在不证明人能看懂。 |
-| F5 | 部分 | `progress-host register` 核 exact 命令 + jobId 后登记受管作业；来源绑定已真实核过一次（宿主持久日志），但「watch 通知真的叫醒负责人 / 作业当前仍存活」未验。 |
+| F5 | 部分 | 观察者、goal状态与受管作业分开验收。watch需真实job登记并处理后rearm；真实回传未验。 |
 | F6 | 已退役 | 联络角色取消，不恢复为必做。 |
 | F8 | 部分 | 完整 bundle 与捕获文本比对可用；「宿主实际读了哪几段」仍无可信宿主读事件。 |
 | F7 | 语义纪律 | 没有全会话提问扫描器；靠人/agent 自查。 |
@@ -113,17 +117,17 @@ L2–L14、V1–V3按用户显式启用监控后的条件解释。默认关闭�
 | G4 | 历史记录 | 不复制旧台账；通用要求见 E4 与 §9（问题台账已实现）。 |
 | G5 | 历史记录 | 不补造历史页；新审批页由 `decisions prepare` 生成。 |
 | G6 | 历史记录 | 真实历史消息不公开迁入，新入向按 D 组验收。 |
-| H1 | 部分 | `goal/change` 持久事件已由 `DSHHost` 从会话日志**只读重放**（权威），`session_projcache` 只做诊断；没有 goal、paused、blocked、complete 都能判成 coverage `none`，但 **phase=active 时** `activation` 是宿主进程内状态、从不落盘 ⇒ coverage 只能 `unknown`（除非部署可信模块给 full/none）。「goal 主导推进」不能算已验收。 |
-| H2 | 部分 | 推进器有租约 fencing，第二个拿不到；goal 已实读，外部推进器只在 coverage 确切为 `none` 时补足。`activation` 未知 ⇒ 真实宿主「两个来源不重复推进」未端到端验收。 |
-| H3 | 部分 | `spec.collectors` 可跑远端 argv 并解析输出，不只看本地 mtime；受管远端已有 CLI、同一笔 `authorization` 预算、协议 v2 的 `argv_sha256` / 停止证据与事务内 TOCTOU 复核，`ssh_worker` 按 `importlib.metadata` 真实包清单核环境指纹。真实 SSH / POSIX 停止与远端产物取回未验；代码 / 题单上传是独立部署步骤。 |
-| H4 | 本地实现 | `wake` 事件携带变化字段与原始事件引用。 |
-| H5 | 本地实现 | 声明式闭集 spec：命令 / 文件 / 目录采集器 + 事件比较，主机与比赛语义都在配置里。 |
-| H6 | 本地实现 | 采集失败 fail-closed；连续失败形成可定位的 `progress_unavailable` 事件并触发唤醒。 |
-| H7 | 本地实现 | `outcome` 三出口强制三选一：推进 / 无事 + 下一条件 / 登记新问题。 |
-| H8 | 本地实现 | 连续无事按 `idle_streak` 加倍静默窗口，并有 `max_window_sec` 上限。 |
-| H9 | 本地实现 | 直令轮的识别来自部署配置（`progress` 侧按配置判），不误报「仍需规划派工」。 |
+| H1 | 部分 | 观察者goal主推、推进器同时补足已进入源码和配置；合成自动轮及事件通知测试通过。真实连续推进未验。 |
+| H2 | 本地实现 | 模型从后续自动轮介入，防重复next；外部变化先通知，即使goal全覆盖也不吞事件。通知不启动实验，静默重复推进仍受coverage约束。 |
+| H3 | 部分 | 目标变更使在途观察作废；声明式远端采集仍保留原输出与指纹。真实SSH和远端产物未验。 |
+| H4 | 部分 | 插件核活跃目标与轮次，goal重放仍仅是持久状态。activation/armed需进程内证据，不把通知当恢复授权。 |
+| H5 | 部分 | complete先被宿主接受再落完成消息，缺证据不完成；进度采集器配置化。科学完成条件由agent和人判断。 |
+| H6 | 本地实现 | 观察者非法响应重问，异常或pause按原自动轮继续，不调用pause/block；用户停止优先。进度采集失败独立通知并留原错。 |
+| H7 | 本地实现 | 观察与诊断保留独立source，不改用户原话。推进器outcome三出口与needs_rearm保留。 |
+| H8 | 历史机制 | 保留编号；通用推进器idle_streak退避及上限仍在，不作为观察者goal必做条件。 |
+| H9 | 历史机制 | 保留编号；通用推进器仍识别配置的直令轮，不据旧阶段误报规划义务。 |
 | I1 | 部分 | 页面正文按 `body_sha256` 与来源清单、验收回执绑定：`RECEIPT.json` 同带 `sources` / `source_fingerprint` / `body_sha256`，心跳与 mtime 不替代。真实 scribe 页只做过一次字节回演探针，完整链路未验。 |
-| I2 | 本地实现 | `reporting prepare` 生成完整供料包：来源清单 + 正文 + 旧页全文；超限显式标「未内联」并给补读路径。 |
+| I2 | 本地实现 | 完整供料和旧页保留；新增scribe交接接料检查，缺负责人判断或下一步则退回；建议未经采纳不能写成决定。 |
 | I3 | 部分 | 八节 + 第 3 节「假设 → 判据 → 设置 → 结果」与最多 3 轮可校验；「计划与启动状态」的关联仍靠事件记录。 |
 | I4 | 本地实现 | `round-check` 要求整轮终态、负责人判断与当前页回执；单臂结果不能冒充整轮。 |
 | I5 | 本地实现 | `diagnose` / `status` / `check` 只读：不改页面、锁、日志、DB；`decisions` 的 `status` / `overdue` / `authorize-check` 走 `DecisionService.readonly`，构造时不建表、不建目录、不装通道台账；缺库或旧 schema 判「不可判」，不冒充通过；证据不足写「待核」。 |
@@ -135,7 +139,7 @@ L2–L14、V1–V3按用户显式启用监控后的条件解释。默认关闭�
 | J1 | 本地实现 | `workflow prepare`核假设、判据、实现五项+files和显式argv；source可选，新模板默认exploratory并含停止条件；确认性保留阈值+理由。探索性无source正例已走准备主链。 |
 | J2 | 本地实现 | 来源按 sha256 判过期（专题目标 / 主文档 / 用户原话 / 旧复盘来源）；只 `touch` 不改内容不失效。 |
 | J3 | 本地实现 | `check` 与 `launch` 都用实际 argv 与事前声明逐项比对；不符时零子进程。 |
-| J4 | 本地实现 | 真实启动记录（`wf_runs`）+ 有证据的复盘（`wf_reviews`）必须存在；旧终点闸不恢复为必跑。 |
+| J4 | 本地实现 | 本地与远端复用门槛/对照检查，按精确比值判；显式null不可绕过，探索计划不强加数字阈值。全过才产出预检记录（launched=false），真实启动记录绑定`wf_runs`的计划哈希、实际argv、UTC及run_id；仍需有证据的`wf_reviews`，不恢复旧终点闸。见[起跑回归](<../tests/test_launch_record.py>)。 |
 | J5 | 本地实现 | 同专题前轮已结束但未复盘 ⇒ 拒开新轮；被否定假设重试必须在计划里写新条件与来源。 |
 | J6 | 本地实现 | 同一 `plan_id` 已启动过 ⇒ 拒再 prepare / 再启动（不许事后补造）；新轮次用新 plan id。 |
 | J7 | 本地实现 | `reporting check` 是页面验收入口：查研究八节、每块四段与来源；不是只有函数。 |
@@ -194,12 +198,14 @@ L2–L14、V1–V3按用户显式启用监控后的条件解释。默认关闭�
 
 **「功能迁移完整」的判据**：全部适用要求都有证据。个人配置（通道、机器、比赛资料）缺失本身合理；**通用功能缺失不能归为「只需填配置」**，也不能靠「让 agent 补一段代码」把首次可用性补圆。
 
-## 本轮验证
+## 基础迁移的历史验证
+
+以下保留2026-11-09基础迁移证据；2026-11-13当前完整回归、新克隆与观察者新增证据以[最新验收](<VERIFICATION.md>)为准。
 
 - 【实测】`python -X utf8 -B tools/check_repository.py`：UTF-8、语法、已知私人值签名与文档链接检查**无错误**。它不证明不存在未列入规则的私人信息。
 - 【自查】验收表 109 个编号、顺序与预期表一致，无漏号/重号。
 - 【历史】`python -X utf8 -B research.py selftest --plugins` 曾全绿；本批新增专项见下，未把新旧测试合成最终总数。具体计数以[验收记录](<VERIFICATION.md>)为准。
-- 【本批专项】E5 的 review v2（schema2：criterion/evidence/cost_scope/next_owner/needs_approval；公开 review 默认 require2、`--legacy-record` 保 unknown）、workflow、lifecycle、冷启动（已升 `require_version2`）专项通过；Questions 39 项（本地 FeishuChannel 认证 + 公开 `questions answer --channel-config` 子进程，无出网）、Issues 34 项（旧无 exp 兼容、exp 查重、append link）通过；assurance 39 项、progress advancement 29 项（含真实远端 helper + assurance 组合与 CLI 静态快照拒绝）、原 progress 32、remote helper 17 + 原 remote 47、D2 回复绑定 5 + decisions 47 + progress_host 34 通过。各模块计数不是最终聚合，总数以[验收记录](<VERIFICATION.md>)为准。
+- 【本批专项】E5 的 review v2（schema2：criterion/evidence/cost_scope/next_owner/needs_approval；公开 review 默认 require2、`--legacy-record` 保 unknown）、workflow、lifecycle、冷启动（已升 `require_version2`）专项通过；Questions 39 项（本地 FeishuChannel 认证 + 公开 `questions answer --channel-config` 子进程，无出网）、Issues 34 项（旧无 exp 兼容、exp 查重、append link）通过；assurance 39 项、progress advancement 30 项（含真实远端 helper + assurance 组合与 CLI 静态快照拒绝）、原 progress 32、remote helper 17 + 原 remote 47、D2 回复绑定 5 + decisions 47 + progress_host 34 通过。各模块计数不是最终聚合，总数以[验收记录](<VERIFICATION.md>)为准。
 - 【实测】冷启动 6 项：同一空工作区经公开 `init`、真实 Git/venv、真实 Monitoring、`Accounts`/`Admission`、`DSHHost` 解析合成日志的独立审计、真实子进程、**review v2**、自动快照/报告投影与 scribe 字节回演 `ack verified`；第二轮在同一 `series-small` 另预留 3 并真实运行，账户 `reserved_units=6`、`spent_units=0`，两笔 unknown 成本都保持 `reserved`，第三轮因未复盘被拒。夹具是合成的，不当作生产授权。
 - 【实测】V1–V3 合成语义核：新 spawn 独立会话读 3 个案例；V2 识别 7/10 被写成 9/10 并阻断，V3 合理探索负例放行；V1 **修订后**通过（首次报告在 assessment 提到截止后数据）。不是生产 JSON 端到端，也不证明一次通过或机械隔离。
 - 【已实测的真实宿主探针】① 独立子会话：固定 JSON 报告的 spawn / 父子绑定 / 原文逐字相等均 `verified`；② 实际 scribe 从空工作区经 init + provision + prepare 写到 `functions.write` 整页，`DSHHost.ack` 回 `verified=true`、`session_verified=true`、`delivery_verified=false`，八节校验无错。**单次探针不等于完整真实云实验。**
@@ -207,7 +213,7 @@ L2–L14、V1–V3按用户显式启用监控后的条件解释。默认关闭�
 - 【已实测】自然语言 close：`monitoring close --user-quote`（内联 JSON / `@文件` / `--user-quote-file`，`{session,seq,text}`）与旧 `--proof` / `--proof-seq` 互斥，已用真实 `DSHHost` 读合成 spawn / 用户日志核过；独立报告要 current + 新 spawn，`closure.user_command` 与用户原话同条绑定；`withdrawn` / `replaced` 可用，`achieved` / `unsatisfiable` 不能靠原话绕过。日志是合成夹具。
 - 【未验】真实通道租户送达与收件、真实 SSH / POSIX 停止与机器空闲、远端代码 / 题单上传步骤、真实云机与平台提交、当前模型请求的实际完整注入、`progress-host` 的 activation 语义（进程内仍标 unknown）、受管 job 的真叫醒与存活。⚠️ 停止只到**本 job 进程组**：子进程主动 `setsid` 逃逸不在覆盖内，更强隔离要部署 cgroup / namespace；Windows 无可靠组枚举判 `unknown`，不能把 group-stop 当成整台云机停止。本文没有宣称这些通过。
 
-## 本轮范围
+## 基础迁移范围
 
 本轮迁移把研究执行主链、执行准入与共享预算、意图与过程监控、人读页供料与验收、通道配置与收件、受管远端执行（含协议 v2 与事务内 TOCTOU 复核）、生命周期投影、宿主证据核验、问题台账、普通提问台账和统一检查清单接成可调用入口，并保留 109 个编号的逐项验收。
 

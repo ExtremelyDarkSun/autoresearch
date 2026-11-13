@@ -1,13 +1,13 @@
 <!--
 GENERATED-BY: portable framework synchronization
-LAST-EDIT: portable framework synchronization, 2026-11-09
+LAST-EDIT: portable framework synchronization, 2026-11-13
 PURPOSE: 研究现状页骨架。
 ORIGIN: generic research reporting
-CUMULATIVE-DELTA: 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
+CUMULATIVE-DELTA: 2026-11-13 写作体积参考同步为24KiB，未新增字节红闸。 2026-11-09 同步研究判据、三态审计、小修、完整读取及研究报告规则。
 -->
 # <专题> · 研究现状
 
-本页只写研究内容，总量最多最近三轮且包含当前实验。流程状态与机器周期块住流程文件。页面上限200行 / 12 KB，更早轮次保留到历史，不静默截断。
+本页只写研究内容，总量最多最近三轮且包含当前实验。流程状态与机器周期块住流程文件。写作参考上限200行 / 24 KiB，更早轮次保留到历史，不静默截断。
 
 ## 1 你的要求
 

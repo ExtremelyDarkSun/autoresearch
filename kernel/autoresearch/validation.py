@@ -1,8 +1,8 @@
 # GENERATED-BY: portable extraction / repository bootstrap, 2026-11-09 +08:00
-# LAST-EDIT: 2026-11-09 +08:00
+# LAST-EDIT: 2026-11-13（当前框架同步）
 # PURPOSE: Portable project entrypoint or verification.
 # ORIGIN: none
-# CUMULATIVE-DELTA: Independent kernel and target profile integration.
+# CUMULATIVE-DELTA: 2026-11-13 接入观察者、补足推进器与当前读取导航。 Independent kernel and target profile integration.
 """Run genuine isolated regression checks without subprocess output pipes."""
 import os
 from pathlib import Path
@@ -23,7 +23,8 @@ def run_tests(root, include_plugins=False):
             print('缺少 Node.js，无法执行插件自检。', file=sys.stderr)
             return 2
         for plugin in sorted((root/'kernel/hosts/dsh/plugins').glob('*')):
-            candidates = set(plugin.glob('selftest*.mjs')) | set(plugin.glob('selftest*.js'))
+            candidates = (set(plugin.glob('selftest*.mjs')) | set(plugin.glob('selftest*.js'))
+                          | set(plugin.glob('*.test.mjs')) | set(plugin.glob('*.test.js')))
             for test in sorted(candidates):
                 commands.append([node, str(test)])
     for argv in commands:

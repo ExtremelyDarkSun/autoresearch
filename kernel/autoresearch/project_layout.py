@@ -1,8 +1,8 @@
 # GENERATED-BY: project layout installation, 2026-11-09 +08:00
-# LAST-EDIT: 2026-11-09 +08:00
+# LAST-EDIT: 2026-11-13 +08:00
 # PURPOSE: 从仓库内 project 模板确定性地安装项目目录、重写 Markdown 链接、返回回执并只读校验结果。
 # ORIGIN: 用户要求（模板安装、@FRAMEWORK@ 替换、manifest 回执、只读 validate_layout）
-# CUMULATIVE-DELTA: 2026-11-09 新分层工作区写入固定中文布局标记，旧无标记工作区保持旧路径；安装templates文档骨架并纳入来源回执；机器可读清单契约是模板的 context_routes.json。
+# CUMULATIVE-DELTA: 2026-11-13 安装时将project跨专题必读资料改写为工作区内相对路径，仅映射安装清单已有文件。 2026-11-09 新分层工作区写入固定中文布局标记，旧无标记工作区保持旧路径；安装templates文档骨架并纳入来源回执；机器可读清单契约是模板的 context_routes.json。
 """项目目录模板的确定性安装与只读校验。
 
 四条边界（改本模块前先读）：
@@ -368,7 +368,7 @@ def _render(item, dest, planned):
         info['json_paths'] = count
         changed = changed or bool(count)
     elif source.name == READING_PLAN_NAME:
-        text, count = _rewrite_reading_plan(text)
+        text, count = _rewrite_reading_plan(text, item, dest, planned)
         info['json_paths'] = count
         changed = changed or bool(count)
     if source.suffix.lower() in MARKDOWN_SUFFIXES:
@@ -434,8 +434,8 @@ def _route_value(value, item, dest, planned):
     return None
 
 
-def _rewrite_reading_plan(text):
-    """把阅读登记的 ``kernel/<tree>/...`` 改写成框架目录内的实际相对路径。"""
+def _rewrite_reading_plan(text, item, dest, planned):
+    """把内核及 project 模板必读来源改写为相对安装后框架目录的路径。"""
     data = _load_json(text)
     if data is None:
         return text, 0
@@ -448,6 +448,15 @@ def _rewrite_reading_plan(text):
             continue
         value = entry.get('path')
         mapped = _reading_local_path(value)
+        if mapped is None and isinstance(value, str) and value.startswith('project/'):
+            parts = value.split('/')[1:]
+            if parts and '..' not in parts and '.' not in parts and all(parts):
+                names = item['context']['layout']
+                parts[0] = {FRAMEWORK_TOP: names['framework'], PLATFORM_TOP: names['platform']}.get(parts[0], parts[0])
+                target = '/'.join(parts)
+                if target in planned:
+                    framework = (dest / item['target']).parent.parent
+                    mapped = _relative_link(dest / target, framework)
         if mapped is not None and mapped != value:
             entry['path'] = mapped
             count += 1
