@@ -415,6 +415,99 @@ class TestSidecarAlignment(unittest.TestCase):
             self.assertEqual(meta["tasklist_task_ids"], ["syn-1", "syn-2"])
 
 
+class TestSchemaVersionCrossCheck(unittest.TestCase):
+    """「profile 写着 v2、结果文件其实是 v1」这件事必须能被发现。
+
+    `result_schema_version` 原本只从 profile 取，于是测量指纹记的是**配置**，
+    不是**数据**。两份文件都可能写着 v2，其中一份却是旧执行器按 v1 写的 ——
+    这种情况下把两次读数直接比，比的是两个不同格式。
+
+    修法：执行器把「我按第几版写」落进 sidecar，读取端与 profile 对一下。
+    """
+
+    def _write(self, out: pathlib.Path, rows, sidecar=None) -> pathlib.Path:
+        out.mkdir(parents=True, exist_ok=True)
+        write_jsonl(out / "task_results.jsonl", rows)
+        if sidecar is not None:
+            (out / "run_meta.json").write_text(
+                json.dumps(sidecar, ensure_ascii=False), encoding="utf-8")
+        return out
+
+    def test_mismatch_is_recorded(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            profile = {"evaluation": {"result_schema_version": 2}}
+            out = self._write(tmp / "m", [{"task_id": "syn-a", "status": "passed"}],
+                              {"result_schema_version": 1})
+            summary = ah.read_results(out / "task_results.jsonl", profile)["summary"]
+            self.assertEqual(summary["schema"]["file"], 1)
+            self.assertEqual(summary["schema"]["profile"], 2)
+            self.assertFalse(summary["schema"]["match"])
+            self.assertTrue(any("schema" in n for n in summary["notes"]),
+                            "不一致要写进 notes，不能只躺在结构化字段里")
+
+    def test_match_is_recorded(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            profile = {"evaluation": {"result_schema_version": 1}}
+            out = self._write(tmp / "k", [{"task_id": "syn-a", "status": "passed"}],
+                              {"result_schema_version": 1})
+            summary = ah.read_results(out / "task_results.jsonl", profile)["summary"]
+            self.assertTrue(summary["schema"]["match"])
+            self.assertEqual(summary["notes"], [])
+
+    def test_no_sidecar_version_adds_no_key(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            profile = {"evaluation": {"result_schema_version": 1}}
+            out = self._write(tmp / "n", [{"task_id": "syn-a", "status": "passed"}],
+                              {"tasklist_task_ids": ["syn-a"]})
+            summary = ah.read_results(out / "task_results.jsonl", profile)["summary"]
+            self.assertNotIn("schema", summary, "sidecar 没说版本就不该多出这个键")
+
+    def test_no_profile_records_file_version_only(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            out = self._write(tmp / "p", [{"task_id": "syn-a", "status": "passed"}],
+                              {"result_schema_version": 3})
+            summary = ah.read_results(out / "task_results.jsonl")["summary"]
+            self.assertEqual(summary["schema"]["file"], 3)
+            self.assertIsNone(summary["schema"]["profile"])
+            self.assertIsNone(summary["schema"]["match"])
+
+    def test_compare_refuses_on_version_mismatch(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            profile = {"evaluation": {"result_schema_version": 2},
+                       "limits": {"per_task_minutes": 10}}
+            old = self._write(tmp / "old", [{"task_id": "syn-a", "status": "failed"}],
+                              {"result_schema_version": 1})
+            new = self._write(tmp / "new", [{"task_id": "syn-a", "status": "passed"}],
+                              {"result_schema_version": 2})
+            result = ah.compare_results(
+                ah.read_results(old / "task_results.jsonl", profile),
+                ah.read_results(new / "task_results.jsonl", profile),
+                profile=profile,
+            )
+            self.assertFalse(result["comparable"])
+            self.assertEqual(result["verdict"], "incomparable")
+            self.assertTrue(any("版本" in r for r in result["reasons"]),
+                            f"理由里要点出是版本问题：{result['reasons']}")
+
+    def test_run_eval_writes_schema_version(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            tasks = write_jsonl(tmp / "t.jsonl", [
+                {"task_id": "syn-1", "command": [PY, "-c", "pass"]},
+            ])
+            out = tmp / "o"
+            proc = run_tool("--tasks", str(tasks), "--out", str(out),
+                            "--per-task-command", "--allow-failures")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            meta = json.loads((out / "run_meta.json").read_text(encoding="utf-8-sig"))
+            self.assertIsInstance(meta.get("result_schema_version"), int)
+
+
 class TestSelfTest(unittest.TestCase):
     def test_self_test_passes(self):
         proc = run_tool("--self-test")

@@ -356,6 +356,35 @@ def _sidecar_tasklist_ids(results_path: pathlib.Path, read_sidecar: bool):
     return None, None
 
 
+def _sidecar_schema_version(results_path: pathlib.Path, read_sidecar: bool):
+    """从 sidecar 取「这份结果文件是按第几版 schema 写的」，返回 `(版本号, 文件名)`。
+
+    为什么需要：`result_schema_version` 原本只从 **profile** 取，于是「profile 写成 v2、
+    结果文件其实是旧执行器按 v1 写的」这种情况完全看不出来 —— 指纹会声称 v2，
+    两次读数被当成同格式直接比。**比的是配置，不是数据**，这正是跨版本误比的样子。
+
+    执行器把自己写的版本号落进 sidecar（`result_schema_version`），读取端才有依据。
+    取不到就返回 `(None, None)`，调用方必须保持旧行为。
+    """
+    if not read_sidecar:
+        return None, None
+    for template in SIDECAR_NAMES:
+        candidate = results_path.parent / template.format(stem=results_path.stem)
+        if not candidate.is_file():
+            continue
+        try:
+            blob = json.loads(candidate.read_text(encoding="utf-8-sig", errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(blob, dict):
+            continue
+        raw = blob.get("result_schema_version")
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+            continue
+        return raw, candidate.name
+    return None, None
+
+
 def read_results(path, profile=None, *, strict=True, read_sidecar=True) -> dict:
     """读一份中性结果 JSONL，规范化为 `{"tasks": [...], "summary": {...}}`。
 
@@ -546,6 +575,31 @@ def read_results(path, profile=None, *, strict=True, read_sidecar=True) -> dict:
                 "原值见 pass_rate_raw"
             )
 
+    # schema 版本核对：sidecar 里声明了「这份文件是第几版」，profile 里声明了「按第几版读」。
+    # 两者不一致 ⇒ 记下来，并在 compare_results() 里判不可比。
+    # sidecar 没写这个字段 ⇒ 完全保持旧行为（summary 不多一个键）。
+    file_version, schema_sidecar = _sidecar_schema_version(results_path, read_sidecar)
+    if file_version is not None:
+        profile_version = None
+        if isinstance(profile, dict):
+            evaluation = profile.get("evaluation")
+            if isinstance(evaluation, dict):
+                candidate = evaluation.get("result_schema_version")
+                if isinstance(candidate, int) and not isinstance(candidate, bool):
+                    profile_version = candidate
+        match = None if profile_version is None else (file_version == profile_version)
+        summary["schema"] = {
+            "file": file_version,
+            "profile": profile_version,
+            "match": match,
+            "source": schema_sidecar,
+        }
+        if match is False:
+            notes.append(
+                f"结果文件是按 schema v{file_version} 写的，profile 声明的是 "
+                f"v{profile_version}；这两份读数不能直接对比，先确认执行器版本"
+            )
+
     return {"tasks": tasks, "summary": summary}
 
 
@@ -605,6 +659,14 @@ def compare_results(before, after, *, profile=None, require_same_tasks=True,
     right_measure = right_summary.get("measurement") or {}
     measurement_same = left_measure == right_measure
 
+    # 结果文件自报的 schema 版本与 profile 声明不一致 ⇒ 不可比。
+    # 这里不能靠 measurement 指纹：它记的是 **profile** 的值，两份文件可能都写着 v2，
+    # 但其中一份其实是旧执行器按 v1 写的。只有文件自报的版本能揭穿这件事。
+    schema_mismatch = [
+        side for side, summary_ in (("before", left_summary), ("after", right_summary))
+        if isinstance(summary_.get("schema"), dict) and summary_["schema"].get("match") is False
+    ]
+
     reasons: list[str] = []
     if require_same_tasks and not task_set_same:
         reasons.append(
@@ -614,6 +676,14 @@ def compare_results(before, after, *, profile=None, require_same_tasks=True,
         )
     if require_same_measurement and not measurement_same:
         reasons.append("测量配置不同：" + _measurement_diff(left_measure, right_measure))
+    if schema_mismatch:
+        detail = "；".join(
+            f"{side} 的结果文件按 schema v{summary_['schema'].get('file')} 写、"
+            f"profile 声明 v{summary_['schema'].get('profile')}"
+            for side, summary_ in (("before", left_summary), ("after", right_summary))
+            if isinstance(summary_.get("schema"), dict) and summary_["schema"].get("match") is False
+        )
+        reasons.append(f"结果文件版本与 profile 声明不一致：{detail}")
 
     comparable = not reasons
 

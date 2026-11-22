@@ -74,6 +74,11 @@ from pathlib import Path
 STATUSES = ("passed", "failed", "infra_error", "timed_out")
 PLACEHOLDERS = ("task_id", "repo", "base_commit", "workspace", "out", "out_root")
 
+#: 本执行器写出的结果行格式版本。改了结果行的字段语义就要 +1，并同步
+#: `profiles/agent-harness/schemas/results.schema.json` 与 profile 的
+#: `[evaluation].result_schema_version`。它会落进 run_meta.json，供读取端核对。
+RESULT_SCHEMA_VERSION = 1
+
 #: 单题超时的合法上限（24 小时）。超过它基本一定是误填。
 MAX_TIMEOUT_SECONDS = 86400.0
 
@@ -345,6 +350,10 @@ def run_tasks(
         # （副机 L58 实测：直接对 task_results.jsonl 调 read_results 仍得 1.0）。
         # 把题单快照写进 sidecar，读取端才有依据判「这份结果覆盖不全」。
         "tasklist_task_ids": sorted({str(t["task_id"]) for t in tasks}),
+        # 这份结果文件是按第几版 schema 写的。读取端拿它和 profile 的
+        # `result_schema_version` 对一下：不一致就说明「配置写着 v2、文件其实是 v1」，
+        # 那种情况下的两次读数不该被当成同格式直接比较。
+        "result_schema_version": RESULT_SCHEMA_VERSION,
         "limits": {"per_task_timeout_seconds": timeout},
         "measurement": {
             "executor": "tools/run_eval.py",
