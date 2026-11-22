@@ -133,7 +133,7 @@ python -X utf8 -B research.py topics --db C:\my-research\.autoresearch\runtime.s
 
 | 缺什么 | 为什么仓库没有 | 看哪 |
 |---|---|---|
-| 评测依赖 | 没有依赖清单、没有安装入口 | [REPRODUCIBILITY.md](REPRODUCIBILITY.md) §5 |
+| 评测依赖 | `requirements-eval.txt` 是**空模板**，要自己填；用 `research.py deps --install` 装 | [REPRODUCIBILITY.md](REPRODUCIBILITY.md) §5 |
 | 题单与评测命令 | `profile.toml` 的 `command=[]` | 同上 |
 | 数据与模型 | 仓库不提供 | 同上 |
 | 凭据 | 文档不含，恢复包明确排除 | [CREDENTIALS.md](CREDENTIALS.md) |
