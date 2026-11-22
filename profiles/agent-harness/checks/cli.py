@@ -60,8 +60,17 @@ def _dump(payload) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=False))
 
 
-def _fmt_rate(value) -> str:
+def _fmt_rate(value, *, aligned=None) -> str:
+    """把通过率格式化成一行。`None` 有两种成因，不该用同一句话糊过去。
+
+    - 没有可计分的题（全是 infra_error / timed_out）⇒ 分母为 0
+    - 题单覆盖不全（结果与题单的题号集合对不上）⇒ 通过率不可用
+
+    混成一句「没有可计分的题」，会把「题被吞了」误读成「这题太难，全挂了」。
+    """
     if value is None:
+        if aligned is False:
+            return "n/a（题单未对齐，通过率不可用）"
         return "n/a（没有可计分的题）"
     return f"{value:.1%}"
 
@@ -166,8 +175,10 @@ def cmd_results(args) -> int:
     print(f"通过 / 失败: {summary['n_passed']} / {summary['n_failed']}")
     print(f"环境错误   : {summary['n_infra_error']}")
     print(f"超时       : {summary['n_timed_out']}")
-    print(f"通过率     : {_fmt_rate(summary['pass_rate'])}"
+    print(f"通过率     : {_fmt_rate(summary['pass_rate'], aligned=summary.get('aligned'))}"
           f"（分母 {summary['n_scored']} = 通过 + 失败）")
+    if summary.get("aligned") is False and summary.get("pass_rate_basis"):
+        print(f"           ! {summary['pass_rate_basis']}")
     if summary["n_unscored"]:
         print(f"           : {summary['n_unscored']} 题未计入（环境错误 / 超时）")
     measurement = summary.get("measurement") or {}
