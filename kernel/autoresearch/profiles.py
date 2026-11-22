@@ -453,10 +453,18 @@ def evaluation_state(profile) -> dict:
     executor_problems: list[str] = []
     if command:
         first = str(command[0])
-        # 占位符不检查：`{xxx}` 是 build_command 的替换位，`<xxx>` 是仓库既有测试与
-        # 文档里表示「这里要填真实入口」的约定写法（Windows 文件名不允许 <>，故无歧义）。
-        is_placeholder = first.startswith('{') or ('<' in first and '>' in first)
-        if not is_placeholder:
+        # `{xxx}` 是 build_command 的替换位，跳过检查。
+        # `<xxx>` 则是文档里表示「这里要填真实入口」的占位符 —— **不算配置**。
+        # 依据：L36 六 case 实测，把 profile.toml:34 那条注释示例原样取消注释
+        # （command = ["<你的评测入口>", ...]）会得到 can_run=true、executor_ok=true，
+        # 但 executor_resolved=null —— 即「报告能跑、实际没有任何可执行文件」的假绿。
+        if first.startswith('{'):
+            pass
+        elif '<' in first and '>' in first:
+            executor_problems.append(
+                f"[evaluation].command[0] 仍是占位符（{first}）；"
+                "请填真实可执行文件路径或命令名")
+        else:
             resolved = shutil.which(first)
             if resolved is None:
                 candidate = pathlib.Path(first)
@@ -478,7 +486,7 @@ def evaluation_state(profile) -> dict:
     blocking.extend(executor_problems)
     first_arg = str(command[0]) if command else None
     resolved_first = None
-    if first_arg and not (first_arg.startswith('{') or ('<' in first_arg and '>' in first_arg)):
+    if first_arg and not first_arg.startswith('{') and not ('<' in first_arg and '>' in first_arg):
         resolved_first = shutil.which(first_arg)
 
     return {

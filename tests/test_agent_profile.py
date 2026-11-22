@@ -77,7 +77,10 @@ def configured_profile(*, evaluation=None, **limit_overrides) -> dict:
     }
     limits.update(limit_overrides)
     eval_section = {
-        "command": ["<评测入口>", "--tasks", "{tasks}", "--out", "{output}"],
+        # 用真实解释器而不是 `<评测入口>` 占位符：2026-11-22 起
+        # evaluation_state() 会把尖括号占位符判为「不算配置」（blocking），
+        # 因为照抄文档示例会得到 can_run=true 却没有可执行文件（L36 case1 实测）。
+        "command": [sys.executable, "--tasks", "{tasks}", "--out", "{output}"],
         "configured": True,
         "result_file": "task_results.jsonl",
         "trace_dir": "traces",
@@ -340,7 +343,7 @@ class TestBuildCommand(unittest.TestCase):
             profile, tasks="tasks/demo.jsonl", output="runs/run_1"
         )
         self.assertEqual(
-            argv, ["<评测入口>", "--tasks", "tasks/demo.jsonl", "--out", "runs/run_1"]
+            argv, [sys.executable, "--tasks", "tasks/demo.jsonl", "--out", "runs/run_1"]
         )
 
     def test_returns_list_and_never_joins(self):
