@@ -39,7 +39,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from .adapters.agent_harness import ResultsError, read_results
+from .adapters.agent_harness import ResultsError, read_results, read_tasklist
 from .profiles import build_command, evaluation_state, load_profile
 
 #: 默认单次评测超时（秒）。真评测通常比这慢，调用方应显式调大。
@@ -104,6 +104,8 @@ def run_evaluation(
         "stderr_tail": None,
         "results": None,
         "results_read_error": None,
+        "alignment": None,
+        "alignment_error": None,
     }
 
     try:
@@ -132,9 +134,40 @@ def run_evaluation(
     report["stderr_tail"] = (proc.stderr or "").strip()[-2000:] or None
 
     # 执行完必定尝试读回结果。读不到就如实报错，不编造通过率。
+    #
+    # 静默丢题检查（2026-11-22 补，副机 L54 命名 CONFIRMED-SILENT-DROP）：
+    # 此前 `ok` 只等于 `exit == 0`，于是「题单 2 行、执行器只写回 1 行」会被判
+    # ok=true / pass_rate=1.0，missing 那一题被静默吞掉，run_meta 还自洽地谎称
+    # tasks_total=1。这里强制把「结果里的 task_id 集合」与「输入题单」对齐：
+    # 少一题或多一题都判 ok=false，并把差异原样写进报告。
     try:
-        report["results"] = read_results(Path(output), profile)
-        report["ok"] = proc.returncode == 0
+        results = read_results(Path(output), profile)
+        report["results"] = results
+
+        tasklist = read_tasklist(tasks)
+        expected = [str(t["task_id"]) for t in (tasklist.get("tasks") or [])]
+        actual = [str(t["task_id"]) for t in (results.get("tasks") or [])]
+        expected_set, actual_set = set(expected), set(actual)
+        missing = sorted(expected_set - actual_set)
+        unexpected = sorted(actual_set - expected_set)
+
+        report["alignment"] = {
+            "expected_count": len(expected),
+            "actual_count": len(actual),
+            "missing_task_ids": missing,
+            "unexpected_task_ids": unexpected,
+        }
+
+        if missing or unexpected:
+            report["ok"] = False
+            report["alignment_error"] = (
+                f"结果与题单不一致：缺 {len(missing)} 题"
+                + (f"（{', '.join(missing[:5])}）" if missing else "")
+                + f"、多 {len(unexpected)} 题"
+                + (f"（{', '.join(unexpected[:5])}）" if unexpected else "")
+            )
+        else:
+            report["ok"] = proc.returncode == 0
     except ResultsError as exc:
         report["results_read_error"] = str(exc)
         report["ok"] = False

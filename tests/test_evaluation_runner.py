@@ -153,5 +153,67 @@ class TestExecutesAndReadsBack(unittest.TestCase):
             self.assertIn("找不到结果文件", report["results_read_error"])
 
 
+class TestSilentDropDetection(unittest.TestCase):
+    """L54 CONFIRMED-SILENT-DROP：执行器少写/多写题时，不许判 ok=true。
+
+    背景（副机 L54 原文）：题单 2 行、桩只回 1 行，run_meta 自洽地谎称 tasks_total=1，
+    而 research.py eval 仍 exit=0 / ok=true / pass_rate=1.0 —— 被吞掉的那题看不出来。
+    根因是 ok 只等于「执行器 exit==0」。
+    """
+
+    def _run_with_stub(self, tmp: pathlib.Path, task_ids, emitted_ids):
+        """用桩执行器只写回 emitted_ids，模拟静默丢题 / 多写题。"""
+        stub = tmp / "stub.py"
+        stub.write_text(
+            "import sys, json, pathlib\n"
+            "tasks = pathlib.Path(sys.argv[sys.argv.index('--tasks')+1])\n"
+            "out = pathlib.Path(sys.argv[sys.argv.index('--out')+1])\n"
+            "out.mkdir(parents=True, exist_ok=True)\n"
+            "emit = " + repr(list(emitted_ids)) + "\n"
+            "with (out / 'task_results.jsonl').open('w', encoding='utf-8', newline='\\n') as fh:\n"
+            "    for tid in emit:\n"
+            "        fh.write(json.dumps({'task_id': tid, 'status': 'passed'}, ensure_ascii=False) + '\\n')\n"
+            "print('pretend done:', len(emit))\n",
+            encoding="utf-8",
+        )
+        profile = build_profile(tmp / "p", command=[
+            PY, "-X", "utf8", "-B", str(stub), "--tasks", "{tasks}", "--out", "{output}",
+        ])
+        tasks = write_tasks(tmp / "t.jsonl", [
+            {"task_id": tid, "statement": "x"} for tid in task_ids
+        ])
+        return er.run_evaluation(profile, tasks=str(tasks), output=str(tmp / "o"), timeout=60)
+
+    def test_missing_task_is_not_ok(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run_with_stub(tmp, ["a-1", "a-2"], ["a-1"])
+            # 执行器自己 exit 0，但这不算 ok —— 少了一题
+            self.assertEqual(report["exit"], 0)
+            self.assertFalse(report["ok"], "少写一题必须判 ok=false")
+            self.assertEqual(report["alignment"]["expected_count"], 2)
+            self.assertEqual(report["alignment"]["actual_count"], 1)
+            self.assertEqual(report["alignment"]["missing_task_ids"], ["a-2"])
+            self.assertIn("缺 1 题", report["alignment_error"])
+            self.assertIn("a-2", report["alignment_error"])
+
+    def test_extra_task_is_not_ok(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run_with_stub(tmp, ["b-1"], ["b-1", "b-ghost"])
+            self.assertFalse(report["ok"], "多写一题也必须判 ok=false")
+            self.assertEqual(report["alignment"]["unexpected_task_ids"], ["b-ghost"])
+            self.assertIn("多 1 题", report["alignment_error"])
+
+    def test_aligned_run_is_ok(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run_with_stub(tmp, ["c-1", "c-2"], ["c-1", "c-2"])
+            self.assertTrue(report["ok"], "题目对齐且 exit 0 才判 ok=true")
+            self.assertIsNone(report["alignment_error"])
+            self.assertEqual(report["alignment"]["missing_task_ids"], [])
+            self.assertEqual(report["alignment"]["unexpected_task_ids"], [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
