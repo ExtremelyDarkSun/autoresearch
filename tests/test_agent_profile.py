@@ -166,6 +166,54 @@ class TestLoadProfile(unittest.TestCase):
             profiles_mod.build_command(profile, tasks="x.jsonl", output="out")
 
 
+class TestEvaluationStateExecutor(unittest.TestCase):
+    """执行器存在性预检（2026-11-22 补）。
+
+    背景：仓库不附带评测执行器本体（见 docs/REPRODUCIBILITY.md 的 L6.5），
+    所以最常见的失败不是「配置没改」，而是「command[0] 指向一个不存在的程序」。
+    旧实现只看 configured / command 非空 / limits 齐，那种情况下 `can_run` 会
+    假报 true，直到真跑才炸。这里只断言 executor_ok 与对应的 blocking 文本，
+    不断言 can_run —— 因为合成 profile 缺少 `_profile_dir`，validate 必然报错。
+    """
+
+    def test_missing_executor_is_flagged(self):
+        missing = pathlib.Path(tempfile.gettempdir()) / "definitely-missing-eval-9f3a.py"
+        self.assertFalse(missing.exists(), "夹具前提：这个路径必须不存在")
+        profile = configured_profile(evaluation={
+            "command": [str(missing), "--tasks", "{tasks}", "--out", "{output}"],
+        })
+        state = profiles_mod.evaluation_state(profile)
+        self.assertFalse(state["executor_ok"])
+        self.assertTrue(
+            any("执行器不存在" in item for item in state["blocking"]),
+            f"blocking 里应有「执行器不存在」：{state['blocking']}",
+        )
+        self.assertIsNone(state["executor_resolved"])
+
+    def test_existing_executor_passes(self):
+        profile = configured_profile(evaluation={
+            "command": [sys.executable, "--tasks", "{tasks}", "--out", "{output}"],
+        })
+        state = profiles_mod.evaluation_state(profile)
+        self.assertTrue(state["executor_ok"])
+        self.assertFalse(any("执行器不存在" in item for item in state["blocking"]))
+        self.assertIsNotNone(state["executor_resolved"])
+
+    def test_bare_command_name_resolves_via_path(self):
+        # 纯命令名（不带路径分隔符）应走 shutil.which，而不是按相对路径判断
+        profile = configured_profile(evaluation={
+            "command": ["python", "--tasks", "{tasks}", "--out", "{output}"],
+        })
+        state = profiles_mod.evaluation_state(profile)
+        self.assertTrue(state["executor_ok"], f"不应误判：{state['blocking']}")
+
+    def test_empty_command_skips_executor_check(self):
+        profile = base_profile()
+        state = profiles_mod.evaluation_state(profile)
+        self.assertTrue(state["executor_ok"])
+        self.assertIsNone(state["executor_resolved"])
+
+
 class TestValidateProfile(unittest.TestCase):
     def test_minimal_ok(self):
         with tempfile.TemporaryDirectory() as tmp:

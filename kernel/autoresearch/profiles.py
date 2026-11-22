@@ -25,8 +25,11 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 import re
+import shutil
+import sys
 
 try:  # Python 3.11+ 才有 tomllib；本仓库不加第三方依赖
     import tomllib
@@ -443,24 +446,40 @@ def evaluation_state(profile) -> dict:
     # 仓库**不附带评测执行器本体**（见 docs/REPRODUCIBILITY.md 的 L6.5：上游 run_eval.py
     # 只以 {component, sha256} 形式登记，本体从未入库）。所以最常见的失败不是「配置没改」，
     # 而是「改成了指向一个不存在的程序」——那种情况下 can_run 会假报 true，直到真跑才炸。
-    # 这里只检查**看起来像文件路径**的第一个参数；纯命令名（如 python、python3）交给 PATH。
+    #
+    # 判定顺序：先 `shutil.which()`（同时覆盖 PATH 里的命令名与可执行文件），
+    # 解析不到再按路径检查存在性 / 是否为目录 / 是否可执行。
+    # Windows 上 `os.access(..., X_OK)` 恒为真，所以那一项只在非 Windows 上生效。
     executor_problems: list[str] = []
     if command:
         first = str(command[0])
-        looks_like_path = ('/' in first or '\\' in first) and not first.startswith('{')
-        if looks_like_path:
-            candidate = pathlib.Path(first)
-            if not candidate.is_absolute():
-                candidate = pathlib.Path.cwd() / candidate
-            try:
-                if not candidate.exists():
-                    executor_problems.append(f"[evaluation].command[0] 指向的执行器不存在：{first}")
-                elif not candidate.is_file():
-                    executor_problems.append(f"[evaluation].command[0] 不是文件：{first}")
-            except OSError as exc:
-                executor_problems.append(
-                    f"[evaluation].command[0] 无法检查（{type(exc).__name__}）：{first}")
+        # 占位符不检查：`{xxx}` 是 build_command 的替换位，`<xxx>` 是仓库既有测试与
+        # 文档里表示「这里要填真实入口」的约定写法（Windows 文件名不允许 <>，故无歧义）。
+        is_placeholder = first.startswith('{') or ('<' in first and '>' in first)
+        if not is_placeholder:
+            resolved = shutil.which(first)
+            if resolved is None:
+                candidate = pathlib.Path(first)
+                if not candidate.is_absolute():
+                    candidate = pathlib.Path.cwd() / candidate
+                try:
+                    if not candidate.exists():
+                        executor_problems.append(
+                            f"[evaluation].command[0] 指向的执行器不存在：{first}")
+                    elif candidate.is_dir():
+                        executor_problems.append(
+                            f"[evaluation].command[0] 指向的是目录、不是可执行文件：{first}")
+                    elif sys.platform != 'win32' and not os.access(str(candidate), os.X_OK):
+                        executor_problems.append(
+                            f"[evaluation].command[0] 指向的文件不可执行：{first}")
+                except OSError as exc:
+                    executor_problems.append(
+                        f"[evaluation].command[0] 无法检查（{type(exc).__name__}）：{first}")
     blocking.extend(executor_problems)
+    first_arg = str(command[0]) if command else None
+    resolved_first = None
+    if first_arg and not (first_arg.startswith('{') or ('<' in first_arg and '>' in first_arg)):
+        resolved_first = shutil.which(first_arg)
 
     return {
         "configured": configured,
@@ -471,6 +490,7 @@ def evaluation_state(profile) -> dict:
         "blocking": blocking,
         "errors": errors,
         "executor_ok": not executor_problems,
+        "executor_resolved": resolved_first,
     }
 
 
