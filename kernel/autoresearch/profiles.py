@@ -73,6 +73,13 @@ REQUIRED_LIMIT_KEYS = (
     "command_timeout_seconds",
 )
 
+#: Windows 上「能直接当命令执行」的后缀白名单。
+#: 用于 evaluation_state() 的显式路径检查：`shutil.which()` 对含路径分隔符的
+#: 参数在不同 Python 版本上行为不一致（3.12 原样返回任意可访问文件，3.13 套 PATHEXT），
+#: 所以显式路径这一支改成自己检查后缀。保守取「Windows 真能直接执行的四种」，
+#: `.py` / `.ps1` 之类需要解释器的**不算**（command[0] 是直接 spawn 的）。
+_WIN_EXEC_SUFFIXES = frozenset({".exe", ".com", ".bat", ".cmd"})
+
 #: 出现在命令模板里就说明作者以为这里会走 shell ⇒ 直接判错。
 SHELL_OPERATOR_ELEMENTS = (";", "&&", "||", "|", ">", ">>", "<", "2>&1", "&")
 
@@ -452,6 +459,7 @@ def evaluation_state(profile) -> dict:
     # Windows 上 `os.access(..., X_OK)` 恒为真，所以那一项只在非 Windows 上生效。
     executor_problems: list[str] = []
     placeholder_problem = False
+    resolved_first: str | None = None
     if command:
         first = str(command[0])
         # 两种占位符都**不算配置**：
@@ -466,33 +474,45 @@ def evaluation_state(profile) -> dict:
             executor_problems.append(
                 f"[evaluation].command[0] 仍是占位符（{first}）；"
                 "请填真实可执行文件路径或命令名")
-        else:
-            resolved = shutil.which(first)
-            if resolved is None:
-                candidate = pathlib.Path(first)
-                if not candidate.is_absolute():
-                    candidate = pathlib.Path.cwd() / candidate
-                try:
-                    if not candidate.exists():
-                        executor_problems.append(
-                            f"[evaluation].command[0] 指向的执行器不存在：{first}")
-                    elif candidate.is_dir():
-                        executor_problems.append(
-                            f"[evaluation].command[0] 指向的是目录、不是可执行文件：{first}")
-                    elif sys.platform != 'win32' and not os.access(str(candidate), os.X_OK):
-                        executor_problems.append(
-                            f"[evaluation].command[0] 指向的文件不可执行：{first}")
-                except OSError as exc:
+        elif ('/' in first) or ('\\' in first):
+            # 显式路径：**不走 shutil.which**。
+            # 原因（L37 case10 实测）：`shutil.which()` 对「含路径分隔符」的参数
+            # 在不同 Python 版本上行为不同 —— Python 3.12 会原样返回任意可访问文件
+            # （不套 PATHEXT），于是 `C:/Windows/win.ini` 会被当成「执行器存在」；
+            # Python 3.13 会套 PATHEXT 返回 None。同一份配置在两台机器得出相反结论，
+            # 所以这里自己做存在性 + 目录 + （Windows）后缀检查。
+            candidate = pathlib.Path(first)
+            if not candidate.is_absolute():
+                candidate = pathlib.Path.cwd() / candidate
+            try:
+                if not candidate.exists():
                     executor_problems.append(
-                        f"[evaluation].command[0] 无法检查（{type(exc).__name__}）：{first}")
+                        f"[evaluation].command[0] 指向的执行器不存在：{first}")
+                elif candidate.is_dir():
+                    executor_problems.append(
+                        f"[evaluation].command[0] 指向的是目录、不是可执行文件：{first}")
+                elif sys.platform == 'win32' and candidate.suffix.lower() not in _WIN_EXEC_SUFFIXES:
+                    executor_problems.append(
+                        f"[evaluation].command[0] 在 Windows 上不是可执行类型"
+                        f"（后缀 {candidate.suffix or '无'}）：{first}")
+                elif sys.platform != 'win32' and not os.access(str(candidate), os.X_OK):
+                    executor_problems.append(
+                        f"[evaluation].command[0] 指向的文件不可执行：{first}")
+                else:
+                    resolved_first = str(candidate)
+            except OSError as exc:
+                executor_problems.append(
+                    f"[evaluation].command[0] 无法检查（{type(exc).__name__}）：{first}")
+        else:
+            # 纯命令名（如 python、python3）：交给 shutil.which，它会套 PATHEXT / PATH。
+            resolved_first = shutil.which(first)
+            if resolved_first is None:
+                executor_problems.append(
+                    f"[evaluation].command[0] 指向的执行器不存在：{first}")
     blocking.extend(executor_problems)
-    first_arg = str(command[0]) if command else None
-    resolved_first = None
-    if first_arg and not placeholder_problem:
-        resolved_first = shutil.which(first_arg)
 
-    # executor_ok 的语义是「**正向**解析成功」：必须有命令、无问题、且 which 真的解析到路径。
-    # 早先写成 `not executor_problems`，会让「命令为空」和「非法占位符」都得到 true —— 错。
+    # executor_ok 的语义是「**正向**解析成功」：必须有命令、无问题、且真的解析到路径。
+    # resolved_first 已在上面各分支里设定，这里不要再覆盖。
     executor_ok = bool(command) and not executor_problems and resolved_first is not None
 
     return {

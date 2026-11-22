@@ -218,6 +218,30 @@ class TestEvaluationStateExecutor(unittest.TestCase):
         self.assertFalse(state["executor_ok"])
         self.assertIsNone(state["executor_resolved"])
 
+    def test_windows_non_executable_suffix_is_blocked(self):
+        """显式路径在 Windows 上必须过后缀白名单（L37 case10）。
+
+        背景：`shutil.which()` 对含路径分隔符的参数在不同 Python 版本上行为不一致
+        （3.12 原样返回任意可访问文件，3.13 套 PATHEXT）。同一份 profile 在
+        3.12 上判「执行器存在」、在 3.13 上判「不存在」，所以显式路径这一支
+        改成自己检查后缀，不再依赖 which。
+        """
+        if sys.platform != 'win32':
+            self.skipTest('后缀白名单只在 Windows 生效')
+        target = pathlib.Path('C:/Windows/win.ini')
+        if not target.is_file():
+            self.skipTest('本机没有 C:/Windows/win.ini，跳过')
+        profile = configured_profile(evaluation={
+            "command": [str(target), "--tasks", "{tasks}", "--out", "{output}"],
+        })
+        state = profiles_mod.evaluation_state(profile)
+        self.assertFalse(state["executor_ok"])
+        self.assertFalse(state["can_run"])
+        self.assertTrue(
+            any("不是可执行类型" in item for item in state["blocking"]),
+            f"应报后缀不是可执行类型：{state['blocking']}",
+        )
+
     def test_placeholder_in_command0_is_blocked(self):
         # L37 case7/case8：`{tasks}` / `{output}` 是 build_command 的路径替换位，
         # 替换出来是题单文件或输出目录，作为 command[0] 必然不是可执行文件。
