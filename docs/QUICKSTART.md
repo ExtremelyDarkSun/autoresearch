@@ -31,6 +31,31 @@ cd autoresearch
 > ⚠️ **如果你的网络访问 GitHub 需要代理**，`git` **不会**自动读 Windows 系统代理（它走 libcurl）。
 > 必须在同一个 shell 里显式设（见 §附-坑 1）。
 
+### 1.1 先跑一条命令，看这条链在这里通不通
+
+```powershell
+python -X utf8 -B tools\smoke.py
+```
+
+它用合成数据（`python -c` 当评测命令）把整条链走一遍，七步，一秒左右：
+
+```
+[PASS] 1 生成 profile  实际：ok=True argv=12 段
+[PASS] 2 全通过         实际：exit 0 / verdict=all_passed / pass_rate=1.0
+[PASS] 3 有题未通过       实际：verdict=not_all_passed / alignment_error=None / pass_rate=0.5
+[PASS] 4 覆盖不全        实际：verdict=misaligned / ok=False / pass_rate=None / raw=1.0
+[PASS] 5 两次读数可比      实际：comparable=True / verdict=flat
+[PASS] 6 超时参数边界      实际：全部拦住
+[PASS] 7 仓库未被改动      实际：空
+合计 7 步：7 PASS / 0 FAIL
+```
+
+**为什么先跑它**：单元测试全绿不等于「照文档做得到」。这条链上有五个真实接缝——生成
+profile、把 argv 真的交给子进程、覆盖不全时读数变不可用、两次读数可比、参数边界——
+单元测试逐点验过，但没有一条命令把它们串起来。`smoke.py` 就是那条命令。
+
+任何一步 FAIL，先修它再看后面的文档：链条末端不对时，前面每一步都可能白做。
+
 ---
 
 ## 2. 四条自检（这一步不需要装任何东西）
@@ -146,6 +171,10 @@ python -X utf8 -B tools\run_eval.py --tasks tasks.jsonl --out runs\run1 --per-ta
 ```
 
 **产出**：`runs\run1\task_results.jsonl`（每行一个四态结果）+ `run_meta.json`（limits 与测量配置）。
+
+> ⚠️ **`examples/tasklist.example.jsonl` 里没有 `command` 字段**，它是用来描述题单**形状**的，
+> 不是能直接跑的数据。照抄它配 `--per-task-command` 会得到「一题都没跑」。想要一份真能跑的
+> 题单长什么样，看 `tools/smoke.py`——它在临时目录里现造一份带 `command` 的，跑完就删。
 
 ### 5.1 不想手写 profile？让生成器把它配齐
 
