@@ -69,9 +69,14 @@ def ensure_pip(python: Path) -> dict:
 
 
 def parse_requirements(path: Path) -> list[str]:
-    """读依赖清单：跳过空行与 # 注释，其余每行当作一个 pip 需求。"""
+    """读依赖清单：跳过空行与 # 注释，其余每行当作一个 pip 需求。
+
+    用 utf-8-sig 读取：Windows 上记事本 / PowerShell 的 Out-File 默认写
+    UTF-8 **带 BOM**，若按 utf-8 读，BOM（\\ufeff）会粘在第一个字符前面，
+    导致 `# 注释行` 被当成依赖包名。
+    """
     items: list[str] = []
-    for raw in Path(path).read_text(encoding='utf-8').splitlines():
+    for raw in Path(path).read_text(encoding='utf-8-sig').splitlines():
         line = raw.strip()
         if not line or line.startswith('#'):
             continue
@@ -104,11 +109,14 @@ def installed_packages(python: Path) -> dict[str, str]:
 
 
 def _update_provision(prov: Path, installed: bool, reqs: list[str]) -> dict | None:
-    """把 dependencies_installed 写回 provision.json。返回更新后的片段。"""
+    """把 dependencies_installed 写回 provision.json。返回更新后的片段。
+
+    读取用 utf-8-sig：文件若是被 Windows 工具改过，可能带 BOM。
+    """
     if not prov.is_file():
         return None
     try:
-        data = json.loads(prov.read_text(encoding='utf-8'))
+        data = json.loads(prov.read_text(encoding='utf-8-sig'))
     except Exception:
         return None
     data['dependencies_installed'] = bool(installed)
@@ -168,7 +176,10 @@ def run_deps(workspace, topic: str, requirements, install: bool) -> dict:
     if install:
         if not reqs:
             report['ok'] = False
-            report['error'] = '--install 需要同时给 --requirements（否则不知道装什么）'
+            if requirements:
+                report['error'] = '依赖清单里没有有效条目（全是空行或 # 注释），没有可装的东西'
+            else:
+                report['error'] = '--install 需要同时给 --requirements（否则不知道装什么）'
             return report
         code, out, err = _run(python, ['-m', 'pip', 'install', *reqs], timeout=1800)
         report['install'] = {'exit': code, 'stdout_tail': out[-2000:], 'stderr_tail': err[-2000:]}

@@ -9,7 +9,7 @@
 #   # 只检查（不联网）
 #   python -X utf8 -B research.py deps --workspace <ws> --topic <t> --requirements requirements-eval.txt
 #
-#   # 真的安装（会联网；装 pl 到专题 venv，并把 provision.json 的 dependencies_installed 改成 true）
+#   # 真的安装（会联网；装进专题 venv，并把 provision.json 的 dependencies_installed 改成 true）
 #   python -X utf8 -B research.py deps --workspace <ws> --topic <t> --requirements requirements-eval.txt --install
 #
 # ## 格式
