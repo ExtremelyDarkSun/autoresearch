@@ -82,7 +82,11 @@ from kernel.autoresearch.profiles import (
 
 | 函数 | 用途 |
 |---|---|
-| `evaluation_state(profile) -> dict` | `configured` / `command` / `limits` / `can_run` / `blocking`（人话原因）/ `errors` |
+| `evaluation_state(profile) -> dict` | `configured` / `command` / `limits` / `can_run` / `blocking`（人话原因）/ `errors` / `executor_ok` / `executor_resolved` |
+
+**`executor_ok` 的含义**（2026-11-22 新增）：`[evaluation].command[0]` 是否**真的解析到一个可执行文件**。它是「正向成功」语义 —— 没有命令、仍是占位符、`which` 解析不到，都算 `false`。`executor_resolved` 是 `shutil.which()` 解析出的绝对路径（解析不到则为 `null`）。
+
+这一项专门防一类假绿：仓库不附带评测执行器本体，所以 `command` 很容易配成「指向一个不存在的程序」或「照抄文档里的 `<你的评测入口>` 占位符」。没有这项时 `can_run` 会返回 `true`，直到真跑才炸。
 | `required_instructions(profile) -> list[str]` | `[instructions].required` **原样**（相对 profile 目录） |
 | `resolve_instruction(profile, name) -> Path \| None` | 解析成绝对路径（不判断存在性） |
 | `limit_for(profile, key) -> int \| None` | 取预算；未配置返回 `None`；键不在白名单抛 `ProfileError` |

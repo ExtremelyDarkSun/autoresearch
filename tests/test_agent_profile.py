@@ -210,11 +210,29 @@ class TestEvaluationStateExecutor(unittest.TestCase):
         state = profiles_mod.evaluation_state(profile)
         self.assertTrue(state["executor_ok"], f"不应误判：{state['blocking']}")
 
-    def test_empty_command_skips_executor_check(self):
+    def test_empty_command_marks_executor_not_ok(self):
+        # executor_ok 的语义是「正向解析成功」：没有命令就没有可解析的执行器，
+        # 所以必须是 False（不能因为「没东西要检查」就返回 True）。
         profile = base_profile()
         state = profiles_mod.evaluation_state(profile)
-        self.assertTrue(state["executor_ok"])
+        self.assertFalse(state["executor_ok"])
         self.assertIsNone(state["executor_resolved"])
+
+    def test_placeholder_in_command0_is_blocked(self):
+        # L37 case7/case8：`{tasks}` / `{output}` 是 build_command 的路径替换位，
+        # 替换出来是题单文件或输出目录，作为 command[0] 必然不是可执行文件。
+        for placeholder in ("{tasks}", "{output}"):
+            with self.subTest(placeholder=placeholder):
+                profile = configured_profile(evaluation={
+                    "command": [placeholder, "--tasks", "{tasks}", "--out", "{output}"],
+                })
+                state = profiles_mod.evaluation_state(profile)
+                self.assertFalse(state["executor_ok"])
+                self.assertTrue(
+                    any("仍是占位符" in item for item in state["blocking"]),
+                    f"{placeholder} 应被判为占位符：{state['blocking']}",
+                )
+                self.assertIsNone(state["executor_resolved"])
 
 
 class TestValidateProfile(unittest.TestCase):

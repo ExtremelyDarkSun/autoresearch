@@ -451,16 +451,18 @@ def evaluation_state(profile) -> dict:
     # 解析不到再按路径检查存在性 / 是否为目录 / 是否可执行。
     # Windows 上 `os.access(..., X_OK)` 恒为真，所以那一项只在非 Windows 上生效。
     executor_problems: list[str] = []
+    placeholder_problem = False
     if command:
         first = str(command[0])
-        # `{xxx}` 是 build_command 的替换位，跳过检查。
-        # `<xxx>` 则是文档里表示「这里要填真实入口」的占位符 —— **不算配置**。
-        # 依据：L36 六 case 实测，把 profile.toml:34 那条注释示例原样取消注释
-        # （command = ["<你的评测入口>", ...]）会得到 can_run=true、executor_ok=true，
-        # 但 executor_resolved=null —— 即「报告能跑、实际没有任何可执行文件」的假绿。
-        if first.startswith('{'):
-            pass
-        elif '<' in first and '>' in first:
+        # 两种占位符都**不算配置**：
+        #   `<xxx>` 是文档里表示「这里要填真实入口」的写法；
+        #   `{xxx}` 在 build_command 里是路径替换位（只认 {tasks} / {output}），
+        #          它替换出来是题单文件或输出目录，**不可能是可执行文件**。
+        # 依据：L36/L37 共 11 例矩阵实测 —— case1(`<你的评测入口>`)、case7(`{tasks}`)、
+        # case8(`{output}`) 在修复前都会得到 can_run=true、executor_ok=true、resolved=null，
+        # 即「报告能跑、实际没有任何可执行文件」的假绿。
+        if first.startswith('{') or ('<' in first and '>' in first):
+            placeholder_problem = True
             executor_problems.append(
                 f"[evaluation].command[0] 仍是占位符（{first}）；"
                 "请填真实可执行文件路径或命令名")
@@ -486,18 +488,22 @@ def evaluation_state(profile) -> dict:
     blocking.extend(executor_problems)
     first_arg = str(command[0]) if command else None
     resolved_first = None
-    if first_arg and not first_arg.startswith('{') and not ('<' in first_arg and '>' in first_arg):
+    if first_arg and not placeholder_problem:
         resolved_first = shutil.which(first_arg)
+
+    # executor_ok 的语义是「**正向**解析成功」：必须有命令、无问题、且 which 真的解析到路径。
+    # 早先写成 `not executor_problems`，会让「命令为空」和「非法占位符」都得到 true —— 错。
+    executor_ok = bool(command) and not executor_problems and resolved_first is not None
 
     return {
         "configured": configured,
         "command": list(command),
         "limits": dict(limits),
         "can_run": (not errors and configured is True and bool(command)
-                    and not missing and not executor_problems),
+                    and not missing and executor_ok),
         "blocking": blocking,
         "errors": errors,
-        "executor_ok": not executor_problems,
+        "executor_ok": executor_ok,
         "executor_resolved": resolved_first,
     }
 
