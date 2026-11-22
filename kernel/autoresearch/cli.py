@@ -90,6 +90,11 @@ def main(argv=None):
     a.add_argument('--topic', required=True, help='专题名')
     a.add_argument('--requirements', default=None, help='依赖清单文件（每行一个 pip 需求，支持 # 注释）')
     a.add_argument('--install', action='store_true', help='真的安装（默认只检查，不联网）')
+    a = sub.add_parser('eval', help='按 profile 的 [evaluation].command 真实执行一次评测并读回结果')
+    a.add_argument('--profile', default=str(DEFAULT_PROFILE))
+    a.add_argument('--tasks', required=True, help='题单路径，替换 command 模板里的 {tasks}')
+    a.add_argument('--output', required=True, help='结果目录，替换 {output} 并按 result_file 读回')
+    a.add_argument('--timeout', type=float, default=3600.0, help='整次评测超时秒数，默认 3600')
     a = p.parse_args(args)
     try:
         if a.command == 'doctor':
@@ -184,6 +189,18 @@ def main(argv=None):
             out = run_deps(a.workspace, a.topic, a.requirements, a.install)
             dump(out)
             return 0 if out.get('ok') else 2
+        if a.command == 'eval':
+            from .evaluation_runner import EvaluationRunError, run_evaluation
+            try:
+                out = run_evaluation(
+                    a.profile, tasks=a.tasks, output=a.output,
+                    timeout=a.timeout,
+                )
+            except EvaluationRunError as exc:
+                dump({'ok': False, 'executed': False, 'error': str(exc)})
+                return 2
+            dump(out)
+            return 0 if out.get('ok') else 1
     except (ValueError, OSError, RuntimeError) as exc:
         dump({'error':type(exc).__name__,'reason':str(exc)})
         return 2

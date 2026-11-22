@@ -104,8 +104,10 @@ class TestStatusMapping(unittest.TestCase):
         tmp = pathlib.Path(tmp_ctx.name)
         tasks = write_jsonl(tmp / "t.jsonl", rows)
         out = tmp / "out"
+        # 用 --allow-failures 让退出码策略与本类无关：这里只测状态映射。
+        # 退出码策略另有 TestExitCodePolicy 专门覆盖。
         proc = run_tool("--tasks", str(tasks), "--out", str(out),
-                        "--per-task-command", "--timeout", timeout)
+                        "--per-task-command", "--timeout", timeout, "--allow-failures")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         return out, read_jsonl(out / "task_results.jsonl")
 
@@ -163,7 +165,7 @@ class TestOutputCompatibility(unittest.TestCase):
             ])
             out = tmp / "out"
             proc = run_tool("--tasks", str(tasks), "--out", str(out),
-                            "--per-task-command", "--timeout", "1")
+                            "--per-task-command", "--timeout", "1", "--allow-failures")
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
             parsed = ah.read_results(str(out / "task_results.jsonl"))
@@ -216,6 +218,85 @@ class TestPlaceholders(unittest.TestCase):
             self.assertEqual(got[2], "deadbeef")
             self.assertIn("syn p h", got[3])   # workspace 路径里含 task_id
             self.assertTrue(got[4])
+
+
+class TestExitCodePolicy(unittest.TestCase):
+    """退出码不许骗人（L41 实测的两个假绿）。
+
+    背景：只要题跑完就 exit 0，会让「上层只看进程退出码」把「全题失败」当成评测成功。
+    现在的策略是：有非 passed → exit 1；要「跑完就算成功」显式加 --allow-failures。
+    """
+
+    def _setup(self, tmp: pathlib.Path, rows):
+        tasks = write_jsonl(tmp / "t.jsonl", rows)
+        return tasks
+
+    def test_any_non_passed_exits_1_by_default(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            tasks = self._setup(tmp, [
+                {"task_id": "p-1", "command": [PY, "-c", "pass"]},
+                {"task_id": "p-2", "command": [PY, "-c", "import sys;sys.exit(1)"]},
+            ])
+            proc = run_tool("--tasks", str(tasks), "--out", str(tmp / "o"), "--per-task-command")
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertIn("非 passed", proc.stderr)
+
+    def test_allow_failures_restores_0(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            tasks = self._setup(tmp, [
+                {"task_id": "p-1", "command": [PY, "-c", "import sys;sys.exit(2)"]},
+            ])
+            proc = run_tool("--tasks", str(tasks), "--out", str(tmp / "o"),
+                            "--per-task-command", "--allow-failures")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_all_passed_exits_0(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            tasks = self._setup(tmp, [{"task_id": "p-1", "command": [PY, "-c", "pass"]}])
+            proc = run_tool("--tasks", str(tasks), "--out", str(tmp / "o"), "--per-task-command")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_timeout_must_be_positive_finite(self):
+        """--timeout nan/inf/0/-1/1e999 必须在参数解析阶段就被挡掉，且不留产物。"""
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            tasks = self._setup(tmp, [{"task_id": "p-1", "command": [PY, "-c", "pass"]}])
+            for value in ("nan", "inf", "0", "-1", "1e999"):
+                with self.subTest(timeout=value):
+                    out = tmp / f"o-{value.replace('-', 'neg').replace('.', '_')}"
+                    proc = run_tool("--tasks", str(tasks), "--out", str(out),
+                                    "--per-task-command", "--timeout", value)
+                    self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                    self.assertNotIn("Traceback", proc.stderr)
+                    self.assertFalse(out.exists(), f"--timeout {value} 不该创建输出目录")
+
+    def test_dry_run_writes_no_results_file(self):
+        """L41 实测：dry-run 曾生成 0 字节 task_results.jsonl，只看文件存在会误读。"""
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            tasks = self._setup(tmp, [{"task_id": "p-1", "command": [PY, "-c", "pass"]}])
+            out = tmp / "o"
+            proc = run_tool("--tasks", str(tasks), "--out", str(out),
+                            "--per-task-command", "--dry-run")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertFalse((out / "task_results.jsonl").exists())
+            self.assertTrue((out / "run_plan.json").is_file())
+
+    def test_task_id_cannot_escape_output_dir(self):
+        """题号会拼进目录名，必须拒绝路径穿越与 Windows 保留名。"""
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            for bad in ("..\\..\\evil", "C:\\abs", "CON", "aux.", "bad<>:?*"):
+                with self.subTest(task_id=bad):
+                    tasks = write_jsonl(tmp / "bad.jsonl",
+                                        [{"task_id": bad, "command": [PY, "-c", "pass"]}])
+                    proc = run_tool("--tasks", str(tasks), "--out", str(tmp / "o"),
+                                    "--per-task-command")
+                    self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+                    self.assertIn("不能当目录名", proc.stderr)
 
 
 class TestSelfTest(unittest.TestCase):

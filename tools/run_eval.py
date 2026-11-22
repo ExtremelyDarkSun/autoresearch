@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shlex
 import subprocess
@@ -72,6 +73,47 @@ from pathlib import Path
 
 STATUSES = ("passed", "failed", "infra_error", "timed_out")
 PLACEHOLDERS = ("task_id", "repo", "base_commit", "workspace", "out", "out_root")
+
+#: 单题超时的合法上限（24 小时）。超过它基本一定是误填。
+MAX_TIMEOUT_SECONDS = 86400.0
+
+
+def positive_finite(value: str) -> float:
+    """argparse 的 type=：只接受 (0, MAX_TIMEOUT_SECONDS] 内的有限数。
+
+    为什么要卡死：`--timeout nan` / `inf` / `0` / `-1` 会让 `subprocess.run(timeout=...)`
+    在内部线程 join 时抛非预期异常（L41 实测 `--timeout nan` 直接 Traceback、exit 1），
+    把「参数填错」伪装成「执行器崩了」。这里在解析阶段就挡掉。
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"--timeout 必须是数字，收到 {value!r}")
+    if not math.isfinite(number):
+        raise argparse.ArgumentTypeError(f"--timeout 必须是有限数，收到 {value!r}")
+    if number <= 0:
+        raise argparse.ArgumentTypeError(f"--timeout 必须大于 0，收到 {value!r}")
+    if number > MAX_TIMEOUT_SECONDS:
+        raise argparse.ArgumentTypeError(
+            f"--timeout 不得超过 {MAX_TIMEOUT_SECONDS:g} 秒（24 小时），收到 {value!r}")
+    return number
+
+
+def safe_task_id(task_id: str) -> bool:
+    """题号会被拼进目录名，必须拒绝路径穿越与 Windows 保留名。"""
+    if not task_id or not task_id.strip():
+        return False
+    bad = set('<>:"/\\|?*')
+    if any(ch in bad for ch in task_id):
+        return False
+    if task_id in (".", "..") or task_id.startswith("../") or task_id.startswith("..\\"):
+        return False
+    stem = task_id.split(".")[0].upper()
+    if stem in {"CON", "PRN", "AUX", "NUL"} or stem.startswith(("COM", "LPT")):
+        return False
+    if task_id.endswith((" ", ".")):
+        return False
+    return True
 
 
 def now_iso() -> str:
@@ -113,6 +155,10 @@ def read_tasklist(path: Path) -> tuple[list[dict], list[str]]:
             problems.append(f"第 {lineno} 行缺 task_id 或为空")
             continue
         task_id = task_id.strip()
+        if not safe_task_id(task_id):
+            problems.append(
+                f"第 {lineno} 行 task_id 不能当目录名（含路径分隔符、保留名或以空格/点结尾）：{task_id!r}")
+            continue
         if task_id in seen:
             problems.append(f"第 {lineno} 行 task_id 重复：{task_id}（首次出现在第 {seen[task_id]} 行）")
             continue
@@ -282,7 +328,10 @@ def run_tasks(
 
         results.append(run_one(task, argv, cwd=task_out, timeout=timeout))
 
-    write_jsonl(out_root / "task_results.jsonl", results)
+    # dry-run 刻意**不写** task_results.jsonl：写一个 0 字节的结果文件会让
+    # 「只看文件是否存在」的上层误以为跑过了（L41 实测踩到）。计划另存 run_plan.json。
+    if not dry_run:
+        write_jsonl(out_root / "task_results.jsonl", results)
 
     meta = {
         "generated_at": now_iso(),
@@ -376,8 +425,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--task-cmd", help='每题执行的命令模板，JSON 数组字符串，如 \'["python","eval.py","{task_id}"]\'')
     parser.add_argument("--per-task-command", action="store_true",
                         help="改为从题单每行的 command 字段读命令（要求字符串数组）")
-    parser.add_argument("--timeout", type=float, default=600.0, help="单题超时秒数，默认 600")
+    parser.add_argument("--timeout", type=positive_finite, default=600.0,
+                        help="单题超时秒数，默认 600；必须是 (0, 86400] 内的有限数")
     parser.add_argument("--dry-run", action="store_true", help="只校验并生成计划，不执行任何命令")
+    parser.add_argument("--allow-failures", action="store_true",
+                        help="即使有非 passed 也返回 exit 0（默认：有非 passed 就 exit 1，避免上层把全题失败当成评测成功）")
     parser.add_argument("--self-test", action="store_true", help="用合成题单自检契约，不需要真实题单")
     args = parser.parse_args(argv)
 
@@ -390,6 +442,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args.per_task_command and not args.task_cmd:
         parser.error("必须给 --task-cmd（统一命令模板）或 --per-task-command（每题自带命令）之一")
 
+    # 先校验一切，再创建目录 —— 否则「参数非法但已经建了 out/run_meta.json」
+    # 会让调用方以为跑过（L42 反例正是这条：--timeout inf + 不存在的 --out）。
     tasks, problems = read_tasklist(Path(args.tasks))
     if problems:
         print("题单非法，未执行任何题：", file=sys.stderr)
@@ -401,15 +455,40 @@ def main(argv: list[str] | None = None) -> int:
     if not args.per_task_command:
         argv_template = parse_cmd_template(args.task_cmd or "")
 
+    out_root = Path(args.out).resolve()
+    try:
+        out_root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"无法创建输出目录 {out_root}：{type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
+
     meta = run_tasks(
         tasks,
-        out_root=Path(args.out).resolve(),
+        out_root=out_root,
         argv_template=argv_template,
         per_task_command=bool(args.per_task_command),
         timeout=float(args.timeout),
         dry_run=bool(args.dry_run),
     )
     print(json.dumps(meta, ensure_ascii=False, indent=2))
+
+    if args.dry_run:
+        return 0
+
+    not_passed = sum(meta["status_counts"].get(s, 0) for s in ("failed", "timed_out", "infra_error"))
+    if not_passed:
+        print(
+            f"\n[注意] {not_passed} 题非 passed（failed/timed_out/infra_error 合计）；"
+            f"status_counts={meta['status_counts']}。",
+            file=sys.stderr,
+        )
+        if not args.allow_failures:
+            print(
+                "按默认策略返回 exit 1（有非 passed）；"
+                "若你的上层只关心「评测本身跑完了」，加 --allow-failures 改回 exit 0。",
+                file=sys.stderr,
+            )
+            return 1
     return 0
 
 
