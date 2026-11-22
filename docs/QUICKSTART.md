@@ -147,6 +147,47 @@ python -X utf8 -B tools\run_eval.py --tasks tasks.jsonl --out runs\run1 --per-ta
 
 **产出**：`runs\run1\task_results.jsonl`（每行一个四态结果）+ `run_meta.json`（limits 与测量配置）。
 
+### 5.1 不想手写 profile？让生成器把它配齐
+
+上面是直接调执行器。要让 `research.py eval` 走 profile 那条链，profile 必须
+`configured=true`、`command` 非空、四条 limits 齐、执行器存在——漏一项 `can_run` 就是 false。
+`schema` 与 `RULES.md` 的路径还得对。手写容易漏，用生成器：
+
+```powershell
+# 生成一份可以直接跑的 profile（并当场自证 can_run=true，不通过就报错退出）
+python -X utf8 -B tools\make_profile.py --out profiles\my-run
+
+# 指定解释器 / 调整预算
+python -X utf8 -B tools\make_profile.py --out profiles\my-run --python C:\venv\Scripts\python.exe
+python -X utf8 -B tools\make_profile.py --out profiles\my-run --limits per_task_minutes=30
+
+# 只看会写什么
+python -X utf8 -B tools\make_profile.py --out profiles\my-run --dry-run
+```
+
+生成出来的 `command` 末尾带 `--timeout`，值由 `per_task_minutes × 60` 换算——
+**预算不是注释，它真的会传给执行器**。改 `per_task_minutes` 后重跑生成器即可同步。
+
+然后：
+
+```powershell
+python -X utf8 -B research.py eval --profile profiles\my-run --tasks tasks.jsonl --output runs\run1
+```
+
+`eval` 的输出里除了 `ok`，还有一个 `verdict`，用来区分「为什么不是全绿」：
+
+| `verdict` | 含义 | 该怎么办 |
+|---|---|---|
+| `all_passed` | 跑完、覆盖齐、全通过 | 正常 |
+| `not_all_passed` | 跑完、覆盖齐，但有题没通过 | **这是读数**，不是故障；看 `pass_rate` |
+| `misaligned` | 结果覆盖与题单对不上（缺题/多题） | 读数不可用，先查执行器为什么吞题 |
+| `timed_out` | 整次评测超时 | 调 `--timeout` |
+| `launch_failed` | 评测进程起不来 | 看 `stderr_tail` |
+| `no_results` | 跑完了但读不到结果文件 | 执行器没按 `result_file` 落盘 |
+
+把 `not_all_passed` 当成 `misaligned` 是常见误读：前者说明「这批题考了 30 分」，
+后者说明「成绩单少了几页」。前者可以汇报，后者不能。
+
 **判定口径**（`--task-cmd` 的退出码）：
 
 | 情况 | 归入状态 |

@@ -242,5 +242,95 @@ class TestSilentDropDetection(unittest.TestCase):
             self.assertNotIn("未对齐", summary["pass_rate_basis"])
 
 
+class TestVerdict(unittest.TestCase):
+    """`ok` 是 bool，装不下「为什么不是」。verdict 负责把成因说清。
+
+    尤其要区分这两种 `ok=false`：
+      - 覆盖不全（misaligned）—— 读数不可用，属故障
+      - 有题没通过（not_all_passed）—— 读数是好的，属结果
+    混成一句会让自动循环把「这批题考砸了」当成「评测跑挂了」反复重试。
+    """
+
+    def _stub(self, tmp: pathlib.Path, body: str) -> pathlib.Path:
+        stub = tmp / "stub.py"
+        stub.write_text(body, encoding="utf-8")
+        return stub
+
+    def _run(self, tmp: pathlib.Path, stub: pathlib.Path, task_ids, timeout=60, extra=()):
+        profile = build_profile(tmp / "p", command=[
+            PY, "-X", "utf8", "-B", str(stub), "--tasks", "{tasks}", "--out", "{output}", *extra,
+        ])
+        tasks = write_tasks(tmp / "t.jsonl", [{"task_id": t, "statement": "x"} for t in task_ids])
+        return er.run_evaluation(profile, tasks=str(tasks), output=str(tmp / "o"), timeout=timeout)
+
+    def test_all_passed(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            stub = self._stub(tmp,
+                "import sys, json, pathlib\n"
+                "tasks = pathlib.Path(sys.argv[sys.argv.index('--tasks')+1])\n"
+                "out = pathlib.Path(sys.argv[sys.argv.index('--out')+1])\n"
+                "out.mkdir(parents=True, exist_ok=True)\n"
+                "rows = [json.loads(x) for x in tasks.read_text(encoding='utf-8-sig').splitlines() if x.strip()]\n"
+                "with (out / 'task_results.jsonl').open('w', encoding='utf-8', newline='\\n') as fh:\n"
+                "    for r in rows:\n"
+                "        fh.write(json.dumps({'task_id': r['task_id'], 'status': 'passed'}) + '\\n')\n")
+            report = self._run(tmp, stub, ["v-1", "v-2"])
+            self.assertEqual(report["verdict"], "all_passed")
+            self.assertTrue(report["ok"])
+
+    def test_not_all_passed_is_a_reading_not_a_failure(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            stub = self._stub(tmp,
+                "import sys, json, pathlib\n"
+                "tasks = pathlib.Path(sys.argv[sys.argv.index('--tasks')+1])\n"
+                "out = pathlib.Path(sys.argv[sys.argv.index('--out')+1])\n"
+                "out.mkdir(parents=True, exist_ok=True)\n"
+                "rows = [json.loads(x) for x in tasks.read_text(encoding='utf-8-sig').splitlines() if x.strip()]\n"
+                "with (out / 'task_results.jsonl').open('w', encoding='utf-8', newline='\\n') as fh:\n"
+                "    for i, r in enumerate(rows):\n"
+                "        st = 'passed' if i == 0 else 'failed'\n"
+                "        fh.write(json.dumps({'task_id': r['task_id'], 'status': st}) + '\\n')\n"
+                "sys.exit(1)\n")
+            report = self._run(tmp, stub, ["v-1", "v-2"])
+            self.assertFalse(report["ok"])
+            self.assertEqual(report["verdict"], "not_all_passed")
+            self.assertIsNone(report["alignment_error"], "这不是覆盖问题，不该报 alignment_error")
+            self.assertEqual(report["results"]["summary"]["pass_rate"], 0.5)
+
+    def test_misaligned(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            stub = self._stub(tmp,
+                "import sys, json, pathlib\n"
+                "tasks = pathlib.Path(sys.argv[sys.argv.index('--tasks')+1])\n"
+                "out = pathlib.Path(sys.argv[sys.argv.index('--out')+1])\n"
+                "out.mkdir(parents=True, exist_ok=True)\n"
+                "rows = [json.loads(x) for x in tasks.read_text(encoding='utf-8-sig').splitlines() if x.strip()]\n"
+                "with (out / 'task_results.jsonl').open('w', encoding='utf-8', newline='\\n') as fh:\n"
+                "    fh.write(json.dumps({'task_id': rows[0]['task_id'], 'status': 'passed'}) + '\\n')\n")
+            report = self._run(tmp, stub, ["v-1", "v-2"])
+            self.assertEqual(report["verdict"], "misaligned")
+            self.assertFalse(report["ok"])
+
+    def test_no_results(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            stub = self._stub(tmp, "print('nothing written')\n")
+            report = self._run(tmp, stub, ["v-1"])
+            self.assertEqual(report["verdict"], "no_results")
+            self.assertFalse(report["ok"])
+
+    def test_timed_out(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            stub = self._stub(tmp, "import time\ntime.sleep(30)\n")
+            report = self._run(tmp, stub, ["v-1"], timeout=2)
+            self.assertEqual(report["verdict"], "timed_out")
+            self.assertTrue(report["timed_out"])
+            self.assertFalse(report["ok"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

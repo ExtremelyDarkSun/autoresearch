@@ -106,6 +106,14 @@ def run_evaluation(
         "results_read_error": None,
         "alignment": None,
         "alignment_error": None,
+        # `ok` 是个 bool，装不下「为什么不是」。verdict 给出一句能直接看懂的归类：
+        #   all_passed      评测跑完，题全通过
+        #   not_all_passed  评测跑完、覆盖也齐，但有题没通过（**不是故障**，是读数）
+        #   misaligned      结果覆盖与题单对不上（缺题/多题），读数不可用
+        #   timed_out       整次评测超时
+        #   launch_failed   评测进程起不来
+        #   no_results      跑完了但读不到结果文件
+        "verdict": "not_run",
     }
 
     try:
@@ -123,9 +131,11 @@ def run_evaluation(
         report["executed"] = True
         report["timed_out"] = True
         report["stderr_tail"] = f"整次评测超过 {timeout:g} 秒被中断"
+        report["verdict"] = "timed_out"
         return report
     except OSError as exc:
         report["stderr_tail"] = f"无法启动评测进程：{type(exc).__name__}: {exc}"
+        report["verdict"] = "launch_failed"
         return report
 
     report["executed"] = True
@@ -145,6 +155,7 @@ def run_evaluation(
     except ResultsError as exc:
         report["results_read_error"] = str(exc)
         report["ok"] = False
+        report["verdict"] = "no_results"
         return report
 
     report["results"] = results
@@ -166,6 +177,7 @@ def run_evaluation(
             summary["pass_rate_basis"] = f"题单读取失败，无法确认对齐：{exc}"
         report["alignment_error"] = f"读不到输入题单，无法确认结果覆盖完整：{exc}"
         report["ok"] = False
+        report["verdict"] = "misaligned"
         return report
 
     expected = [str(t["task_id"]) for t in (tasklist.get("tasks") or [])]
@@ -188,6 +200,7 @@ def run_evaluation(
 
     if missing or unexpected:
         report["ok"] = False
+        report["verdict"] = "misaligned"
         report["alignment_error"] = (
             f"结果与题单不一致：缺 {len(missing)} 题"
             + (f"（{', '.join(missing[:5])}）" if missing else "")
@@ -202,5 +215,16 @@ def run_evaluation(
             )
     else:
         report["ok"] = proc.returncode == 0
+        # 覆盖齐了之后 `exit != 0` 有两种含义：执行器按「有题没通过」返回非零（这是读数，
+        # 不是故障），或者真的出错。用 n_passed 与 n_tasks 区分，
+        # 别把「这批题考了 30 分」报成「评测跑挂了」。
+        n_passed = (summary or {}).get("n_passed")
+        n_tasks = (summary or {}).get("n_tasks")
+        if proc.returncode == 0:
+            report["verdict"] = "all_passed"
+        elif isinstance(n_passed, int) and isinstance(n_tasks, int) and n_tasks > n_passed:
+            report["verdict"] = "not_all_passed"
+        else:
+            report["verdict"] = "launch_failed"
 
     return report
