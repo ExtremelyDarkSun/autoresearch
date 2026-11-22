@@ -332,5 +332,149 @@ class TestVerdict(unittest.TestCase):
             self.assertFalse(report["ok"])
 
 
+class TestBudget(unittest.TestCase):
+    """`[limits].total_budget_minutes` 必须真的生效。
+
+    此前它只是 profile 里一个允许出现的键，**没有任何代码读它** —— 写进 TOML 等于
+    没写。同一个毛病 `per_task_minutes` 也犯过（写在配置里、没人执行），
+    这类「声明了但没人执行」的键最容易被当成已生效。
+    """
+
+    def _stub(self, tmp: pathlib.Path) -> pathlib.Path:
+        tmp.mkdir(parents=True, exist_ok=True)
+        stub = tmp / "stub.py"
+        stub.write_text(
+            "import sys, json, pathlib\n"
+            "tasks = pathlib.Path(sys.argv[sys.argv.index('--tasks')+1])\n"
+            "out = pathlib.Path(sys.argv[sys.argv.index('--out')+1])\n"
+            "out.mkdir(parents=True, exist_ok=True)\n"
+            "rows = [json.loads(x) for x in tasks.read_text(encoding='utf-8-sig').splitlines() if x.strip()]\n"
+            "with (out / 'task_results.jsonl').open('w', encoding='utf-8', newline='\\n') as fh:\n"
+            "    for r in rows:\n"
+            "        fh.write(json.dumps({'task_id': r['task_id'], 'status': 'passed'}) + '\\n')\n",
+            encoding="utf-8",
+        )
+        return stub
+
+    def _profile(self, tmp: pathlib.Path, **overrides):
+        limits = {
+            "per_task_minutes": 10, "max_tool_calls": 20,
+            "max_turns": 30, "command_timeout_seconds": 60,
+        }
+        limits.update(overrides)
+        stub = self._stub(tmp)
+        profile = build_profile(tmp / "p", command=[
+            PY, "-X", "utf8", "-B", str(stub), "--tasks", "{tasks}", "--out", "{output}",
+        ], limits=limits)
+        tasks = write_tasks(tmp / "t.jsonl", [{"task_id": "bud-1", "statement": "x"}])
+        return profile, tasks
+
+    def test_declared_budget_sets_default_timeout(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            profile, tasks = self._profile(tmp, total_budget_minutes=1)
+            report = er.run_evaluation(profile, tasks=str(tasks), output=str(tmp / "o"))
+            self.assertEqual(report["timeout_seconds"], 60.0)
+            self.assertEqual(report["budget"]["declared_total_minutes"], 1)
+            self.assertFalse(report["budget"]["clamped"])
+
+    def test_explicit_timeout_over_budget_is_clamped(self):
+        """给的超时超过声明预算 ⇒ 夹到预算。预算是红线，不是建议。"""
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            profile, tasks = self._profile(tmp, total_budget_minutes=1)
+            report = er.run_evaluation(profile, tasks=str(tasks),
+                                       output=str(tmp / "o"), timeout=9999)
+            self.assertEqual(report["timeout_seconds"], 60.0)
+            self.assertTrue(report["budget"]["clamped"], "夹取必须留痕，不能悄悄少跑")
+            self.assertIn("超过", report["budget"]["why"])
+
+    def test_explicit_timeout_within_budget_is_kept(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            profile, tasks = self._profile(tmp, total_budget_minutes=10)
+            report = er.run_evaluation(profile, tasks=str(tasks),
+                                       output=str(tmp / "o"), timeout=30)
+            self.assertEqual(report["timeout_seconds"], 30.0)
+            self.assertFalse(report["budget"]["clamped"])
+
+    def test_no_budget_no_timeout_uses_default(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            profile, tasks = self._profile(tmp)
+            report = er.run_evaluation(profile, tasks=str(tasks), output=str(tmp / "o"))
+            self.assertEqual(report["timeout_seconds"], er.DEFAULT_TIMEOUT_SECONDS)
+            self.assertIsNone(report["budget"]["declared_total_minutes"])
+
+    def test_bad_timeout_values_are_rejected_before_running(self):
+        """nan / inf / 0 / 负数一律在启动进程之前拒绝。
+
+        不守这道门的话，`inf` 会一路走进 subprocess，最后报
+        `OverflowError: timestamp out of range` —— 与真实原因毫无关系的报错。
+        """
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            profile, tasks = self._profile(tmp)
+            for bad in (float("nan"), float("inf"), 0, -1, -1e-9, 1e999):
+                with self.subTest(value=repr(bad)):
+                    with self.assertRaises(er.EvaluationRunError):
+                        er.run_evaluation(profile, tasks=str(tasks),
+                                          output=str(tmp / "o"), timeout=bad)
+            self.assertFalse((tmp / "o" / "task_results.jsonl").exists(), "拒绝时不该跑出结果")
+
+    def test_bad_declared_budget_is_rejected(self):
+        """0 与负数要拒。`inf` 不用测：TOML 里根本写不出 `inf`（tomllib 直接报非法值）。"""
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            for bad in (0, -5):
+                with self.subTest(value=repr(bad)):
+                    profile, tasks = self._profile(pathlib.Path(t) / f"c{abs(hash(bad))}",
+                                                   total_budget_minutes=bad)
+                    with self.assertRaises(er.EvaluationRunError):
+                        er.run_evaluation(profile, tasks=str(tasks),
+                                          output=str(tmp / "o2"), timeout=10)
+
+
+class TestCliTimeoutBoundary(unittest.TestCase):
+    """`research.py eval --timeout` 的边界：必须 exit 2 且不能吐 Traceback。
+
+    副机 L41 在 `tools/run_eval.py` 的 `--timeout nan` 上踩过一次 Traceback；同一个
+    毛病在 runner 的 CLI 上也存在过（`inf` 一路走到 subprocess 才炸成
+    `OverflowError: timestamp out of range`）。这里守的是**用户看得见的那一面**。
+    """
+
+    def _run(self, *extra: str):
+        import subprocess
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        stub = tmp / "stub.py"
+        stub.write_text("print('ran')\n", encoding="utf-8")
+        profile = build_profile(tmp / "p", command=[
+            PY, "-X", "utf8", "-B", str(stub), "--tasks", "{tasks}", "--out", "{output}",
+        ])
+        tasks = write_tasks(tmp / "t.jsonl", [{"task_id": "cli-1", "statement": "x"}])
+        return subprocess.run(
+            [PY, "-X", "utf8", "-B", str(ROOT / "research.py"), "eval",
+             "--profile", str(profile), "--tasks", str(tasks),
+             "--output", str(tmp / "o"), *extra],
+            cwd=str(ROOT), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=120, stdin=subprocess.DEVNULL,
+        )
+
+    def test_invalid_timeouts_exit_2_without_traceback(self):
+        for bad in ("inf", "nan", "0", "-5", "1e999"):
+            with self.subTest(value=bad):
+                proc = self._run("--timeout", bad)
+                blob = proc.stdout + proc.stderr
+                self.assertEqual(proc.returncode, 2, blob)
+                self.assertNotIn("Traceback", blob, blob)
+                self.assertNotIn("OverflowError", blob, blob)
+
+    def test_omitting_timeout_is_allowed(self):
+        """默认不传 `--timeout` 是合法用法（此时按 profile 的 total_budget_minutes）。"""
+        proc = self._run()
+        self.assertIn(proc.returncode, (0, 1), proc.stdout + proc.stderr)
+        self.assertNotIn("Traceback", proc.stdout + proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -36,13 +36,14 @@
 """
 from __future__ import annotations
 
+import math
 import subprocess
 from pathlib import Path
 
 from .adapters.agent_harness import ResultsError, read_results, read_tasklist
 from .profiles import build_command, evaluation_state, load_profile
 
-#: 默认单次评测超时（秒）。真评测通常比这慢，调用方应显式调大。
+#: 默认单次评测超时（秒）。profile 里写了 total_budget_minutes 时以它为准。
 DEFAULT_TIMEOUT_SECONDS = 3600.0
 
 
@@ -50,12 +51,82 @@ class EvaluationRunError(RuntimeError):
     """评测无法发起（配置不合规、执行器缺失等）。"""
 
 
+def resolve_budget(profile: dict, timeout) -> dict:
+    """把 `[limits].total_budget_minutes` 与调用方给的 `timeout` 合成为一个生效值。
+
+    为什么需要这一步：`total_budget_minutes` 的语义是「整批总预算」，但此前**没有任何
+    代码读它** —— 写进 TOML 等于没写。这类「配置里声明了、实际没人执行」的键是最容易
+    被当成已生效的一类假绿（`per_task_minutes` 之前正是同一个毛病）。
+
+    规则：
+
+    * 没给 `timeout`、profile 也没声明 ⇒ `DEFAULT_TIMEOUT_SECONDS`
+    * 没给 `timeout`、profile 声明了 ⇒ 用声明值
+    * 给了 `timeout`、没声明 ⇒ 用给的
+    * 给了 `timeout`、也声明了，且给的**超过**声明 ⇒ **夹到声明值**并留痕
+      （`clamped=True`）。宁可少跑一会儿，也不静默超支：预算是红线，不是建议。
+
+    返回 `{"declared_total_minutes", "requested_seconds", "effective_timeout_seconds",
+    "clamped", "why"}`，原样进报告，事后能复盘「这次为什么只跑了 60 秒」。
+    """
+    limits = profile.get("limits") if isinstance(profile.get("limits"), dict) else {}
+    declared_minutes = limits.get("total_budget_minutes")
+    declared_seconds = None
+    if isinstance(declared_minutes, (int, float)) and not isinstance(declared_minutes, bool):
+        # nan / inf / 0 / 负数都不算「声明了预算」。放到 subprocess 里会变成
+        # `OverflowError: timestamp out of range` 这种与真实原因无关的报错。
+        if not math.isfinite(float(declared_minutes)) or declared_minutes <= 0:
+            raise EvaluationRunError(
+                f"[limits].total_budget_minutes 必须是有限正数，实际是 {declared_minutes!r}"
+            )
+        declared_seconds = float(declared_minutes) * 60.0
+
+    requested = None if timeout is None else float(timeout)
+    if requested is not None and (not math.isfinite(requested) or requested <= 0):
+        # 与 tools/run_eval.py 的 --timeout 同一套判据：nan / inf / 0 / 负数一律不收。
+        # 否则 inf 会在 subprocess 里变成 OverflowError，0 会立刻超时且难以归因。
+        raise EvaluationRunError(
+            f"timeout 必须是有限正数（秒），实际是 {timeout!r}"
+        )
+
+    if requested is None and declared_seconds is None:
+        effective = DEFAULT_TIMEOUT_SECONDS
+        why = "未指定 timeout，profile 也未声明 total_budget_minutes ⇒ 用默认值"
+    elif requested is None:
+        effective = declared_seconds
+        why = "未指定 timeout ⇒ 采用 profile 声明的 total_budget_minutes"
+    elif declared_seconds is None:
+        effective = requested
+        why = "profile 未声明 total_budget_minutes ⇒ 采用调用方给的 timeout"
+    elif requested > declared_seconds:
+        effective = declared_seconds
+        why = (
+            f"调用方给的 {requested:g} 秒超过 profile 声明的总预算 {declared_seconds:g} 秒"
+            " ⇒ 夹到声明值（预算优先于调用方参数）"
+        )
+    else:
+        effective = requested
+        why = "调用方给的 timeout 在 profile 声明的总预算之内"
+
+    return {
+        "declared_total_minutes": declared_minutes if declared_seconds is not None else None,
+        "requested_seconds": requested,
+        "effective_timeout_seconds": effective,
+        "clamped": bool(
+            requested is not None
+            and declared_seconds is not None
+            and requested > declared_seconds
+        ),
+        "why": why,
+    }
+
+
 def run_evaluation(
     profile_path,
     *,
     tasks: str,
     output: str,
-    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    timeout: float | None = None,
     cwd: str | None = None,
 ) -> dict:
     """按 profile 的 `[evaluation].command` 执行一次评测，并读回结果。
@@ -65,12 +136,14 @@ def run_evaluation(
     profile_path : profile.toml 的路径（文件或目录）
     tasks : 题单路径；会替换 `command` 模板里的 `{tasks}`
     output : 结果目录；会替换 `{output}`，结果文件按 profile 的 `result_file` 落在这里
-    timeout : 整次评测的超时秒数
+    timeout : 整次评测的超时秒数。`None` 表示「按 profile 的 total_budget_minutes，
+              没声明就用默认值」；显式给了但超过声明预算会被夹到声明值，并在报告的
+              `budget` 字段里留痕
     cwd : 子进程工作目录；默认沿用当前目录
 
     返回
     ----
-    一个可直接 dump 成 JSON 的 dict，至少含 `ok` / `executed` / `argv`。
+    一个可直接 dump 成 JSON 的 dict，至少含 `ok` / `executed` / `argv` / `verdict`。
 
     抛出
     ----
@@ -90,6 +163,9 @@ def run_evaluation(
     except Exception as exc:  # ProfileError 及任何生成失败
         raise EvaluationRunError(f"无法生成评测 argv：{type(exc).__name__}: {exc}") from exc
 
+    budget = resolve_budget(profile, timeout)
+    timeout = budget["effective_timeout_seconds"]
+
     report: dict = {
         "ok": False,
         "executed": False,
@@ -98,6 +174,7 @@ def run_evaluation(
         "tasks": str(tasks),
         "output": str(output),
         "timeout_seconds": timeout,
+        "budget": budget,
         "exit": None,
         "timed_out": False,
         "stdout_tail": None,

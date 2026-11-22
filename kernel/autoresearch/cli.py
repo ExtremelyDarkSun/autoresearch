@@ -94,7 +94,9 @@ def main(argv=None):
     a.add_argument('--profile', default=str(DEFAULT_PROFILE))
     a.add_argument('--tasks', required=True, help='题单路径，替换 command 模板里的 {tasks}')
     a.add_argument('--output', required=True, help='结果目录，替换 {output} 并按 result_file 读回')
-    a.add_argument('--timeout', type=float, default=3600.0, help='整次评测超时秒数，默认 3600')
+    a.add_argument('--timeout', type=float, default=None,
+                   help='整次评测超时秒数。默认不传：按 profile 的 [limits].total_budget_minutes，'
+                        '没声明才用 3600。显式传了但超过声明预算会被夹到声明值')
     a = p.parse_args(args)
     try:
         if a.command == 'doctor':

@@ -194,6 +194,15 @@ report = ah.check_trace(trace, profile=None, **覆盖)
 `[limits]` 的第五个键 `total_budget_minutes`（整批总预算）也在我这边定义；
 前四个是约定里的「时间 / 工具 / 轮次 / 单命令超时」。
 
+**谁执行这些预算**：前四个描述的是**被评测 harness 的预算**，由 harness 自己遵守，
+内核只负责把它们读出来交给上层；`total_budget_minutes` 则由 `research.py eval` 真正执行：
+
+- 不传 `--timeout` 时，用它当整次评测的超时；
+- 传了 `--timeout` 但**超过**它时，**夹到声明值**，并在报告的 `budget.clamped` 里留痕。
+
+夹取是刻意的：预算是红线，不是建议。静默超支等于没写这条预算。
+反过来，一个键写进配置却没人执行，也只是注释——两者都算「配置假装生效」。
+
 ---
 
 ## 5 异常与退出码

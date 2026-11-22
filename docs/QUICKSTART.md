@@ -168,6 +168,19 @@ python -X utf8 -B tools\make_profile.py --out profiles\my-run --dry-run
 生成出来的 `command` 末尾带 `--timeout`，值由 `per_task_minutes × 60` 换算——
 **预算不是注释，它真的会传给执行器**。改 `per_task_minutes` 后重跑生成器即可同步。
 
+整批总预算走另一条路：profile 里写了 `total_budget_minutes` 时，`research.py eval`
+不传 `--timeout` 就用它；**传了但超过它会被夹到声明值**，并在报告的 `budget` 里留痕：
+
+```json
+"budget": {"declared_total_minutes": 1, "requested_seconds": 9999,
+           "effective_timeout_seconds": 60, "clamped": true,
+           "why": "调用方给的 9999 秒超过 profile 声明的总预算 60 秒 ⇒ 夹到声明值"}
+```
+
+夹取是刻意的：预算是红线，不是建议。静默超支等于没写这条预算。
+另外 `--timeout` 只收**有限正数**——`nan` / `inf` / `0` / 负数一律 exit 2，
+不会一路走到子进程才炸成 `OverflowError`。
+
 然后：
 
 ```powershell
