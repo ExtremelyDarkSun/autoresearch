@@ -125,16 +125,55 @@ python -X utf8 -B research.py topics --db C:\my-research\.autoresearch\runtime.s
 
 ---
 
-## 5. 到这里就到底了（重要）
+## 5. 跑一次评测（用仓库自带的通用执行器）
 
-第 4 步做完，你得到的是：**代码能跑、工作区建好、专题骨架就位、独立环境可用**。
+仓库**不附带某场比赛的判分器**，但附带了一个**通用执行器** `tools/run_eval.py`：
+它负责「按题跑命令、按退出码归类、写合规结果」，**怎么判分由你给的命令决定**。
+
+```powershell
+# 先自检（不需要任何真实题单）
+python -X utf8 -B tools\run_eval.py --self-test
+
+# 真要跑：每题调用你自己的评测器，用占位符传参
+python -X utf8 -B tools\run_eval.py `
+    --tasks tasks.jsonl `
+    --out runs\run1 `
+    --timeout 600 `
+    --task-cmd '["python","-X","utf8","-B","my_evaluator.py","--task","{task_id}","--repo","{repo}","--out","{out}"]'
+
+# 或者每题自带命令（题单每行写 "command": ["python","eval.py",...]）
+python -X utf8 -B tools\run_eval.py --tasks tasks.jsonl --out runs\run1 --per-task-command
+```
+
+**产出**：`runs\run1\task_results.jsonl`（每行一个四态结果）+ `run_meta.json`（limits 与测量配置）。
+
+**判定口径**（`--task-cmd` 的退出码）：
+
+| 情况 | 归入状态 |
+|---|---|
+| 退出码 0 | `passed` |
+| 退出码非 0 | `failed` |
+| 超过 `--timeout` | `timed_out`（**不进**通过率分母） |
+| 程序找不到 / 启动失败 | `infra_error`（**不进**通过率分母） |
+
+写完后可以用仓库自己的读数接口验证：
+
+```powershell
+python -X utf8 -B research.py results runs\run1\task_results.jsonl
+```
+
+---
+
+## 6. 到这里就到底了（重要）
+
+第 4–5 步做完，你得到的是：**代码能跑、工作区建好、专题骨架就位、独立环境可用、评测能跑**。
 
 再往下需要**四类真实输入**，它们都不在仓库里：
 
 | 缺什么 | 为什么仓库没有 | 看哪 |
 |---|---|---|
 | 评测依赖 | `requirements-eval.txt` 是**空模板**，要自己填；用 `research.py deps --install` 装 | [REPRODUCIBILITY.md](REPRODUCIBILITY.md) §5 |
-| 题单与评测命令 | `profile.toml` 的 `command=[]` | 同上 |
+| 真实题单 | 属部署方数据，仓库只给形状（`examples/tasklist.example.jsonl` 全是合成示例） | 同上 |
 | 数据与模型 | 仓库不提供 | 同上 |
 | 凭据 | 文档不含，恢复包明确排除 | [CREDENTIALS.md](CREDENTIALS.md) |
 

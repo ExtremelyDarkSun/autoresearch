@@ -22,7 +22,7 @@
 | **L4** | 独立 venv | ✅ 通过 | `pyvenv.cfg`: `version`、`include-system-site-packages=false`、`command` 含 `--without-pip`；`environment_verified=true` |
 | **L5** | 评测依赖 | ⚠️ **入口已补，清单需自填** | `research.py deps` 可装（副机实测：自动 `ensurepip` 自举 pip 24.2 → 装 `packaging>=24` 成功，6.3 秒 → `provision.json` 的 `dependencies_installed` 翻成 true）；但 `requirements-eval.txt` 是**空模板**（44 行全是注释），必须自己填 |
 | **L6** | 题单与评测命令 | ❌ 缺失 | `profile.toml`: `command=[]`、`configured=false`。**但副机实测：只补 `[evaluation]`+`[limits]` 就能让 `can_run` 翻 true**，说明配置面是通的 |
-| **L6.5** | **评测执行器本体** | ❌ **不存在** | 副机探针结论 Q2=「没有」：仓库只抽了 `run_eval.py` 的**参数面**（`profiles/agent-harness/EXTRACTION.md` 自述），**没有执行评测的程序**。所以即使配齐 profile，也需要你自己提供「谁去跑 argv」 |
+| **L6.5** | **评测执行器本体** | ✅ **已提供通用实现** | 新增 `tools/run_eval.py`（2026-11-22）：零第三方依赖、不拼 shell、结果严格按 `results.schema.json` 四态写，仓库自己的 `read_results()` 可直接读。它**不知道某场比赛怎么判分** —— 只负责「按题跑命令、按退出码归类、写合规结果」，怎么跑由 `--task-cmd` 或题单每行的 `command` 决定。⚠️ 上游 `run_eval.py`（约 3.7k 行）本体**仍然拿不到**（判定 B），但这个通用执行器覆盖了同一接口面（`--tasks` / `--out`） |
 | **L7** | 数据与模型 | ❌ 缺失 | 仓库无来源 / 许可 / 校验和 / 落点；`profile.toml` 无 data/model 字段 |
 | **L8** | 5 域凭据 | ❌ 缺失 | 文档 0 个凭据名；源码只有引用名（见 [CREDENTIALS.md](CREDENTIALS.md)） |
 | **L9** | 真实评测与提交 | ⬜ 未尝试 | 依赖 L5–L8 |

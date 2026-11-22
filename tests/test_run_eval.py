@@ -1,0 +1,229 @@
+# GENERATED-BY: agent implementation, 2026-11-22 +08:00
+# LAST-EDIT: 2026-11-22 +08:00
+# PURPOSE: tools/run_eval.py 的单元测试（全部合成数据 / 临时目录 / 只用标准库）。
+# ORIGIN: none（新文件）
+# CUMULATIVE-DELTA: 首版。刻意不硬编码任何 verdict —— 每个断言都由被测函数当场产出，
+#                   依据是 L41 那次教训：一个把结论写死的验收脚本，跑一万遍也只重复自己的偏见。
+"""通用评测执行器的测试。
+
+三条约束（与仓库其它测试一致）：
+
+1. 只用标准库（unittest / json / pathlib / subprocess / tempfile / sys）。
+2. 全部合成数据：题号是 `syn-xxx`，命令是 `python -c`，不碰任何真实题库或模型。
+3. 现场只读：唯一读到的既有文件是 `tools/run_eval.py` 本身与
+   `profiles/agent-harness/schemas/results.schema.json`；写入一律在 tempfile 里。
+"""
+from __future__ import annotations
+
+import json
+import pathlib
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+TOOL = ROOT / "tools" / "run_eval.py"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from kernel.autoresearch.adapters import agent_harness as ah  # noqa: E402
+
+PY = sys.executable
+
+
+def write_jsonl(path: pathlib.Path, rows) -> pathlib.Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    return path
+
+
+def read_jsonl(path: pathlib.Path) -> list[dict]:
+    if not path.is_file():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+
+
+def run_tool(*args: str, timeout: int = 120) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [PY, "-X", "utf8", "-B", str(TOOL), *args],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        stdin=subprocess.DEVNULL,
+    )
+
+
+class TestCliContract(unittest.TestCase):
+    """命令行契约：缺参数、缺题单、缺命令来源都必须明确失败。"""
+
+    def test_missing_required_args_exits_2(self):
+        proc = run_tool()
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+
+    def test_missing_command_source_exits_2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tasks = write_jsonl(pathlib.Path(tmp) / "t.jsonl", [{"task_id": "syn-001"}])
+            proc = run_tool("--tasks", str(tasks), "--out", str(pathlib.Path(tmp) / "o"))
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertIn("task-cmd", (proc.stdout + proc.stderr).lower())
+
+    def test_bad_tasklist_exits_3(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tasks = write_jsonl(pathlib.Path(tmp) / "t.jsonl", [
+                {"task_id": "syn-001"},
+                {"task_id": "syn-001"},          # 重复
+                {"repo": "x/y"},                  # 缺 task_id
+            ])
+            proc = run_tool("--tasks", str(tasks), "--out", str(pathlib.Path(tmp) / "o"),
+                            "--per-task-command")
+            self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+            self.assertIn("重复", proc.stderr)
+
+    def test_task_cmd_must_be_json_array(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tasks = write_jsonl(pathlib.Path(tmp) / "t.jsonl", [{"task_id": "syn-001"}])
+            proc = run_tool("--tasks", str(tasks), "--out", str(pathlib.Path(tmp) / "o"),
+                            "--task-cmd", "python eval.py")
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("JSON", proc.stdout + proc.stderr)
+
+
+class TestStatusMapping(unittest.TestCase):
+    """四态映射必须按实测退出码/超时判定，不允许任何预设。"""
+
+    def _run_cases(self, rows, timeout="2"):
+        tmp_ctx = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp_ctx.cleanup)
+        tmp = pathlib.Path(tmp_ctx.name)
+        tasks = write_jsonl(tmp / "t.jsonl", rows)
+        out = tmp / "out"
+        proc = run_tool("--tasks", str(tasks), "--out", str(out),
+                        "--per-task-command", "--timeout", timeout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        return out, read_jsonl(out / "task_results.jsonl")
+
+    def test_exit_zero_is_passed(self):
+        _, rows = self._run_cases([{"task_id": "syn-ok", "command": [PY, "-c", "print(1)"]}])
+        self.assertEqual([r["status"] for r in rows], ["passed"])
+
+    def test_nonzero_is_failed(self):
+        _, rows = self._run_cases([{"task_id": "syn-bad", "command": [PY, "-c", "import sys;sys.exit(9)"]}])
+        self.assertEqual([r["status"] for r in rows], ["failed"])
+        self.assertIn("9", rows[0]["reason"])
+
+    def test_sleep_past_timeout_is_timed_out(self):
+        _, rows = self._run_cases([{"task_id": "syn-slow", "command": [PY, "-c", "import time;time.sleep(6)"]}],
+                                  timeout="1")
+        self.assertEqual([r["status"] for r in rows], ["timed_out"])
+
+    def test_missing_executable_is_infra_error(self):
+        _, rows = self._run_cases([{"task_id": "syn-noexe",
+                                    "command": ["definitely-not-a-real-program-e7c1"]}])
+        self.assertEqual([r["status"] for r in rows], ["infra_error"])
+        self.assertIn("reason", rows[0])
+
+    def test_mixed_batch_counts_are_derived_not_hardcoded(self):
+        rows_in = [
+            {"task_id": "syn-1", "command": [PY, "-c", "pass"]},
+            {"task_id": "syn-2", "command": [PY, "-c", "import sys;sys.exit(1)"]},
+            {"task_id": "syn-3", "command": [PY, "-c", "import time;time.sleep(6)"]},
+            {"task_id": "syn-4", "command": ["definitely-not-a-real-program-e7c1"]},
+        ]
+        out, rows = self._run_cases(rows_in, timeout="1")
+        statuses = {r["task_id"]: r["status"] for r in rows}
+        self.assertEqual(statuses, {
+            "syn-1": "passed",
+            "syn-2": "failed",
+            "syn-3": "timed_out",
+            "syn-4": "infra_error",
+        })
+        meta = json.loads((out / "run_meta.json").read_text(encoding="utf-8"))
+        # 计数必须来自实测，而不是写死
+        for status, count in meta["status_counts"].items():
+            self.assertEqual(count, sum(1 for r in rows if r["status"] == status), status)
+
+
+class TestOutputCompatibility(unittest.TestCase):
+    """产物必须能被仓库自己的 read_results() 读，且 pass_rate 口径正确。"""
+
+    def test_results_readable_by_repo_adapter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            tasks = write_jsonl(tmp / "t.jsonl", [
+                {"task_id": "syn-a", "command": [PY, "-c", "pass"]},
+                {"task_id": "syn-b", "command": [PY, "-c", "import sys;sys.exit(1)"]},
+                {"task_id": "syn-c", "command": [PY, "-c", "import time;time.sleep(6)"]},
+            ])
+            out = tmp / "out"
+            proc = run_tool("--tasks", str(tasks), "--out", str(out),
+                            "--per-task-command", "--timeout", "1")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+            parsed = ah.read_results(str(out / "task_results.jsonl"))
+            self.assertEqual(len(parsed["tasks"]), 3)
+            self.assertEqual(parsed["summary"]["errors"], [])
+            # passed / (passed + failed)；timed_out 不进分母
+            self.assertEqual(parsed["summary"]["pass_rate"], 0.5)
+
+    def test_dry_run_executes_nothing_and_writes_no_passed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            marker = tmp / "ran.marker"
+            tasks = write_jsonl(tmp / "t.jsonl", [
+                {"task_id": "syn-d", "command": [PY, "-c",
+                                                 f"open(r'{marker}','w').write('x')"]},
+            ])
+            out = tmp / "out"
+            proc = run_tool("--tasks", str(tasks), "--out", str(out),
+                            "--per-task-command", "--dry-run")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertFalse(marker.exists(), "dry-run 不得真的执行命令")
+            self.assertEqual(read_jsonl(out / "task_results.jsonl"), [])
+            plan = json.loads((out / "run_plan.json").read_text(encoding="utf-8"))
+            self.assertFalse(plan["executed"])
+            self.assertEqual(len(plan["plan"]), 1)
+
+
+class TestPlaceholders(unittest.TestCase):
+    """占位符替换必须逐元素进行，不重新分词、不拼 shell。"""
+
+    def test_placeholders_substituted_without_resplitting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            tasks = write_jsonl(tmp / "t.jsonl", [
+                {"task_id": "syn p h", "repo": "a b/c d", "base_commit": "deadbeef"},
+            ])
+            out = tmp / "out"
+            # 让被测命令把收到的 argv 原样写文件，从而验证没有重新分词
+            echo = tmp / "argv.json"
+            template = json.dumps([PY, "-c",
+                                   "import sys,json,pathlib;"
+                                   f"pathlib.Path(r'{echo}').write_text(json.dumps(sys.argv[1:],ensure_ascii=False),encoding='utf-8')",
+                                   "{task_id}", "{repo}", "{base_commit}", "{workspace}", "{out}"])
+            proc = run_tool("--tasks", str(tasks), "--out", str(out),
+                            "--task-cmd", template, "--timeout", "60")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            got = json.loads(echo.read_text(encoding="utf-8"))
+            self.assertEqual(got[0], "syn p h", "带空格的 task_id 必须仍是一个 argv 元素")
+            self.assertEqual(got[1], "a b/c d", "带空格的 repo 必须仍是一个 argv 元素")
+            self.assertEqual(got[2], "deadbeef")
+            self.assertIn("syn p h", got[3])   # workspace 路径里含 task_id
+            self.assertTrue(got[4])
+
+
+class TestSelfTest(unittest.TestCase):
+    def test_self_test_passes(self):
+        proc = run_tool("--self-test")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("SELFTEST=PASS", proc.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
