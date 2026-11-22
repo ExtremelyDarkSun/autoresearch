@@ -85,6 +85,11 @@ def main(argv=None):
     a.add_argument('before'); a.add_argument('after'); a.add_argument('--profile', default=str(DEFAULT_PROFILE))
     a = sub.add_parser('selftest', help='运行内核与配置的离线测试')
     a.add_argument('--plugins', action='store_true', help='同时运行插件模拟宿主测试')
+    a = sub.add_parser('deps', help='检查或安装专题的评测依赖到其独立 venv，并更新就绪状态')
+    a.add_argument('--workspace', default=None, help='工作区根；不给则用当前目录')
+    a.add_argument('--topic', required=True, help='专题名')
+    a.add_argument('--requirements', default=None, help='依赖清单文件（每行一个 pip 需求，支持 # 注释）')
+    a.add_argument('--install', action='store_true', help='真的安装（默认只检查，不联网）')
     a = p.parse_args(args)
     try:
         if a.command == 'doctor':
@@ -174,6 +179,11 @@ def main(argv=None):
         if a.command == 'selftest':
             from .validation import run_tests
             return run_tests(ROOT, include_plugins=a.plugins)
+        if a.command == 'deps':
+            from .deps import run_deps
+            out = run_deps(a.workspace, a.topic, a.requirements, a.install)
+            dump(out)
+            return 0 if out.get('ok') else 2
     except (ValueError, OSError, RuntimeError) as exc:
         dump({'error':type(exc).__name__,'reason':str(exc)})
         return 2

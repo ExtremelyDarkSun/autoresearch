@@ -1,0 +1,44 @@
+# 评测依赖清单（模板）—— 你需要自己填
+#
+# ⚠️ 这个项目**不附带评测器**。谁去跑题单、需要哪些包，由部署方决定。
+# 本文件是 `research.py deps` 的输入：它会把这里列出的依赖装进**专题自己的 venv**
+# （<workspace>/AutoDL实验/实验记录/environments/<topic>/），不会污染全局 Python。
+#
+# ## 用法
+#
+#   # 只检查（不联网）
+#   python -X utf8 -B research.py deps --workspace <ws> --topic <t> --requirements requirements-eval.txt
+#
+#   # 真的安装（会联网；装 pl 到专题 venv，并把 provision.json 的 dependencies_installed 改成 true）
+#   python -X utf8 -B research.py deps --workspace <ws> --topic <t> --requirements requirements-eval.txt --install
+#
+# ## 格式
+#   每行一个 pip 需求；空行和以 # 开头的行会被忽略。
+#   支持 `numpy>=1.26`、`torch==2.1.0`、`scikit-learn` 这类写法。
+#
+# ## 注意
+#   - 专题 venv 是用 `python -m venv --without-pip` 建的，`deps` 会先自动跑 `ensurepip` 自举 pip。
+#   - 这是**评测**依赖，不含飞书加密依赖（那个在 requirements-feishu.txt，是可选件）。
+#   - 装完不等于能跑：还需要配 `profile.toml` 的 `[evaluation].command` 与真实题单/数据。
+#
+# --- 下面按需取消注释 ---
+
+# 通用科学计算
+# numpy>=1.26
+# pandas>=2.0
+# scipy>=1.11
+
+# 机器学习
+# scikit-learn>=1.3
+# lightgbm>=4.0
+# xgboost>=2.0
+
+# 深度学习（体积大，按需）
+# torch>=2.0
+# torchvision>=0.15
+# transformers>=4.40
+# accelerate>=0.27
+
+# 基础工具
+# tqdm>=4.66
+# pyyaml>=6.0

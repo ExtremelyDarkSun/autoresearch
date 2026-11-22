@@ -44,6 +44,18 @@ python -X utf8 -B research.py layout-check --workspace ../my-research
 
 先读[新电脑恢复](<docs/NEW_MACHINE_RECOVERY.md>)及[安装步骤](<project/INSTALL.md>)。新项目用init建空工作区。恢复旧工程用recovery保存当前工作树、专题和SQLite，私有ZIP不上传GitHub。新机按实际路径生成插件部署参数，再核真实会话输入、定时任务和一个实际评测样例。旧会话、授权、资源与凭据须另行核对。
 
+**三份必读**（按顺序）：
+
+1. [**15 分钟跑通**](<docs/QUICKSTART.md>) —— 从 clone 到四条自检全绿，含六个必踩的坑（git 代理、PowerShell 5.1 引号剥离、UTF-8 BOM、中文路径、`--without-pip`、400 字符上限）。
+2. [**凭据清单**](<docs/CREDENTIALS.md>) —— 5 类凭据的确切名字（`FEISHU_APP_ID` 等）、从哪拿、放哪、怎么验。**凭据绝不进 git，恢复包也明确排除，所以每台新机都要重配一次。**
+3. [**复现性边界**](<docs/REPRODUCIBILITY.md>) —— L0–L14 逐层判定：**能自动做到 L4（独立 Python 环境），L5 起需要人提供真实输入**。想先知道"装完能走多远"，看这份。
+
+装完依赖后，用 `research.py deps` 把评测包装进专题自己的 venv（会自动 `ensurepip` 自举，并真正更新 `provision.json` 的 `dependencies_installed`）：
+
+```powershell
+python -X utf8 -B research.py deps --workspace <ws> --topic <t> --requirements requirements-eval.txt --install
+```
+
 ## 让 AI 带你走一轮
 
 克隆仓库后，在仓库目录启动有终端工具的 AI，发送：
