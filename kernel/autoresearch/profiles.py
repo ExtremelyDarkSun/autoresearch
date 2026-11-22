@@ -439,13 +439,38 @@ def evaluation_state(profile) -> dict:
     if missing:
         blocking.append("[limits] 未配置必要预算：" + ", ".join(missing))
 
+    # 执行器存在性预检（2026-11-22 补）。
+    # 仓库**不附带评测执行器本体**（见 docs/REPRODUCIBILITY.md 的 L6.5：上游 run_eval.py
+    # 只以 {component, sha256} 形式登记，本体从未入库）。所以最常见的失败不是「配置没改」，
+    # 而是「改成了指向一个不存在的程序」——那种情况下 can_run 会假报 true，直到真跑才炸。
+    # 这里只检查**看起来像文件路径**的第一个参数；纯命令名（如 python、python3）交给 PATH。
+    executor_problems: list[str] = []
+    if command:
+        first = str(command[0])
+        looks_like_path = ('/' in first or '\\' in first) and not first.startswith('{')
+        if looks_like_path:
+            candidate = pathlib.Path(first)
+            if not candidate.is_absolute():
+                candidate = pathlib.Path.cwd() / candidate
+            try:
+                if not candidate.exists():
+                    executor_problems.append(f"[evaluation].command[0] 指向的执行器不存在：{first}")
+                elif not candidate.is_file():
+                    executor_problems.append(f"[evaluation].command[0] 不是文件：{first}")
+            except OSError as exc:
+                executor_problems.append(
+                    f"[evaluation].command[0] 无法检查（{type(exc).__name__}）：{first}")
+    blocking.extend(executor_problems)
+
     return {
         "configured": configured,
         "command": list(command),
         "limits": dict(limits),
-        "can_run": not errors and configured is True and bool(command) and not missing,
+        "can_run": (not errors and configured is True and bool(command)
+                    and not missing and not executor_problems),
         "blocking": blocking,
         "errors": errors,
+        "executor_ok": not executor_problems,
     }
 
 

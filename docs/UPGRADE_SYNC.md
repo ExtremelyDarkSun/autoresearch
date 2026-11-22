@@ -59,3 +59,19 @@ CUMULATIVE-DELTA: 研究、审计、读取、报告、继续交接、普通提�
 ## 验证范围
 
 验证使用合成计划、临时数据库、模拟宿主与本机服务。没有运行真实比赛评测、没有更改云机或当前宿主。自动检查仍不能判断科学结论是否成立。
+
+### 评测执行器从哪来（本仓库不带）
+
+`upgrade-sync.json` 的 `source_inventory` 里，274 条记录**全部只有 `{component, sha256}` 两个字段**，其中 `tools/run_eval.py`（约 3.7k 行）与 `tools/run_eval_probe.py` 也在其中，但：
+
+- 没有任何 URL、pypi 名、wheel 文件名或仓库坐标
+- `git log --all -- tools/run_eval.py` 为空
+- `git rev-list --all --objects` 检索不到该对象
+- `profiles/agent-harness/EXTRACTION.md` 的逐文件映射只覆盖它的**参数面**（argv 模板、结果 schema、闸门判据），不含执行体
+
+**结论：核验或实现评测执行器是部署方的责任。** 本仓库提供的是「配置面 + 判据 + 闸门」，
+`evaluation_state()["can_run"]` 只回答「配置是否合规」，不回答「有没有东西能执行」。
+要真跑，需要部署方提供执行器本体（源码 / wheel / 外部命令均可），再用 `research.py deps`
+把它的运行时依赖装进专题独立环境。
+
+详见 [REPRODUCIBILITY.md](REPRODUCIBILITY.md) 的 L6.5 与 [CREDENTIALS.md](CREDENTIALS.md)。

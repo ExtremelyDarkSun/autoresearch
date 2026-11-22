@@ -59,6 +59,7 @@ agent 比赛配置 = **因为优化对象是 agent harness 才需要的**题单 
 | 参考补丁 / gold | 部署方 | 属答案材料，进仓库等于把评分答案公开 |
 | 隐藏测试 / 官方评分脚本 | 部署方 | 同上 |
 | 官方 harness 库或其 wheel | 部署方 | 版本与许可都属部署环境 |
+| **评测执行器本体（`tools/run_eval.py`，约 3.7k 行）** | 部署方 / 上层集成方 | **上游组件从未入库**。`docs/upgrade-sync.json:1199-1206` 只登记 `{"component":"tools/run_eval.py","sha256":"cb3c18ae…"}` 这**两个字段**；`source_inventory` 的 274 条也全部只有 `{component, sha256}`。全文档 0 个 URL / pypi / wheel 坐标，`git log --all -- tools/run_eval.py` 为空，`git rev-list --all --objects` 检索不到该对象 ⇒ **本体从未存在于本仓库任何历史里**。本仓库只抽了它的**参数面**（见 §1），**没有真正去跑评测的程序**。不提供它，`evaluation_state()["can_run"]` 即使配齐也只表示「配置合规」，不代表「有东西可执行」 |
 | 指定模型与服务地址 | 部署方 | 属第三类内容 |
 | 四条预算的**实际数值** | 部署方 | 本仓库不预填、也不设隐藏默认值 |
 | 工具名清单（`[trace].tool_names`） | 部署方 | 不同 harness 的工具名不同 |
