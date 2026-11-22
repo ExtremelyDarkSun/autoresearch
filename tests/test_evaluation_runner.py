@@ -214,6 +214,33 @@ class TestSilentDropDetection(unittest.TestCase):
             self.assertEqual(report["alignment"]["missing_task_ids"], [])
             self.assertEqual(report["alignment"]["unexpected_task_ids"], [])
 
+    # ---- 第二层假绿（副机 L57）：ok=false 之后 summary.pass_rate 仍是 1.0 ----
+    #
+    # 只把顶层 ok 改成 false 是不够的：任何拿 report["results"]["summary"] 当读数的
+    # 下游（图表、对比、CLI 打印）照样看到 100%。对齐结论必须同时注入 summary。
+
+    def test_misaligned_run_nulls_summary_pass_rate(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run_with_stub(tmp, ["d-1", "d-2"], ["d-1"])
+            self.assertFalse(report["ok"])
+            summary = report["results"]["summary"]
+            self.assertIsNone(summary["pass_rate"], "覆盖不全时 summary.pass_rate 必须不可用")
+            self.assertEqual(summary["pass_rate_raw"], 1.0, "原值要留档")
+            self.assertFalse(summary["aligned"])
+            self.assertEqual(summary["alignment"]["missing_task_ids"], ["d-2"])
+            self.assertIn("未对齐", summary["pass_rate_basis"])
+
+    def test_aligned_run_keeps_summary_pass_rate(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run_with_stub(tmp, ["g-1", "g-2"], ["g-1", "g-2"])
+            summary = report["results"]["summary"]
+            self.assertEqual(summary["pass_rate"], 1.0)
+            self.assertEqual(summary["pass_rate_raw"], 1.0)
+            self.assertTrue(summary["aligned"])
+            self.assertNotIn("未对齐", summary["pass_rate_basis"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

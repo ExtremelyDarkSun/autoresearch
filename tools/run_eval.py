@@ -338,6 +338,13 @@ def run_tasks(
         "executed": not dry_run,
         "tasks_total": len(tasks),
         "tasks_run": len(results),
+        # 输入题单的题号（排序去重）—— 写给下游做对齐判定。
+        #
+        # 为什么必须落在 run_meta 里：`read_results()` 只拿到结果文件，看不到题单；
+        # 于是「题单 2 题、结果 1 题」在**直读路径**上会被算成 pass_rate=1.0
+        # （副机 L58 实测：直接对 task_results.jsonl 调 read_results 仍得 1.0）。
+        # 把题单快照写进 sidecar，读取端才有依据判「这份结果覆盖不全」。
+        "tasklist_task_ids": sorted({str(t["task_id"]) for t in tasks}),
         "limits": {"per_task_timeout_seconds": timeout},
         "measurement": {
             "executor": "tools/run_eval.py",

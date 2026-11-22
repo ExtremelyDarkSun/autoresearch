@@ -299,6 +299,122 @@ class TestExitCodePolicy(unittest.TestCase):
                     self.assertIn("不能当目录名", proc.stderr)
 
 
+class TestSidecarAlignment(unittest.TestCase):
+    """直读路径上的假绿（副机 L58）。
+
+    `read_results()` 只拿到结果文件，看不到题单。所以「题单 2 题、结果写回 1 题」在
+    直读路径上会被算成 pass_rate=1.0，被吞掉的题彻底消失。约定由跑评测的一方把题单
+    快照写进 sidecar 的 `tasklist_task_ids`，读取端据此判「覆盖不全」。
+
+    另外必须守住「不误杀」：无 sidecar / 字段缺失 / 类型不合法时，summary 不能多出
+    任何一个键 —— 否则所有历史结果文件的行为都会被悄悄改掉。
+    """
+
+    _BASE_KEYS = {
+        "n_tasks", "n_passed", "n_failed", "n_infra_error", "n_timed_out", "n_scored",
+        "n_unscored", "pass_rate", "pass_rate_basis", "task_ids", "errors", "notes",
+        "source", "measurement",
+    }
+
+    def _case(self, tmp: pathlib.Path, name: str, results_rows, sidecar=None):
+        out = tmp / name
+        out.mkdir(parents=True, exist_ok=True)
+        write_jsonl(out / "task_results.jsonl", results_rows)
+        if sidecar is not None:
+            (out / "run_meta.json").write_text(
+                json.dumps(sidecar, ensure_ascii=False), encoding="utf-8")
+        return ah.read_results(out)["summary"]
+
+    def test_missing_task_nulls_pass_rate(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            summary = self._case(
+                tmp, "drop",
+                [{"task_id": "syn-a", "status": "passed"}],
+                {"tasklist_task_ids": ["syn-a", "syn-b"]},
+            )
+            self.assertIsNone(summary["pass_rate"], "覆盖不全时 pass_rate 必须不可用")
+            self.assertEqual(summary["pass_rate_raw"], 1.0, "原值必须留档，不能凭空消失")
+            self.assertFalse(summary["aligned"])
+            self.assertEqual(summary["alignment"]["missing_task_ids"], ["syn-b"])
+            self.assertIn("未对齐", summary["pass_rate_basis"])
+
+    def test_extra_task_nulls_pass_rate(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            summary = self._case(
+                tmp, "extra",
+                [{"task_id": "syn-a", "status": "passed"},
+                 {"task_id": "syn-ghost", "status": "passed"}],
+                {"tasklist_task_ids": ["syn-a"]},
+            )
+            self.assertIsNone(summary["pass_rate"])
+            self.assertEqual(summary["alignment"]["unexpected_task_ids"], ["syn-ghost"])
+
+    def test_aligned_keeps_pass_rate(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            summary = self._case(
+                tmp, "ok",
+                [{"task_id": "syn-a", "status": "passed"},
+                 {"task_id": "syn-b", "status": "failed"}],
+                {"tasklist_task_ids": ["syn-b", "syn-a"]},
+            )
+            self.assertEqual(summary["pass_rate"], 0.5)
+            self.assertEqual(summary["pass_rate_raw"], 0.5)
+            self.assertTrue(summary["aligned"])
+            self.assertEqual(summary["alignment"]["missing_task_ids"], [])
+
+    def test_no_sidecar_adds_no_keys(self):
+        """没有 sidecar 时必须与改前**完全一致**：多一个键就是改了所有历史读数。"""
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            summary = self._case(tmp, "plain", [{"task_id": "syn-a", "status": "passed"}])
+            self.assertEqual(set(summary) - self._BASE_KEYS, set())
+            self.assertEqual(summary["pass_rate"], 1.0)
+
+    def test_invalid_sidecar_field_adds_no_keys(self):
+        for bad in ("not-a-list", 123, {}, [], ["", "  "]):
+            with self.subTest(value=repr(bad)):
+                with tempfile.TemporaryDirectory() as t:
+                    tmp = pathlib.Path(t)
+                    summary = self._case(
+                        tmp, "bad",
+                        [{"task_id": "syn-a", "status": "passed"}],
+                        {"tasklist_task_ids": bad},
+                    )
+                    self.assertEqual(set(summary) - self._BASE_KEYS, set())
+                    self.assertEqual(summary["pass_rate"], 1.0)
+
+    def test_read_sidecar_false_ignores_snapshot(self):
+        """显式 read_sidecar=False 时，连对齐判定也不该发生。"""
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            out = tmp / "off"
+            out.mkdir(parents=True, exist_ok=True)
+            write_jsonl(out / "task_results.jsonl", [{"task_id": "syn-a", "status": "passed"}])
+            (out / "run_meta.json").write_text(
+                json.dumps({"tasklist_task_ids": ["syn-a", "syn-b"]}), encoding="utf-8")
+            summary = ah.read_results(out, read_sidecar=False)["summary"]
+            self.assertEqual(set(summary) - self._BASE_KEYS, set())
+            self.assertEqual(summary["pass_rate"], 1.0)
+
+    def test_run_eval_writes_tasklist_snapshot(self):
+        """执行器自己必须把题号快照落进 run_meta.json，否则读取端没有依据。"""
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            tasks = write_jsonl(tmp / "t.jsonl", [
+                {"task_id": "syn-1", "command": [PY, "-c", "pass"]},
+                {"task_id": "syn-2", "command": [PY, "-c", "pass"]},
+            ])
+            out = tmp / "o"
+            proc = run_tool("--tasks", str(tasks), "--out", str(out),
+                            "--per-task-command", "--allow-failures")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            meta = json.loads((out / "run_meta.json").read_text(encoding="utf-8-sig"))
+            self.assertEqual(meta["tasklist_task_ids"], ["syn-1", "syn-2"])
+
+
 class TestSelfTest(unittest.TestCase):
     def test_self_test_passes(self):
         proc = run_tool("--self-test")

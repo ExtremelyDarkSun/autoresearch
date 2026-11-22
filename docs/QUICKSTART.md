@@ -162,6 +162,22 @@ python -X utf8 -B tools\run_eval.py --tasks tasks.jsonl --out runs\run1 --per-ta
 python -X utf8 -B research.py results runs\run1\task_results.jsonl
 ```
 
+**读数会被「题单覆盖」卡住**：结果文件只记「跑过的题」，不记「本该跑哪些题」。
+所以执行器会把输入题单的题号快照写进 `run_meta.json` 的 `tasklist_task_ids`；
+`read_results()` 读到这个字段后会比对两边：
+
+| 情况 | `summary.pass_rate` | 其他字段 |
+|---|---|---|
+| 两侧题号完全一致 | 正常数值 | `aligned=true`、`pass_rate_raw` 与之一致 |
+| 结果少题 / 多题 | **`null`**（不可用） | `aligned=false`、`alignment.missing_task_ids` 列出缺哪些、原值保留在 `pass_rate_raw` |
+| 无 `run_meta.json` 或无该字段 | 正常数值 | 与旧行为**完全一致**，不再多出任何键 |
+
+这条规则的由来：`read_results()` 手上只有结果文件，看不到题单，于是「题单 2 题、
+结果只写回 1 题」会被算成 `pass_rate=1.0`——被吞掉的题在读数里彻底消失。这是比报错
+更危险的失效，因为没人会去看。
+
+`research.py eval` 还会在结果里同时给出顶层 `ok` 与 `alignment_error`，两者口径一致。
+
 ---
 
 ## 6. 到这里就到底了（重要）

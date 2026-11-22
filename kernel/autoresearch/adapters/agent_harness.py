@@ -323,6 +323,39 @@ def _profile_measurement(profile, results_path: pathlib.Path, read_sidecar: bool
     return measurement
 
 
+def _sidecar_tasklist_ids(results_path: pathlib.Path, read_sidecar: bool):
+    """从 sidecar 里取「输入题单的题号快照」，返回 `(ids, sidecar 文件名)`。
+
+    为什么需要：`read_results()` 手上只有结果文件，**看不到题单**。于是「题单 2 题、
+    结果只写回 1 题」在直读路径上会被算成 `pass_rate=1.0` —— 被吞掉的那题彻底消失
+    （副机 L58 实测：直接对 task_results.jsonl 调 read_results 仍得 1.0）。
+
+    约定：跑评测的一方把题单快照写进 sidecar 的 `tasklist_task_ids`。取不到、字段
+    缺失、类型不合法，一律返回 `(None, None)`，调用方必须**保持旧行为** ——
+    不要凭猜测判「未对齐」。
+    """
+    if not read_sidecar:
+        return None, None
+    for template in SIDECAR_NAMES:
+        candidate = results_path.parent / template.format(stem=results_path.stem)
+        if not candidate.is_file():
+            continue
+        try:
+            blob = json.loads(candidate.read_text(encoding="utf-8-sig", errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(blob, dict):
+            continue
+        raw = blob.get("tasklist_task_ids")
+        if not isinstance(raw, list):
+            continue
+        ids = [item.strip() for item in raw if isinstance(item, str) and item.strip()]
+        if not ids:
+            continue
+        return ids, candidate.name
+    return None, None
+
+
 def read_results(path, profile=None, *, strict=True, read_sidecar=True) -> dict:
     """读一份中性结果 JSONL，规范化为 `{"tasks": [...], "summary": {...}}`。
 
@@ -487,6 +520,32 @@ def read_results(path, profile=None, *, strict=True, read_sidecar=True) -> dict:
         "source": str(results_path),
         "measurement": _profile_measurement(profile, results_path, read_sidecar),
     }
+
+    # 题单对齐判定（副机 L58）：sidecar 里有题单快照时，比对它和结果里的题号集合。
+    # 不一致 ⇒ pass_rate 置 None（原值保留在 pass_rate_raw），并写清差在哪。
+    # 无 sidecar / 无该字段 / 字段不合法 ⇒ 完全保持旧行为（summary 不多一个键）。
+    expected_ids, sidecar_name = _sidecar_tasklist_ids(results_path, read_sidecar)
+    if expected_ids is not None:
+        expected_set = set(expected_ids)
+        actual_set = set(summary["task_ids"])
+        missing = sorted(expected_set - actual_set)
+        unexpected = sorted(actual_set - expected_set)
+        summary["aligned"] = not missing and not unexpected
+        summary["pass_rate_raw"] = summary["pass_rate"]
+        summary["alignment"] = {
+            "expected_count": len(expected_set),
+            "actual_count": len(actual_set),
+            "missing_task_ids": missing,
+            "unexpected_task_ids": unexpected,
+            "source": sidecar_name,
+        }
+        if missing or unexpected:
+            summary["pass_rate"] = None
+            summary["pass_rate_basis"] = (
+                f"题单未对齐，pass_rate 不可用（缺 {len(missing)}、多 {len(unexpected)}）；"
+                "原值见 pass_rate_raw"
+            )
+
     return {"tasks": tasks, "summary": summary}
 
 

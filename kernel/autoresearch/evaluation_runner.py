@@ -142,34 +142,65 @@ def run_evaluation(
     # 少一题或多一题都判 ok=false，并把差异原样写进报告。
     try:
         results = read_results(Path(output), profile)
-        report["results"] = results
-
-        tasklist = read_tasklist(tasks)
-        expected = [str(t["task_id"]) for t in (tasklist.get("tasks") or [])]
-        actual = [str(t["task_id"]) for t in (results.get("tasks") or [])]
-        expected_set, actual_set = set(expected), set(actual)
-        missing = sorted(expected_set - actual_set)
-        unexpected = sorted(actual_set - expected_set)
-
-        report["alignment"] = {
-            "expected_count": len(expected),
-            "actual_count": len(actual),
-            "missing_task_ids": missing,
-            "unexpected_task_ids": unexpected,
-        }
-
-        if missing or unexpected:
-            report["ok"] = False
-            report["alignment_error"] = (
-                f"结果与题单不一致：缺 {len(missing)} 题"
-                + (f"（{', '.join(missing[:5])}）" if missing else "")
-                + f"、多 {len(unexpected)} 题"
-                + (f"（{', '.join(unexpected[:5])}）" if unexpected else "")
-            )
-        else:
-            report["ok"] = proc.returncode == 0
     except ResultsError as exc:
         report["results_read_error"] = str(exc)
         report["ok"] = False
+        return report
+
+    report["results"] = results
+    summary = results.get("summary")
+    if not isinstance(summary, dict):
+        summary = None
+
+    # 第二层假绿（副机 L57）：`ok=false` 之后，`report["results"]["summary"]["pass_rate"]`
+    # 仍然是 1.0 —— 任何拿 summary 当读数的下游照样看到「全通过」。所以对齐结论必须
+    # 同时注入 summary：对不上就把 pass_rate 置 None（原值留 pass_rate_raw）。
+    try:
+        tasklist = read_tasklist(tasks)
+    except ResultsError as exc:
+        # 结果读到了、题单读不到 ⇒ 无法确认覆盖是否完整，pass_rate 自然不可判定。
+        if summary is not None:
+            summary["aligned"] = False
+            summary["pass_rate_raw"] = summary.get("pass_rate")
+            summary["pass_rate"] = None
+            summary["pass_rate_basis"] = f"题单读取失败，无法确认对齐：{exc}"
+        report["alignment_error"] = f"读不到输入题单，无法确认结果覆盖完整：{exc}"
+        report["ok"] = False
+        return report
+
+    expected = [str(t["task_id"]) for t in (tasklist.get("tasks") or [])]
+    actual = [str(t["task_id"]) for t in (results.get("tasks") or [])]
+    expected_set, actual_set = set(expected), set(actual)
+    missing = sorted(expected_set - actual_set)
+    unexpected = sorted(actual_set - expected_set)
+
+    report["alignment"] = {
+        "expected_count": len(expected),
+        "actual_count": len(actual),
+        "missing_task_ids": missing,
+        "unexpected_task_ids": unexpected,
+    }
+
+    if summary is not None:
+        summary["aligned"] = not missing and not unexpected
+        summary["pass_rate_raw"] = summary.get("pass_rate")
+        summary["alignment"] = dict(report["alignment"])
+
+    if missing or unexpected:
+        report["ok"] = False
+        report["alignment_error"] = (
+            f"结果与题单不一致：缺 {len(missing)} 题"
+            + (f"（{', '.join(missing[:5])}）" if missing else "")
+            + f"、多 {len(unexpected)} 题"
+            + (f"（{', '.join(unexpected[:5])}）" if unexpected else "")
+        )
+        if summary is not None:
+            summary["pass_rate"] = None
+            summary["pass_rate_basis"] = (
+                f"题单未对齐，pass_rate 不可用（缺 {len(missing)}、多 {len(unexpected)}）；"
+                "原值见 pass_rate_raw"
+            )
+    else:
+        report["ok"] = proc.returncode == 0
 
     return report
