@@ -291,30 +291,52 @@ def patch_touches_judgment(patch_text: str, test_prefixes) -> list[str]:
     2. 任意位置的 `conftest.py` / `pytest.ini` —— **实测**：根 conftest 里把用例全 skip，
        一道红题立刻变 `passed`，而前缀守卫对它完全无感；
     3. `tox.ini` / `setup.cfg` / `pyproject.toml` 里动到 `[pytest]` / `[tool:pytest*]` 段。
+
+    **路径怎么取**（这里栽过两次）：
+
+    - 首选 `diff --git a/<x> b/<y>`；
+    - 退而求其次：`+++ b/<x>` **只有在上一行是 `--- a/<x>` 文件头时才算文件头**。
+      否则，hunk 里一行内容 `+++ b/pyproject.toml` 会被当成文件头 ——
+      实测（`cmp_parsers.py`）：一份只改 `kernel/a.py` 的补丁，因为内容里有这么一行，
+      把 `pyproject.toml` 判成了判据。**误杀真补丁**，而且看起来完全正常。
     """
     prefixes = tuple(test_prefixes or DEFAULT_TEST_PREFIXES)
-    touched = []
-    current = None
-    config_touched = []
+    touched: list[str] = []
+    config_touched: list[str] = []
+    cur = None
+    prev_is_minus_header = False
+
     for line in (patch_text or "").splitlines():
-        if line.startswith(("+++ ", "--- ")):
-            path = line[4:].strip()
-            if path.startswith(("b/", "a/")):
-                path = path[2:]
-            current = None if path in ("/dev/null", "") else path
-            if current is None:
-                continue
-            base = current.rsplit("/", 1)[-1]
-            if (current.startswith(prefixes) or base in JUDGMENT_PATHS) and current not in touched:
-                touched.append(current)
+        m = re.match(r"^diff --git a/(\S+) b/(\S+)$", line)
+        if m:
+            cur = m.group(2)
+            prev_is_minus_header = False
+            _note_judgment(cur, prefixes, touched)
             continue
-        # 配置文件里的改动：看上下文行里有没有 pytest 段标记
-        if current and current.rsplit("/", 1)[-1] in JUDGMENT_CONFIG_FILES and line[:1] in "+-":
+        if line.startswith("--- a/") or line.startswith("--- /dev/null"):
+            prev_is_minus_header = True
+            continue
+        if line.startswith("+++ b/") and prev_is_minus_header:
+            cur = line[6:].strip()
+            prev_is_minus_header = False
+            _note_judgment(cur, prefixes, touched)
+            continue
+        prev_is_minus_header = False
+        if cur is None:
+            continue
+        base = cur.rsplit("/", 1)[-1]
+        if base in JUDGMENT_CONFIG_FILES and line.startswith("+") and not line.startswith("+++"):
             low = line.lower()
-            if any(marker in low for marker in _JUDGMENT_CONFIG_MARKERS):
-                if current not in config_touched:
-                    config_touched.append(current)
+            if any(marker in low for marker in _JUDGMENT_CONFIG_MARKERS) and cur not in config_touched:
+                config_touched.append(cur)
+
     return sorted(touched + config_touched)
+
+
+def _note_judgment(path: str, prefixes, touched: list) -> None:
+    base = path.rsplit("/", 1)[-1]
+    if (path.startswith(prefixes) or base in JUDGMENT_PATHS) and path not in touched:
+        touched.append(path)
 
 
 def patch_touches_tests(patch_text: str, test_prefixes) -> list[str]:

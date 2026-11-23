@@ -762,5 +762,55 @@ class TestConftestIsJudgment(unittest.TestCase):
         self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), [])
 
 
+
+
+class TestJudgmentParserPrecision(unittest.TestCase):
+    """判据守卫的解析精度 —— 副机 L91 探针 B 抓到的误杀。
+
+    第一版从任意以 `--- ` / `+++ ` 开头的行取路径，于是 **hunk 内容里恰好以 `--- ` 开头的行**
+    会被当成文件头。实测：某个源文件新增的一行注释提到 `[tool.pytest.ini_options]`，
+    居然把 `pyproject.toml` 判成判据 —— **误杀真的补丁**。
+
+    现在路径只从 `diff --git a/<x> b/<y>` 与成对的 `--- a/...` / `+++ b/...` 取。
+    """
+
+    def _patch(self, path, body):
+        return (f"diff --git a/{path} b/{path}" + chr(10) + f"--- a/{path}" + chr(10)
+                + f"+++ b/{path}" + chr(10) + body)
+
+    def test_source_comment_mentioning_pytest_does_not_flag_pyproject(self):
+        patch = self._patch("kernel/a.py", "@@ -1 +1,2 @@" + chr(10) + " x" + chr(10)
+                             + "+ # [tool.pytest.ini_options] 只是注释" + chr(10))
+        self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), [])
+
+    def test_real_pytest_section_in_pyproject_is_flagged(self):
+        patch = self._patch("pyproject.toml", "@@ -1 +1,2 @@" + chr(10) + " [build-system]" + chr(10)
+                             + "+[tool.pytest.ini_options]" + chr(10))
+        self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), ["pyproject.toml"])
+
+    def test_source_only_patch_is_clean(self):
+        patch = self._patch("kernel/a.py", "@@ -1 +1 @@" + chr(10) + "-x" + chr(10) + "+y" + chr(10))
+        self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), [])
+
+    def test_content_line_that_looks_like_a_diff_header_is_not_a_header(self):
+        """hunk 里一行内容 `+++ b/pyproject.toml` 不是文件头。
+
+        实测（`cmp_parsers.py` 对比新旧实现）：旧解析会把 cur 切到 pyproject.toml，
+        于是同一份补丁里后面那个 `+[tool.pytest.ini_options]` 把它判成判据 ——
+        **误杀真补丁**，而补丁本身只改了 `kernel/a.py`。
+        这是唯一一条能区分新旧实现的用例；其余四条在两边输出相同，守不住任何东西。
+        """
+        patch = (f"diff --git a/kernel/a.py b/kernel/a.py" + chr(10)
+                 + f"--- a/kernel/a.py" + chr(10) + f"+++ b/kernel/a.py" + chr(10)
+                 + "@@ -1 +1,3 @@" + chr(10) + " x" + chr(10)
+                 + "+++ b/pyproject.toml" + chr(10) + "+[tool.pytest.ini_options]" + chr(10))
+        self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), [])
+    def test_new_root_conftest_is_flagged(self):
+        patch = ("diff --git a/conftest.py b/conftest.py" + chr(10) + "new file mode 100644" + chr(10)
+                 + "--- /dev/null" + chr(10) + "+++ b/conftest.py" + chr(10)
+                 + "@@ -0,0 +1 @@" + chr(10) + "+import pytest" + chr(10))
+        self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), ["conftest.py"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
