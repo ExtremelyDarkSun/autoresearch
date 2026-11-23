@@ -161,18 +161,31 @@ class TestSilentDropDetection(unittest.TestCase):
     根因是 ok 只等于「执行器 exit==0」。
     """
 
-    def _run_with_stub(self, tmp: pathlib.Path, task_ids, emitted_ids):
-        """用桩执行器只写回 emitted_ids，模拟静默丢题 / 多写题。"""
+    def _run_with_stub(self, tmp: pathlib.Path, task_ids, emitted_ids, *, sidecar=False):
+        """用桩执行器只写回 emitted_ids，模拟静默丢题 / 多写题。
+
+        `sidecar=True` 时同时写 `run_meta.json`（题单快照 + schema 版本），
+        也就是**真实 `tools/run_eval.py` 的产出形状**。不加这个开关就测不到
+        「read_results 先置 raw、runner 再覆盖成 null」那条叠加路径。
+        """
         stub = tmp / "stub.py"
+        sidecar_src = (
+            "if " + repr(bool(sidecar)) + ":\n"
+            "    (out / 'run_meta.json').write_text(json.dumps({'tasklist_task_ids': tasklist_ids,"
+            " 'result_schema_version': 1}, ensure_ascii=False), encoding='utf-8')\n"
+        )
         stub.write_text(
             "import sys, json, pathlib\n"
             "tasks = pathlib.Path(sys.argv[sys.argv.index('--tasks')+1])\n"
             "out = pathlib.Path(sys.argv[sys.argv.index('--out')+1])\n"
             "out.mkdir(parents=True, exist_ok=True)\n"
             "emit = " + repr(list(emitted_ids)) + "\n"
+            "tasklist_ids = [json.loads(x)['task_id'] for x in\n"
+            "                tasks.read_text(encoding='utf-8-sig').splitlines() if x.strip()]\n"
             "with (out / 'task_results.jsonl').open('w', encoding='utf-8', newline='\\n') as fh:\n"
             "    for tid in emit:\n"
             "        fh.write(json.dumps({'task_id': tid, 'status': 'passed'}, ensure_ascii=False) + '\\n')\n"
+            + sidecar_src +
             "print('pretend done:', len(emit))\n",
             encoding="utf-8",
         )
@@ -240,6 +253,29 @@ class TestSilentDropDetection(unittest.TestCase):
             self.assertEqual(summary["pass_rate_raw"], 1.0)
             self.assertTrue(summary["aligned"])
             self.assertNotIn("未对齐", summary["pass_rate_basis"])
+
+    def test_sidecar_present_keeps_original_pass_rate_in_raw(self):
+        """有 sidecar 时 `pass_rate_raw` 必须留住**原值**（副机 L61 第 2 步实测）。
+
+        `read_results()` 因为 sidecar 里的题单快照对不上，会先把 `pass_rate` 置 None、
+        把原值 1.0 存进 `pass_rate_raw`。runner 若再执行
+        `summary["pass_rate_raw"] = summary.get("pass_rate")`，拿到的是 None，
+        把一手记录覆盖掉 —— raw 也变成 null，谁都看不出原来是 1.0。
+
+        这条只有在「真实执行器形状（带 sidecar）+ 丢题」时才成立：
+        不带 sidecar 的桩反而一切正常，所以早先的用例全都漏了它。
+        """
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run_with_stub(tmp, ["s-1", "s-2", "s-3"], ["s-1", "s-2"],
+                                         sidecar=True)
+            summary = report["results"]["summary"]
+            self.assertFalse(report["ok"])
+            self.assertEqual(report["verdict"], "misaligned")
+            self.assertIsNone(summary["pass_rate"])
+            self.assertEqual(summary["pass_rate_raw"], 1.0,
+                             "raw 必须是原值 1.0，不能被 None 覆盖")
+            self.assertFalse(summary["aligned"])
 
 
 class TestVerdict(unittest.TestCase):

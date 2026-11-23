@@ -153,6 +153,13 @@ keep = rows[:-1]          # 故意丢最后一题 —— 这就是「静默丢�
 with (out / 'task_results.jsonl').open('w', encoding='utf-8', newline='\\n') as fh:
     for r in keep:
         fh.write(json.dumps({'task_id': r['task_id'], 'status': 'passed'}, ensure_ascii=False) + '\\n')
+# 关键：**同时写 sidecar，形状与真实 tools/run_eval.py 一致**（题单快照 + schema 版本）。
+# 少了这一步，「read_results 先把 raw 置成 1.0、runner 再把它覆盖成 null」这条叠加路径
+# 根本走不到 —— 而它正是副机 L61 第 2 步实测到的 bug：stub 不写 sidecar 时看起来一切正常。
+(out / 'run_meta.json').write_text(json.dumps({
+    'tasklist_task_ids': sorted(r['task_id'] for r in rows),
+    'result_schema_version': 1,
+}, ensure_ascii=False, indent=2), encoding='utf-8')
 print('emitted', len(keep), 'of', len(rows))
 """
 

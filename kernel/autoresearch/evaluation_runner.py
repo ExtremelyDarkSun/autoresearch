@@ -249,7 +249,9 @@ def run_evaluation(
         # 结果读到了、题单读不到 ⇒ 无法确认覆盖是否完整，pass_rate 自然不可判定。
         if summary is not None:
             summary["aligned"] = False
-            summary["pass_rate_raw"] = summary.get("pass_rate")
+            # 只在没有原值时补：`read_results()` 若已因 sidecar 对齐置过 raw，那是更早、
+            # 更接近数据的一手记录，不能被这里用「已经变成 None 的 pass_rate」覆盖掉。
+            summary.setdefault("pass_rate_raw", summary.get("pass_rate"))
             summary["pass_rate"] = None
             summary["pass_rate_basis"] = f"题单读取失败，无法确认对齐：{exc}"
         report["alignment_error"] = f"读不到输入题单，无法确认结果覆盖完整：{exc}"
@@ -272,7 +274,15 @@ def run_evaluation(
 
     if summary is not None:
         summary["aligned"] = not missing and not unexpected
-        summary["pass_rate_raw"] = summary.get("pass_rate")
+        # ⚠️ 必须 setdefault，不能直接赋值。
+        #
+        # `read_results()` 在有 sidecar（真实跑过 `tools/run_eval.py` 的形状）时，已经
+        # 因为题单对不上把 `pass_rate` 置成 None、并把**原值 1.0** 存进 `pass_rate_raw`。
+        # 这里若写 `summary["pass_rate_raw"] = summary.get("pass_rate")`，拿到的是 None，
+        # 会把那一手记录覆盖掉 —— 结果就是 raw 也变成 null，谁都不知道原来是 1.0。
+        # 副机 L61 第 2 步实测踩到的就是这个（stub 不写 sidecar 时反而正常，所以只有
+        # 「真实执行器 + 丢题」这一条路径会暴露）。
+        summary.setdefault("pass_rate_raw", summary.get("pass_rate"))
         summary["alignment"] = dict(report["alignment"])
 
     if missing or unexpected:
