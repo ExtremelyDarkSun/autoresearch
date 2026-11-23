@@ -220,6 +220,68 @@ class TestPlaceholders(unittest.TestCase):
             self.assertTrue(got[4])
 
 
+class TestMissingPlaceholderValues(unittest.TestCase):
+    """占位符填不上时不许静默变成空串（agent 实测的两个静默失败）。
+
+    `render()` 原来写的是 `mapping.get(key, "")`：题单缺 `base_commit` 时，
+    `--commit {base_commit}` 变成 `--commit ''` —— 命令照常执行、解释器照常 exit 0，
+    于是「在默认分支上跑了一遍」被记成「在指定 commit 上跑过」。**读数有值，
+    但它测的是另一份代码**，比崩溃更难发现。
+
+    另一头：模板里拼错成 `{task_idd}` 时，它会被原样当普通参数传下去，
+    执行器可能根本没用上它，然后 exit 0。
+    """
+
+    def test_unknown_placeholder_fails_before_running(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            tasks = write_jsonl(tmp / "t.jsonl", [{"task_id": "ph-1"}])
+            template = json.dumps([PY, "-c", "pass", "--x", "{task_idd}"])
+            proc = run_tool("--tasks", str(tasks), "--out", str(tmp / "o"),
+                            "--task-cmd", template, "--timeout", "60")
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertIn("不认识的占位符", proc.stderr)
+            self.assertIn("{task_idd}", proc.stderr)
+            self.assertIn("{task_id}", proc.stderr, "要顺手列出可用的占位符")
+            self.assertFalse((tmp / "o" / "task_results.jsonl").exists(),
+                             "开跑前就该拦住，不该产出结果文件")
+
+    def test_braces_in_python_code_are_not_placeholders(self):
+        """`print({'a': 1})` 这种正经花括号不能被当成拼错的占位符。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            tasks = write_jsonl(tmp / "t.jsonl", [{"task_id": "ph-2"}])
+            template = json.dumps([PY, "-c", "print({'a': 1})"])
+            proc = run_tool("--tasks", str(tasks), "--out", str(tmp / "o"),
+                            "--task-cmd", template, "--timeout", "60")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_missing_base_commit_is_infra_error_and_never_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            marker = tmp / "ran.txt"
+            tasks = write_jsonl(tmp / "t.jsonl", [{"task_id": "ph-3", "repo": "o/r"}])
+            template = json.dumps([
+                PY, "-c", f"pathlib.Path(r'{marker}').write_text('ran')",
+                "--commit", "{base_commit}"])
+            proc = run_tool("--tasks", str(tasks), "--out", str(tmp / "o"),
+                            "--task-cmd", template, "--timeout", "60")
+            rows = read_jsonl(tmp / "o" / "task_results.jsonl")
+            self.assertEqual(rows[0]["status"], "infra_error")
+            self.assertIn("base_commit", rows[0]["reason"])
+            self.assertFalse(marker.exists(), "缺字段时命令根本不该被执行")
+
+    def test_unused_missing_field_is_fine(self):
+        """模板没用到 `{repo}`，题单就没给 `repo` —— 不该被拦。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            tasks = write_jsonl(tmp / "t.jsonl", [{"task_id": "ph-4"}])
+            template = json.dumps([PY, "-c", "pass", "--out", "{out}"])
+            proc = run_tool("--tasks", str(tasks), "--out", str(tmp / "o"),
+                            "--task-cmd", template, "--timeout", "60")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+
 class TestExitCodePolicy(unittest.TestCase):
     """退出码不许骗人（L41 实测的两个假绿）。
 

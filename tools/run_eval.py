@@ -63,6 +63,7 @@ import argparse
 import json
 import math
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -208,6 +209,50 @@ def render(argv: list[str], mapping: dict[str, str]) -> list[str]:
     return out
 
 
+#: 只能从题单行里取值的占位符。缺了它们就是**缺字段**，不能静默换成空串。
+FROM_TASKLIST = ("repo", "base_commit")
+
+#: 模板里「像占位符」的记号：`{名字}`，名字只由小写字母和下划线组成。
+#: 刻意不用 `\{[^}]*\}` —— `python -c 'print({"a": 1})'` 这种正经花括号不能被误判。
+PLACEHOLDER_TOKEN = re.compile(r"\{([a-z_]+)\}")
+
+
+def used_placeholders(argv: list[str]) -> list[str]:
+    found: list[str] = []
+    for piece in argv:
+        for name in PLACEHOLDER_TOKEN.findall(piece):
+            if name in PLACEHOLDERS and name not in found:
+                found.append(name)
+    return found
+
+
+def unknown_placeholders(argv: list[str]) -> list[str]:
+    """模板里出现了不认识的 `{名字}` —— 十有八九是把 `{task_id}` 拼错了。
+
+    这类错误会**原样传给执行器**（`{task_idd}` 变成一个普通参数），
+    执行器可能照常退出 0，于是「一条谁都没执行的命令」被记成通过。
+    """
+    found: list[str] = []
+    for piece in argv:
+        for name in PLACEHOLDER_TOKEN.findall(piece):
+            token = "{" + name + "}"
+            if name not in PLACEHOLDERS and token not in found:
+                found.append(token)
+    return found
+
+
+def missing_tasklist_fields(argv: list[str], task: dict) -> list[str]:
+    """模板用到了、但题单这行没给的字段。"""
+    missing: list[str] = []
+    for key in used_placeholders(argv):
+        if key not in FROM_TASKLIST:
+            continue
+        value = task.get(key)
+        if not isinstance(value, str) or not value.strip():
+            missing.append(key)
+    return missing
+
+
 # ---------------------------------------------------------------------------
 # 单题执行
 # ---------------------------------------------------------------------------
@@ -310,6 +355,24 @@ def run_tasks(
                 continue
             argv = render(raw_cmd, mapping)
         else:
+            # 模板用到了 `{repo}` / `{base_commit}`，而题单这行没给 ⇒ 不跑。
+            #
+            # 早先的实现会把缺的字段换成空串，命令照常执行、执行器照常退出 0，
+            # 于是「在默认分支上跑了一遍」被记成「在指定 commit 上跑过」。
+            # 这是比崩溃更难发现的一种错：**读数有值，但它测的是另一份代码。**
+            missing = missing_tasklist_fields(argv_template or [], task)
+            if missing:
+                results.append({
+                    "task_id": task_id,
+                    "status": "infra_error",
+                    "reason": (
+                        f"题单这一行缺字段 {'、'.join(missing)}，命令模板用到了它们；"
+                        "不能拿空串去执行（会静默测到别的东西）"
+                    ),
+                    "duration_seconds": None,
+                    "notes": None,
+                })
+                continue
             argv = render(argv_template or [], mapping)
 
         entry = {"task_id": task_id, "argv": argv, "workspace": str(workspace), "out": str(task_out)}
@@ -470,6 +533,16 @@ def main(argv: list[str] | None = None) -> int:
     argv_template = None
     if not args.per_task_command:
         argv_template = parse_cmd_template(args.task_cmd or "")
+        # 拼错的占位符要在**开跑之前**拦住：`{task_idd}` 会被原样当参数传下去，
+        # 执行器照常 exit 0，于是「一条谁都没执行的命令」被记成通过。
+        unknown = unknown_placeholders(argv_template)
+        if unknown:
+            print(
+                "命令模板里有不认识的占位符：" + "、".join(unknown)
+                + "；可用的有：" + "、".join("{" + k + "}" for k in PLACEHOLDERS),
+                file=sys.stderr,
+            )
+            return 2
 
     out_root = Path(args.out).resolve()
     try:
