@@ -282,6 +282,96 @@ class TestMissingPlaceholderValues(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
 
+class TestPerTaskCommandPreflight(unittest.TestCase):
+    """`--per-task-command` 是**另一条渲染路径**，也必须过同一道预检。
+
+    副机 L73 实测：L72 我只堵了 `--task-cmd` 模板分支，per-task 分支照样把缺字段拼成空串、
+    把 `{task_idd}` 原样传下去，三条场景全部 `ran=True / status=passed / exit=0`。
+    **一个判据只修一条分支，等于没修。**
+    """
+
+    def _run(self, tmp: pathlib.Path, rows: list[dict], marker: pathlib.Path | None = None):
+        tasks = write_jsonl(tmp / "t.jsonl", rows)
+        return run_tool("--tasks", str(tasks), "--out", str(tmp / "o"),
+                        "--per-task-command", "--timeout", "60")
+
+    def test_t1_missing_base_commit_never_executes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            marker = tmp / "ran.txt"
+            rows = [{"task_id": "pt-1",
+                     "command": [PY, "-c", f"pathlib.Path(r'{marker}').write_text('ran')",
+                                 "--commit", "{base_commit}"]}]
+            proc = self._run(tmp, rows)
+            made = read_jsonl(tmp / "o" / "task_results.jsonl")
+            self.assertEqual(made[0]["status"], "infra_error")
+            self.assertIn("base_commit", made[0]["reason"])
+            self.assertFalse(marker.exists(), "缺字段时命令不该被执行")
+            self.assertEqual(proc.returncode, 1)
+
+    def test_t2_unknown_placeholder_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            rows = [{"task_id": "pt-1", "command": [PY, "-c", "pass", "--x", "{task_idd}"]}]
+            proc = self._run(tmp, rows)
+            made = read_jsonl(tmp / "o" / "task_results.jsonl")
+            self.assertEqual(made[0]["status"], "infra_error")
+            self.assertIn("{task_idd}", made[0]["reason"])
+            self.assertIn("{task_id}", made[0]["reason"], "要列出可用占位符")
+
+    def test_t3_missing_repo_never_executes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            rows = [{"task_id": "pt-1", "command": [PY, "-c", "pass", "--repo", "{repo}"]}]
+            self._run(tmp, rows)
+            made = read_jsonl(tmp / "o" / "task_results.jsonl")
+            self.assertEqual(made[0]["status"], "infra_error")
+            self.assertIn("repo", made[0]["reason"])
+
+    def test_t4_control_unused_missing_fields_still_run(self):
+        """正控：只用到 `{out}`，缺 `repo`/`base_commit` 不该拦。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            rows = [{"task_id": "pt-1", "command": [PY, "-c", "pass", "--out", "{out}"]}]
+            proc = self._run(tmp, rows)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertEqual(read_jsonl(tmp / "o" / "task_results.jsonl")[0]["status"], "passed")
+
+    def test_t5_control_brace_literal_still_runs(self):
+        """不误伤：`print({'a': 1})` 是正经 Python 花括号。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            rows = [{"task_id": "pt-1", "command": [PY, "-c", "print({'a': 1})"]}]
+            proc = self._run(tmp, rows)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_t6_mixed_batch_only_bad_row_is_infra_error(self):
+        """混合批：中间一行缺字段 ⇒ 另两行照常执行，坏行 infra_error。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            rows = [
+                {"task_id": "pt-a", "command": [PY, "-c", "pass"]},
+                {"task_id": "pt-b", "command": [PY, "-c", "pass", "--commit", "{base_commit}"]},
+                {"task_id": "pt-c", "command": [PY, "-c", "pass"]},
+            ]
+            proc = self._run(tmp, rows)
+            made = {r["task_id"]: r["status"] for r in read_jsonl(tmp / "o" / "task_results.jsonl")}
+            self.assertEqual(made["pt-a"], "passed")
+            self.assertEqual(made["pt-b"], "infra_error")
+            self.assertEqual(made["pt-c"], "passed")
+            self.assertEqual(proc.returncode, 1)
+
+    def test_t7_blank_field_is_infra_error(self):
+        """字段在、但全是空白 ⇒ 等同于缺字段（不许拼空串执行）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            rows = [{"task_id": "pt-1", "base_commit": "   ",
+                     "command": [PY, "-c", "pass", "--commit", "{base_commit}"]}]
+            self._run(tmp, rows)
+            made = read_jsonl(tmp / "o" / "task_results.jsonl")
+            self.assertEqual(made[0]["status"], "infra_error")
+
+
 class TestExitCodePolicy(unittest.TestCase):
     """退出码不许骗人（L41 实测的两个假绿）。
 

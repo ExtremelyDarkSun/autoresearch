@@ -242,7 +242,7 @@ def unknown_placeholders(argv: list[str]) -> list[str]:
 
 
 def missing_tasklist_fields(argv: list[str], task: dict) -> list[str]:
-    """模板用到了、但题单这行没给的字段。"""
+    """模板用到了、但题单这行没给的字段（空白值等同于没给）。"""
     missing: list[str] = []
     for key in used_placeholders(argv):
         if key not in FROM_TASKLIST:
@@ -251,6 +251,35 @@ def missing_tasklist_fields(argv: list[str], task: dict) -> list[str]:
         if not isinstance(value, str) or not value.strip():
             missing.append(key)
     return missing
+
+
+def validate_render_inputs(raw: list[str], task: dict | None = None) -> str | None:
+    """渲染前的唯一一处判断：这条命令**能不能**拿去跑。
+
+    返回 `None` 表示可以渲染；否则返回一句能直接写进 `reason` 的原因。
+
+    为什么要有这个函数：`--task-cmd` 模板模式与 `--per-task-command` 模式是**两条路**，
+    而「空串当缺省」这个毛病两条路都有。L72 我只堵了模板那条，副机 L73 立刻用
+    per-task 模式复现出同样三条：缺 `base_commit` → `--commit ''`、`{task_idd}` 原样传下去，
+    全部 `ran=True / status=passed / exit=0`。
+
+    **一个判据只修一条分支，等于没修** —— 所以现在两条路都先过这里，不允许「拼上空串就执行」。
+    """
+    unknown = unknown_placeholders(raw)
+    if unknown:
+        available = "、".join("{" + k + "}" for k in PLACEHOLDERS)
+        return (
+            f"命令里有不认识的占位符 {'、'.join(unknown)}；"
+            f"可用的有：{available}"
+        )
+    if task is not None:
+        missing = missing_tasklist_fields(raw, task)
+        if missing:
+            return (
+                f"题单这一行缺字段 {'、'.join(missing)}，而命令用到了它们；"
+                "不能拿空串去执行（会静默测到别的东西）"
+            )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +382,19 @@ def run_tasks(
                     "notes": None,
                 })
                 continue
+            # per-task 模式也是「渲染」：同样会吃到缺字段与拼错的占位符，
+            # 所以同样要先过 validate_render_inputs —— 不做的话，这条分支就是
+            # 「模板分支已修、另一条路上还在拼空串」（副机 L73 实测复现）。
+            problem = validate_render_inputs(raw_cmd, task)
+            if problem:
+                results.append({
+                    "task_id": task_id,
+                    "status": "infra_error",
+                    "reason": problem,
+                    "duration_seconds": None,
+                    "notes": None,
+                })
+                continue
             argv = render(raw_cmd, mapping)
         else:
             # 模板用到了 `{repo}` / `{base_commit}`，而题单这行没给 ⇒ 不跑。
@@ -360,15 +402,12 @@ def run_tasks(
             # 早先的实现会把缺的字段换成空串，命令照常执行、执行器照常退出 0，
             # 于是「在默认分支上跑了一遍」被记成「在指定 commit 上跑过」。
             # 这是比崩溃更难发现的一种错：**读数有值，但它测的是另一份代码。**
-            missing = missing_tasklist_fields(argv_template or [], task)
-            if missing:
+            problem = validate_render_inputs(argv_template or [], task)
+            if problem:
                 results.append({
                     "task_id": task_id,
                     "status": "infra_error",
-                    "reason": (
-                        f"题单这一行缺字段 {'、'.join(missing)}，命令模板用到了它们；"
-                        "不能拿空串去执行（会静默测到别的东西）"
-                    ),
+                    "reason": problem,
                     "duration_seconds": None,
                     "notes": None,
                 })
