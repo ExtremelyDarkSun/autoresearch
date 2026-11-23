@@ -130,7 +130,11 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
             print(f"  scan 失败（exit {rc}），停止", file=sys.stderr)
             return rc
         cand_file = scan_dir / "candidates.jsonl"
-        if not cand_file.is_file():
+        _rows_probe = []
+        if cand_file.is_file():
+            _rows_probe = [json.loads(x) for x in
+                           cand_file.read_text(encoding="utf-8").splitlines() if x.strip()]
+        if not _rows_probe:
             # 0 个候选时 `scan` 不写这个文件，早期版本在这里直接 `FileNotFoundError` ——
             # 那个报错把「本仓库没有同时改源码与测试的提交」说成了「文件不存在」，
             # 读的人会去查磁盘，而真正的原因通常是前缀没匹配。

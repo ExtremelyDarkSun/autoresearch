@@ -1623,5 +1623,54 @@ class TestPatchEncodingGuard(unittest.TestCase):
         self.assertEqual(res["status"], "infra_error", res)
         self.assertIn("UTF-16", res["reason"])
         self.assertNotIn("No valid patches", res["reason"])
+class TestScanBudgetIsWired(unittest.TestCase):
+    """`--budget-seconds` 曾经「加了参数没接线」，`main()` 没把它传进 `scan()`。
+
+    实测：`--budget-seconds 0` 仍然跑满 5 道。参数漏传和函数写错，读数长得一模一样。
+    """
+
+    def _fixture(self, tmp):
+        repo = tmp / "repo"
+        (repo / "tests").mkdir(parents=True)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repo), *args],
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+        git("init", "-q")
+        (repo / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(
+            "from mod import f\n\n\ndef test_f():\n    assert f() == 2\n", encoding="utf-8")
+        git("add", "-A")
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "c1")
+        return repo
+
+    def test_zero_budget_stops_immediately_but_leaves_a_file(self):
+        """走 **CLI**，不是直接调 `scan()`。
+
+        这个 bug 在 `main()` 里（参数没传下去），只调 `scan()` 的用例根本碰不到它 ——
+        我第一版就是这么写的，反证时它照样绿。
+        **测不到调用点的用例，测的是函数，不是接线。**
+        """
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="budget-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo = self._fixture(tmp)
+        out = tmp / "scan"
+        r = subprocess.run(
+            [sys.executable, "-X", "utf8", "-B", str(ROOT / "tools" / "unfix.py"), "scan",
+             "--repo", str(repo), "--limit", "5", "--budget-seconds", "0",
+             "--out", str(out), "--python", sys.executable, "--src-prefixes", "mod.py"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.DEVNULL, timeout=300)
+        self.assertEqual(r.returncode, 0, (r.stderr or "")[-800:])
+        both = (r.stdout or "") + (r.stderr or "")
+        self.assertIn("预算用尽", both, "预算 0 秒必须立刻停")
+        self.assertIn("验证 0", both)
+        cand = out / "candidates.jsonl"
+        self.assertTrue(cand.is_file(),
+                        "0 道验过也要留文件：bench 会把「文件不存在」读成「前缀没匹配上」")
+        self.assertEqual(cand.read_text(encoding="utf-8"), "")
 if __name__ == "__main__":
     unittest.main(verbosity=2)
