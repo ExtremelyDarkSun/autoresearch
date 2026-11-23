@@ -79,19 +79,9 @@ REPLACEMENTS = [
     # 且必须在引号规则之后 —— 否则 `\\` 转义会被误当成 UNC 前缀。
     (re.compile(r'"[A-Za-z]:\\\\?[^"]*"'), '"<PATH>"'),
     (re.compile(r'"[\\\\/]{2}[^"]*"'), '"<UNC>"'),
-    # 裸路径。**含空格的裸路径**这条规则来自副机 L67 的实现 —— 我原来那版直接放弃，
-    # 只在注释里写「真要支持就让输出带引号」；副机没接受这个偷懒，并给出了能用的判据：
-    #
-    #     [A-Za-z]:\\(非空段)+(?:\s+(非空格字符+)\\)*(末段)
-    #
-    # 关键在中间那一组：**只有当空格后面那一块仍然以反斜杠结尾时，才把空格并进来**。
-    # 于是 `C:\Program Files\Python312\python.exe` 整条被吃掉，而
-    # `C:\Python313\python.exe 后面还有散文` 里的散文不会被吞 —— 前者是路径，
-    # 后者是「路径 + 人类语言」，只有这条判据能把它们分开。
-    #
-    # 副机用 4 条用例做了先红后绿：旧规则在「裸含空格路径」上残留 `Files\Python312`。
-    (re.compile(r"[A-Za-z]:\\[^\s\"'\]\),;]+(?:\s+[^\s\"'\]\),;\\]+\\)*[^\s\"'\]\),;]*"), "<PATH>"),
-    (re.compile(r"\\\\[A-Za-z0-9._-]+\\[^\s\"',;]*"), "<UNC>"),
+    # 裸路径**不在这里处理** —— 交给 `_mask_bare_paths()` 逐字符扫。
+    # 原因见那个函数的注释：一条正则同时要「吃掉多段各自含空格的路径」和
+    # 「不吃掉路径后面的散文」，副机 L70 把两种失败都实测出来了。
     # ---- 工作树状态 ----
     # smoke 第 7 步的措辞取决于「开始跑之前仓库脏不脏」，那是测试前置条件，
     # 不是机器属性。跨机比对本不该被它带偏，所以两种措辞收敛成同一个标记。
@@ -112,9 +102,85 @@ REPLACEMENTS = [
 ]
 
 
+def _eat_bare_path(text: str, start: int) -> int:
+    """从 `start`（指向 `X:\\` 的开头）往后吃一条裸路径，返回结束下标。
+
+    为什么不用正则：路径里的空格数量是不定的。
+    `C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe` 有两处
+    各自含空格，而 `C:\\Python313\\python.exe 后面还有散文` 里的空格后面是散文。
+    用一条正则同时处理这两件事，要么吃掉散文，要么在 `(x86)` 处断掉 ——
+    副机 L70 把这两种失败都实测出来了。
+
+    判据只有一条，逐字符看：**遇到空白时，往同一行的后面找反斜杠；
+    找得到就说明这段空白还在路径里，找不到就说明路径到词为止。**
+    """
+    stop_chars = set('"\'\n\r|<>*')
+    sep_chars = set(",;")
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if ch in stop_chars or ch in sep_chars:
+            break
+        if ch == ")":
+            # 右括号：只有它后面紧跟路径成分时才属于路径（`(x86)\`），
+            # 否则它多半是散文里的收尾括号。
+            if i + 1 >= len(text) or text[i + 1] in " \t\n\r" or text[i + 1] in sep_chars:
+                break
+            i += 1
+            continue
+        if ch in " \t":
+            j = i
+            while j < len(text) and text[j] in " \t":
+                j += 1
+            # 到行尾/引号/分隔符之前还有反斜杠吗？
+            k = j
+            has_backslash = False
+            while k < len(text) and text[k] not in '"\'\n\r':
+                if text[k] in sep_chars:
+                    break
+                if text[k] == "\\":
+                    has_backslash = True
+                    break
+                k += 1
+            if not has_backslash:
+                break
+            i = j
+            continue
+        i += 1
+    return i
+
+
+def _mask_bare_paths(text: str) -> str:
+    out: list[str] = []
+    i = 0
+    while i < len(text):
+        m = _BARE_DRIVE.search(text, i)
+        m_unc = _BARE_UNC.search(text, i)
+        cands = [x for x in (m, m_unc) if x]
+        if not cands:
+            out.append(text[i:])
+            break
+        first = min(cands, key=lambda x: x.start())
+        out.append(text[i:first.start()])
+        if first.re is _BARE_UNC:
+            out.append("<UNC>")
+            i = _eat_bare_path(text, first.end())
+        else:
+            end = _eat_bare_path(text, first.end())
+            out.append("<PATH>")
+            i = end
+    return "".join(out)
+
+
+_BARE_DRIVE = re.compile(r"[A-Za-z]:\\")
+_BARE_UNC = re.compile(r"\\\\[A-Za-z0-9._-]+\\")
+
+
 def normalize(text: str) -> str:
     for pattern, repl in REPLACEMENTS:
         text = pattern.sub(repl, text)
+    # 裸路径单独处理：引号内的已经被上面吃掉，剩下的是无引号形态。
+    text = _mask_bare_paths(text)
     return "\n".join(line.rstrip() for line in text.strip().splitlines())
 
 

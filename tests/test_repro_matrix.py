@@ -105,11 +105,10 @@ class TestNormalization(unittest.TestCase):
         self.assertEqual(b, c, "脏几项是前置条件，不该影响跨机比对")
 
     def test_bare_path_with_spaces_is_one_path(self):
-        """裸路径含空格也要整条吃掉 —— 规则来自副机 L67。
+        """裸路径含空格也要整条吃掉 —— 判据来自副机 L67。
 
         我原来那版在裸路径上遇空格即停，理由是「没法可靠判断结尾」。副机没接受这个偷懒，
         给出判据：**只有当空格后面那一块仍以反斜杠结尾时**，才把空格并进来。
-        于是「路径 + 后面的散文」不会被吞。
         """
         cases = [
             ("C:\\Python313\\python.exe", "<PATH>"),
@@ -120,10 +119,32 @@ class TestNormalization(unittest.TestCase):
             with self.subTest(src=src):
                 self.assertEqual(self.normalize(src), want)
 
+    def test_bare_path_with_multiple_spaced_segments(self):
+        """多段各自含空格的路径 —— 副机 L70 用它把我上一版钉红。
+
+        `C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe` 里有两处空格，
+        上一版在 `(x86)` 处断掉；`C:\\Program Files\\Common Files\\python.exe` 被截成
+        `<PATH> Files\\python.exe`。两个都是真实安装路径，不是构造出来的。
+        现在改成逐字符扫描：遇到空白就往同一行后面找反斜杠，找得到才继续。
+        """
+        cases = [
+            ("C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe", "<PATH>"),
+            ("C:\\Program Files\\Common Files\\python.exe", "<PATH>"),
+            ("C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", "<PATH>"),
+        ]
+        for src, want in cases:
+            with self.subTest(src=src):
+                self.assertEqual(self.normalize(src), want)
+
     def test_bare_path_does_not_swallow_following_prose(self):
-        out = self.normalize("C:\\Python313\\python.exe 后面还有散文")
-        self.assertEqual(out, "<PATH> 后面还有散文",
-                         "路径后面的人类语言不能被当成路径的一部分")
+        cases = [
+            ("C:\\Python313\\python.exe 后面还有散文", "<PATH> 后面还有散文"),
+            ("C:\\Program Files\\Python312\\python.exe 跑起来了", "<PATH> 跑起来了"),
+        ]
+        for src, want in cases:
+            with self.subTest(src=src):
+                self.assertEqual(self.normalize(src), want,
+                                 "路径后面的人类语言不能被当成路径的一部分")
 
     def test_durations_and_timestamps_masked(self):
         text = "Ran 1351 tests in 118.962s\n2026-11-23T05:14:37.293Z"
