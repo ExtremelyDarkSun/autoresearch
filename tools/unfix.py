@@ -197,6 +197,25 @@ SKIP_GUARD_REASON = "跳过不等于通过"
 NO_STATS_REASON = "统计不到执行条数（junit 没写出来或解析失败）—— fail-closed，不能按通过处理"
 
 
+def test_key(x) -> tuple:
+    """用例身份键 = (类名, 用例名)，**不含文件路径**。
+
+    pytest 打印的 id 是 `path::Class::test`，而 junit 的 `file` 属性会把类名塞进路径
+    （实测 `tests/test_unfix/TestClassify.py`）—— 两边的路径部分根本不同，只能靠「类 + 用例名」对上。
+    """
+    x = str(x).replace(chr(92), "/")
+    if "::" not in x:
+        return ("", x)
+    head, *rest = x.split("::")
+    name = rest[-1]
+    cls = rest[-2] if len(rest) >= 2 else ""
+    if not cls:
+        stem = head.split("/")[-1]
+        stem = stem[:-3] if stem.endswith(".py") else stem
+        cls = stem if stem[:1].isupper() else ""
+    return (cls, name)
+
+
 def real_pass_missing(stats) -> tuple:
     """绿相位是不是「一条都没真跑过」。返回 (缺失?, 理由)。
 
@@ -421,29 +440,16 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                         # `tests/test_unfix/TestClassify.py`），而 `FAILED` 行是
                         # `tests/test_unfix.py::TestClassify::test_x` —— 两者的路径部分根本不同。
                         # 只留「类 + 用例名」，两边才对得上。
-                        def _tkey(x):
-                            x = str(x).replace(chr(92), '/')
-                            if '::' not in x:
-                                return ('', x)
-                            head, *rest = x.split('::')
-                            name = rest[-1]
-                            cls = rest[-2] if len(rest) >= 2 else ''
-                            if not cls:
-                                stem = head.split('/')[-1]
-                                stem = stem[:-3] if stem.endswith('.py') else stem
-                                cls = stem if stem[:1].isupper() else ''
-                            return (cls, name)
-
-                        gout_short = {_tkey(k): v for k, v in gout.items()}
-                        rout_short = {_tkey(k): v for k, v in (_rout or {}).items()}
+                        gout_short = {test_key(k): v for k, v in gout.items()}
+                        rout_short = {test_key(k): v for k, v in (_rout or {}).items()}
                         red_ids_norm = [str(t).replace(chr(92), '/') for t in rids]
                         f2p = [t for t in red_ids_norm
-                               if gout_short.get(_tkey(t)) == 'passed']
+                               if gout_short.get(test_key(t)) == 'passed']
                         skipped_targets = [t for t in red_ids_norm
-                                           if gout_short.get(_tkey(t)) == 'skipped']
+                                           if gout_short.get(test_key(t)) == 'skipped']
                         # 回归：红相位**通过**的用例，绿相位不许变成失败
                         regressions = [k for k, v in rout_short.items()
-                                       if v == 'passed' and gout_short.get(_tkey(k)) == 'failed']
+                                       if v == 'passed' and gout_short.get(test_key(k)) == 'failed']
                         rec["fail_to_pass"] = f2p
                         rec["green"]["targets_ok"] = bool(f2p) and not regressions
                         if f2p and not regressions:
@@ -452,7 +458,7 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                             gc_for_classify = 1
                             if not f2p:
                                 rec["green"]["no_flip"] = dict(list(
-                                    (t, gout_short.get(_tkey(t), '缺失')) for t in red_ids_norm)[:5])
+                                    (t, gout_short.get(test_key(t), '缺失')) for t in red_ids_norm)[:5])
                             if regressions:
                                 rec["green"]["regressions"] = regressions[:5]
                         usable, why = classify(rc, gc_for_classify, red_ids_norm, rbroken,
@@ -625,7 +631,8 @@ def patch_touches_tests(patch_text: str, test_prefixes) -> list[str]:
 def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
             out_dir: pathlib.Path, apply_gold: bool, patch: str | None,
             timeout: float, src_prefixes, test_prefixes=DEFAULT_TEST_PREFIXES,
-            regression_tests=None, known_failures=(), strict_head=False) -> int:
+            regression_tests=None, known_failures=(), strict_head=False,
+            fail_to_pass=None) -> int:
     started = time.monotonic()
     res = {"task_id": commit, "reason": None, "notes": None, "status": "infra_error",
            "duration_seconds": None, "steps": {}}
@@ -729,6 +736,26 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
         else:
             res["steps"]["apply"] = {"source": None, "note": "负控：不打补丁"}
 
+        # **红相位**：打补丁之前先量一次「此刻哪些用例是红的」。
+        #
+        # 不加这一步，「同文件里另有既有失败」的题会把**正确的补丁**判成 failed ——
+        # 实测（夹具 samefile）：目标用例 test_target 被修好，同文件 test_always_red 永远红，
+        # 旧实现直接 `status=failed`。这会系统性低估模型，而且和 `scan` 的口径分叉。
+        out_dir.mkdir(parents=True, exist_ok=True)
+        red_xml = pathlib.Path(out_dir) / f"{commit}.red.junit.xml"
+        rc, _rout, _rerr = sh([str(py), "-m", "pytest", *tests, "-q", "--no-header",
+                               "-p", "no:cacheprovider", f"--junitxml={red_xml}"],
+                              cwd=repo, timeout=timeout)
+        red_outcomes = pytest_outcomes(red_xml)
+        res["steps"]["red"] = {"exit": rc,
+                               "failed": sorted(k for k, v in red_outcomes.items()
+                                                if v in ("failed", "error")),
+                               "stats": pytest_stats(red_xml)}
+        try:
+            red_xml.unlink()
+        except OSError:
+            pass
+
         t0 = time.monotonic()
         xml_path = pathlib.Path(out_dir) / f"{commit}.junit.xml"
         code, out, _ = sh([str(py), "-m", "pytest", *tests, "-q", "--no-header",
@@ -747,6 +774,21 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
         #   全过但 collect 有错          → 报成 passed（应该 infra_error）
         broken = collection_broken_from(out)
         res["steps"]["pytest"]["collection_broken"] = broken
+
+        # 逐条比对：**红的那几条现在是否都过了**，以及**原本绿的有没有被弄红**。
+        # 只在整文件非 0 时才用它 —— exit 0 就是最干净的通过，不必再算。
+        green_outcomes = pytest_outcomes(xml_path)
+        red_failed = res["steps"]["red"]["failed"]
+        key = lambda x: test_key(x)  # noqa: E731
+        g_by_key = {key(k): v for k, v in green_outcomes.items()}
+        now_green = [tid for tid in red_failed if g_by_key.get(key(tid)) == "passed"]
+        still_red = [tid for tid in red_failed if g_by_key.get(key(tid)) != "passed"]
+        r_by_key = {key(k): v for k, v in red_outcomes.items()}
+        regressions = [k for k, v in r_by_key.items()
+                       if v == "passed" and g_by_key.get(k) in ("failed", "error")]
+        res["steps"]["flip"] = {"red_failed": len(red_failed), "now_passed": len(now_green),
+                                "still_red": still_red[:5], "regressions": regressions[:5]}
+        targets_all_green = bool(red_failed) and not still_red and not regressions
 
         # 回归检查：题目测试过了，不代表没把库弄坏。
         #
@@ -788,6 +830,26 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
                           f"error={stats.get('error')}）")
         return finish("passed", notes="全部测试通过")
     if code == 1:
+        # 整文件还有失败时，**这道题到底考哪几条**才是判据。
+        # 这个信息只能来自题目元数据（`candidates.jsonl` 里的 `fail_to_pass`）：
+        # 「红相位里所有失败」不等于「这道题的失败」—— 同文件里可能有与本题无关的既有失败
+        # （实测夹具 samefile：正确补丁被判 failed）。
+        if fail_to_pass:
+            want = {test_key(x) for x in fail_to_pass}
+            not_green = [x for x in fail_to_pass
+                         if g_by_key.get(test_key(x)) != "passed"]
+            if not not_green and not regressions:
+                return finish("passed",
+                              notes=(f"题目要的 {len(want)} 条用例全部通过"
+                                     f"（同文件另有既有失败：{tail}）"))
+            return finish("failed",
+                          f"题目要的用例仍有 {len(not_green)} 条没过："
+                          f"{'、'.join(not_green[:3])} —— {tail}")
+        if targets_all_green:
+            flip = res["steps"]["flip"]
+            return finish("passed",
+                          notes=(f"目标用例全部翻绿（{flip['now_passed']}/{flip['red_failed']}），"
+                                 f"同文件另有既有失败：{tail}"))
         return finish("failed", f"有测试失败：{tail}")
     if code == TIMEOUT_EXIT:
         return finish("failed", f"测试在 {timeout:g} 秒内没跑完（挂住）—— 这个 bug 还在：{tail}")
@@ -902,6 +964,8 @@ def main(argv=None) -> int:
     r.add_argument("--out", required=True)
     r.add_argument("--python", default=None)
     r.add_argument("--apply-gold", action="store_true")
+    r.add_argument("--fail-to-pass", default=None,
+                   help="这道题要考哪些用例（逗号分隔）。给了就按它判，而不是整个文件")
     r.add_argument("--strict-head", action="store_true",
                    help="工作树 HEAD 与 --commit 不一致时直接判 infra_error（真实实验应当打开）")
     r.add_argument("--patch", default=None)
@@ -983,7 +1047,8 @@ def main(argv=None) -> int:
     return run_one(repo, py, args.commit, args.tests, pathlib.Path(args.out),
                    args.apply_gold, args.patch, args.timeout, prefixes, test_prefixes,
                    args.regression_tests, set(args.known_failures or ()),
-                   strict_head=args.strict_head)
+                   strict_head=args.strict_head,
+                   fail_to_pass=([x for x in (args.fail_to_pass or '').split(',') if x] or None))
 
 
 if __name__ == "__main__":

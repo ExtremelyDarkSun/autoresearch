@@ -1337,5 +1337,85 @@ class TestPublishSecretGate(unittest.TestCase):
     def test_bearer_is_caught(self):
         self.assertTrue(publish_from_kaggle.find_secrets(
             "authorization: bearer abcdefghijklmnopqrstuvwxyz123456"))
+class TestFailToPassJudging(unittest.TestCase):
+    """判绿要按「这道题考哪几条」，不是「整个文件绿不绿」。
+
+    实测（夹具 samefile）：目标用例被正确修好，同文件另有一条永远失败的既有用例，
+    旧实现直接判 failed —— **正确补丁被判错**，而且和 `scan` 的逐条口径分叉。
+    """
+
+    def test_target_passes_despite_pre_existing_failure_in_same_file(self):
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="ftp-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo = tmp / "repo"
+        (repo / "tests").mkdir(parents=True)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repo), *args],
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+        def commit(msg):
+            git("add", "-A")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg)
+
+        test_body = (
+            "from mod import f\n\n\ndef test_target():\n    assert f() == 2\n\n\n"
+            "def test_always_red():\n    assert False, '既有失败'\n")
+        git("init", "-q")
+        (repo / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(test_body, encoding="utf-8")
+        commit("c1")
+        (repo / "mod.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(test_body + "# c2\n", encoding="utf-8")
+        commit("c2")
+        c2 = git("rev-parse", "--short", "HEAD").stdout.strip()
+
+        fix = tmp / "fix.patch"
+        fix.write_text("diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n"
+                       "@@ -1,2 +1,2 @@\n def f():\n-    return 1\n+    return 2\n",
+                       encoding="utf-8")
+        out = tmp / "out"
+        unfix.run_one(repo, pathlib.Path(sys.executable), c2, ["tests/test_m.py"], out,
+                      False, str(fix), 60, ("mod.py",), ("tests/",),
+                      fail_to_pass=["tests/test_m.py::test_target"])
+        res = json.loads((out / f"{c2}.json").read_text(encoding="utf-8"))
+        self.assertEqual(res["status"], "passed", res)
+        self.assertIn("既有失败", res["notes"] or "")
+
+    def test_without_patch_it_still_fails(self):
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="ftp2-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo = tmp / "repo"
+        (repo / "tests").mkdir(parents=True)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repo), *args],
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+        def commit(msg):
+            git("add", "-A")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg)
+
+        body = ("from mod import f\n\n\ndef test_target():\n    assert f() == 2\n\n\n"
+                "def test_always_red():\n    assert False, '既有失败'\n")
+        git("init", "-q")
+        (repo / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(body, encoding="utf-8")
+        commit("c1")
+        (repo / "mod.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(body + "# c2\n", encoding="utf-8")
+        commit("c2")
+        c2 = git("rev-parse", "--short", "HEAD").stdout.strip()
+        out = tmp / "out"
+        unfix.run_one(repo, pathlib.Path(sys.executable), c2, ["tests/test_m.py"], out,
+                      False, None, 60, ("mod.py",), ("tests/",),
+                      fail_to_pass=["tests/test_m.py::test_target"])
+        res = json.loads((out / f"{c2}.json").read_text(encoding="utf-8"))
+        self.assertEqual(res["status"], "failed", res)
+        self.assertIn("test_target", res["reason"])
 if __name__ == "__main__":
     unittest.main(verbosity=2)

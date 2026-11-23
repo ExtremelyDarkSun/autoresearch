@@ -251,3 +251,30 @@ c3  之后又加了一条 test_later_added     ← 这条恰好也被 c2 满足
   同一文件可能又改过。用 `<commit>` 当 gold 实测会让 2/16 道题正控不过。
 - **它评的是「测试能不能从红变绿」**，不评「补丁写得好不好」。一个把测试删掉的补丁也能让它变绿 ——
   所以评外部补丁时，要另外约束「不许改测试文件」。
+
+## 判绿：按「这道题考哪几条」，不是「整个文件绿不绿」
+
+`run --patch` 原来要求**整个测试文件** exit 0。同文件里只要有一条与本题无关的既有失败，
+**正确的补丁也会被判 `failed`**。
+
+实测（夹具 `samefile`）：
+
+```
+目标用例 test_target 被正确修好
+同文件 test_always_red 永远红（既有失败）
+旧读数：status=failed  ← 正确补丁被判错，而且和 scan 的逐条口径分叉
+新读数：status=passed  notes=题目要的 1 条用例全部通过（同文件另有既有失败：…）
+```
+
+用法：把题目元数据里的 `fail_to_pass` 传给 `run`：
+
+```bash
+python -X utf8 -B tools/unfix.py run --repo <repo> --commit <sha> \
+    --tests tests/test_x.py --fail-to-pass "tests/test_x.py::test_a" ...
+```
+
+给了 `--fail-to-pass` 就**只认这几条**；不给则退化成旧行为（整文件 exit 0）。
+判绿同时检查回归：红相位里通过的用例，绿相位不许变红。
+
+**为什么要靠元数据**：光看「红相位里所有失败」不行 —— 那里面就混着既有失败。
+「这道题考哪几条」只有造题时（`scan` 的 `fail_to_pass`）才知道。
