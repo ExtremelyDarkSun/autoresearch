@@ -383,7 +383,8 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                     git(wt_red, "checkout", cand["commit"], "--", *cand["test_files"])
                     rc, rids, rtail, rbroken, rstats, _rout = pytest_ids(
                         wt_red, py, cand["test_files"], tag="red")
-                    rec["red"] = {"exit": rc, "failed_ids": rids, "tail": rtail}
+                    rec["red"] = {"exit": rc, "failed_ids": rids, "tail": rtail, "stats": rstats}
+                    rec["red"]["collection_broken"] = rbroken
                     _drop_worktree(repo, wt_red)
 
                     ok, err = _make_worktree(repo, cand["commit"], wt_green)
@@ -392,7 +393,7 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                     else:
                         gc, gids, gtail, _gbroken, gstats, gout = pytest_ids(
                             wt_green, py, cand["test_files"], tag="green")
-                        rec["green"] = {"exit": gc, "failed_ids": gids, "tail": gtail}
+                        rec["green"] = {"exit": gc, "failed_ids": gids, "tail": gtail, "stats": gstats}
                         _drop_worktree(repo, wt_green)
                         # **fail_to_pass 的定义**（SWE-bench 口径）：
                         #   红相位失败、绿相位通过的用例。
