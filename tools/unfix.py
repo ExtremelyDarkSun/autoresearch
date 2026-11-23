@@ -140,7 +140,7 @@ def changed_files(repo: pathlib.Path, commit: str, src_prefixes,
 
 
 def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path,
-         src_prefixes) -> int:
+         src_prefixes, test_prefixes=DEFAULT_TEST_PREFIXES) -> int:
     code, out, err = git(repo, "log", "--name-only", "--format=@@%h|%s", timeout=900)
     if code != 0:
         raise SystemExit("git log 失败：" + err[:160])
@@ -163,7 +163,7 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
     keep = []
     for c in cands:
         src = [f for f in c["files"] if f.startswith(tuple(src_prefixes))]
-        tst = [f for f in c["files"] if f.startswith(TEST_PREFIXES)]
+        tst = [f for f in c["files"] if f.startswith(tuple(test_prefixes))]
         if src and tst:
             keep.append({"commit": c["commit"], "subject": c["subject"],
                          "src_files": src, "test_files": tst})
@@ -352,6 +352,7 @@ def main(argv=None) -> int:
     s.add_argument("--out", default=None)
     s.add_argument("--python", default=None)
     s.add_argument("--src-prefixes", default=None, help="逗号分隔，默认内置几种布局")
+    s.add_argument("--test-prefixes", default=None, help="逗号分隔，默认 tests/")
 
     r = sub.add_parser("run", help="跑一道题（正控 / 负控 / 评补丁）")
     r.add_argument("--repo", required=True)
@@ -391,7 +392,9 @@ def main(argv=None) -> int:
         repo = pathlib.Path(args.repo).resolve()
         py = pathlib.Path(args.python) if args.python else (repo / ".venv/Scripts/python.exe")
         out = pathlib.Path(args.out) if args.out else (repo.parent / f"unfix-sweep-{repo.name}")
-        return scan(repo, py, args.limit, out, prefixes)
+        s_test_prefixes = (tuple(args.test_prefixes.split(","))
+                           if getattr(args, "test_prefixes", None) else DEFAULT_TEST_PREFIXES)
+        return scan(repo, py, args.limit, out, prefixes, s_test_prefixes)
 
     repo = pathlib.Path(args.repo).resolve()
     py = pathlib.Path(args.python) if args.python else (repo / ".venv/Scripts/python.exe")

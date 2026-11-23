@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
 import unittest
@@ -187,6 +188,48 @@ class TestRegressionGate(unittest.TestCase):
     def test_empty_known_means_everything_is_new(self):
         self.assertEqual(unfix.new_failures(["tests/a.py::t"], []), ["tests/a.py::t"])
         self.assertEqual(unfix.new_failures([], ["tests/a.py::t"]), [])
+
+
+class TestScanSmoke(unittest.TestCase):
+    """`scan()` 也要有一条冒烟用例 —— 它曾经在 HEAD 上直接崩。
+
+    事故（副机 L80 发现，`dca9116` 之后）：我把 `TEST_PREFIXES` 重命名成
+    `DEFAULT_TEST_PREFIXES` 时漏了 `scan()` 里那一行，于是 `unfix.py scan` 抛
+    `NameError: name 'TEST_PREFIXES' is not defined`。
+
+    **18 例 selftest 全绿也测不出来，因为没有一条用例调用 `scan()`。**
+    这正是「测试只覆盖到你测过的那个入口」。
+    """
+
+    def _tiny_repo(self) -> pathlib.Path:
+        import subprocess
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        (tmp / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (tmp / "tests").mkdir()
+        (tmp / "tests" / "test_mod.py").write_text(
+            "from mod import f\n\n\ndef test_f():\n    assert f() == 1\n", encoding="utf-8")
+        for argv in (["git", "init", "-q"], ["git", "add", "-A"],
+                     ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "1"]):
+            subprocess.run(argv, cwd=tmp, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        (tmp / "mod.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+        (tmp / "tests" / "test_mod.py").write_text(
+            "from mod import f\n\n\ndef test_f():\n    assert f() == 2\n", encoding="utf-8")
+        for argv in (["git", "add", "-A"],
+                     ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "2"]):
+            subprocess.run(argv, cwd=tmp, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        return tmp
+
+    def test_scan_smoke_does_not_crash(self):
+        repo = self._tiny_repo()
+        out = repo / "out"
+        py = pathlib.Path(sys.executable)
+        code = unfix.scan(repo, py, 1, out, ("mod.py",), ("tests/",))
+        self.assertEqual(code, 0)
+        rows = [json.loads(l) for l in (out / "candidates.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(rows), 1, "应当验了 1 个候选")
+        self.assertTrue(rows[0]["usable"], rows[0]["why"])
 
 
 if __name__ == "__main__":
