@@ -752,10 +752,49 @@ class TestConftestIsJudgment(unittest.TestCase):
                  + " [build-system]" + chr(10) + "+[tool.pytest.ini_options]" + chr(10))
         self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), ["pyproject.toml"])
 
-    def test_pyproject_unrelated_edit_is_not_judgment(self):
+    def test_any_config_edit_is_judgment(self):
+        """**改配置一律算动判据** —— 这条是因为一个真实绕过才变严的。
+
+        副机 L92 的 E1：`tox.ini` 里本来就有 `[pytest]` 段，补丁在**远离段头的行**追加
+        `addopts = -k "not test_b"`。diff 里看不到段头，按内容判断的守卫放行；
+        而 pytest 会读它、把唯一失败的用例 deselect 掉，`failed` 就变 `passed`。
+
+        结论：**对配置文件做内容判断不可靠**（diff 里没有上下文）。所以改成"动就算了"。
+        代价是：一个真的需要改 `pyproject.toml` 的修复也会被拒 —— 这是有意的取舍，
+        宁可拒绝也不能放行一次绕过。
+        """
         patch = ("--- a/pyproject.toml" + chr(10) + "+++ b/pyproject.toml" + chr(10) + "@@ -1 +1 @@" + chr(10)
                  + "-name = old" + chr(10) + "+name = new" + chr(10))
+        self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), ["pyproject.toml"])
+
+    def test_tox_ini_addopts_far_from_section_header_is_judgment(self):
+        """E1 的形状：段头不在 diff 里，但改动落在 pytest 段内。"""
+        patch = ("diff --git a/tox.ini b/tox.ini" + chr(10)
+                 + "--- a/tox.ini" + chr(10) + "+++ b/tox.ini" + chr(10)
+                 + "@@ -20,0 +21 @@ " + chr(10)
+                 + '+addopts = -k "not test_b"' + chr(10))
+        self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), ["tox.ini"])
+
+    def test_module_imported_by_conftest_is_judgment(self):
+        """E2 的形状：补丁只改 `judge_helper.py`，但根 conftest 从它 import hook。
+
+        没有这条分析时守卫返回 `[]`；改后的 hook 把全部用例 skip，`status` 变 `passed`。
+        """
+        import shutil
+        import tempfile
+        repo = pathlib.Path(tempfile.mkdtemp(prefix="unfix-e2-"))
+        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+        (repo / "conftest.py").write_text(
+            "from judge_helper import pytest_collection_modifyitems" + chr(10), encoding="utf-8")
+        (repo / "judge_helper.py").write_text("def pytest_collection_modifyitems(c, i): pass" + chr(10),
+                                              encoding="utf-8")
+        patch = ("diff --git a/judge_helper.py b/judge_helper.py" + chr(10)
+                 + "--- a/judge_helper.py" + chr(10) + "+++ b/judge_helper.py" + chr(10)
+                 + "@@ -1 +1 @@ " + chr(10) + "-x" + chr(10) + "+y" + chr(10))
+        # 不给 repo 时看不见 import 关系 —— 这正是 E2 打穿的那个口子
         self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), [])
+        # 给了 repo，就能从 conftest 的 import 里认出它
+        self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",), repo), ["judge_helper.py"])
 
     def test_source_only_edit_is_not_judgment(self):
         patch = "--- a/rich/cells.py" + chr(10) + "+++ b/rich/cells.py" + chr(10) + "@@ -1 +1 @@" + chr(10) + "-x" + chr(10) + "+y" + chr(10)

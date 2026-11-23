@@ -276,67 +276,104 @@ def new_failures(failed_ids, known_ids) -> list[str]:
 #: 一道本来是红的题就变成 `passed` —— 而它不在 `tests/` 前缀下，前缀守卫看不见它。
 JUDGMENT_PATHS = ("conftest.py", "pytest.ini")
 
-#: 这些文件里只要动到与 pytest 有关的段，也算动了判据。
-JUDGMENT_CONFIG_FILES = ("tox.ini", "setup.cfg", "pyproject.toml")
-_JUDGMENT_CONFIG_MARKERS = ("[pytest]", "[tool:pytest]", "[tool.pytest")
+#: 这些文件**只要被动过**就算动了判据。
+#:
+#: 第一版是「只有出现 `[pytest]` / `[tool:pytest*]` 段头才算」，被副机 L92 的 E1 打穿：
+#: `tox.ini` 里本来就有 `[pytest]` 段，补丁在**远离段头的行**追加
+#: `addopts = -k "not test_b"` —— diff 里看不到段头，守卫放行，
+#: 而 pytest 会读它、把唯一失败的用例 deselect 掉，`failed` 就变 `passed`。
+#: 结论：**对配置文件做内容判断不可靠**（diff 里没有上下文）。改成一律算。
+JUDGMENT_CONFIG_FILES = ("tox.ini", "setup.cfg", "pyproject.toml", "pytest.ini")
 
 
-def patch_touches_judgment(patch_text: str, test_prefixes) -> list[str]:
-    """补丁有没有动到**判据**（测试文件、conftest、pytest 配置）。
+def conftest_imported_modules(repo) -> set:
+    """仓库里所有 `conftest.py` 引用的**本地**模块名（顶格 import / from）。
 
-    判据（fail-to-pass）来自测试。被评测的 agent 只要改判据，就能让任何实现变绿。
-    三类都算：
+    为什么需要它（副机 L92 的 E2）：根 `conftest.py` 从旁边的 `judge_helper.py` import hook，
+    补丁**只改 `judge_helper.py`** —— 补丁里没有 conftest、没有测试前缀、没有配置段头，
+    守卫返回 `[]`；而改后的 hook 把全部用例 skip，`status` 就变 `passed`。
 
-    1. 测试前缀下的文件（`tests/...`）；
-    2. 任意位置的 `conftest.py` / `pytest.ini` —— **实测**：根 conftest 里把用例全 skip，
-       一道红题立刻变 `passed`，而前缀守卫对它完全无感；
-    3. `tox.ini` / `setup.cfg` / `pyproject.toml` 里动到 `[pytest]` / `[tool:pytest*]` 段。
-
-    **路径怎么取**（这里栽过两次）：
-
-    - 首选 `diff --git a/<x> b/<y>`；
-    - 退而求其次：`+++ b/<x>` **只有在上一行是 `--- a/<x>` 文件头时才算文件头**。
-      否则，hunk 里一行内容 `+++ b/pyproject.toml` 会被当成文件头 ——
-      实测（`cmp_parsers.py`）：一份只改 `kernel/a.py` 的补丁，因为内容里有这么一行，
-      把 `pyproject.toml` 判成了判据。**误杀真补丁**，而且看起来完全正常。
+    这是有界静态分析：只看 conftest 里的 `import x` / `from x import y` 的**第一段**。
+    不追踪多层依赖 —— 所以它不是完备的，只是把最直接的那条堵上。
     """
-    prefixes = tuple(test_prefixes or DEFAULT_TEST_PREFIXES)
-    touched: list[str] = []
-    config_touched: list[str] = []
-    cur = None
-    prev_is_minus_header = False
+    if repo is None:
+        return set()
+    root = pathlib.Path(repo)
+    mods = set()
+    try:
+        conftests = list(root.rglob("conftest.py"))
+    except OSError:
+        return set()
+    for p in conftests:
+        parts = set(p.parts)
+        if ".git" in parts or "node_modules" in parts or ".venv" in parts:
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in re.finditer(r"(?m)^\s*(?:from|import)\s+([A-Za-z_][A-Za-z0-9_]*)", text):
+            mods.add(m.group(1))
+    return mods
 
+
+def _paths_in_patch(patch_text: str) -> list:
+    """补丁改到的文件路径。
+
+    路径首选 `diff --git a/<x> b/<y>`；`+++ b/<x>` **只有在上一行是 `--- a/<x>` 头时**
+    才算文件头 —— 否则 hunk 里一行内容 `+++ b/pyproject.toml` 会被当成文件头（实测误杀）。
+    """
+    paths = []
+    cur = None
+    prev_is_minus = False
     for line in (patch_text or "").splitlines():
         m = re.match(r"^diff --git a/(\S+) b/(\S+)$", line)
         if m:
             cur = m.group(2)
-            prev_is_minus_header = False
-            _note_judgment(cur, prefixes, touched)
+            prev_is_minus = False
+            if cur not in paths:
+                paths.append(cur)
             continue
         if line.startswith("--- a/") or line.startswith("--- /dev/null"):
-            prev_is_minus_header = True
+            prev_is_minus = True
             continue
-        if line.startswith("+++ b/") and prev_is_minus_header:
+        if line.startswith("+++ b/") and prev_is_minus:
             cur = line[6:].strip()
-            prev_is_minus_header = False
-            _note_judgment(cur, prefixes, touched)
+            prev_is_minus = False
+            if cur not in paths:
+                paths.append(cur)
             continue
-        prev_is_minus_header = False
-        if cur is None:
+        prev_is_minus = False
+    return paths
+
+
+def patch_touches_judgment(patch_text: str, test_prefixes, repo=None) -> list:
+    """补丁有没有动到**判据**（测试文件、conftest、pytest 配置、conftest 引用的模块）。
+
+    判据（fail-to-pass）来自测试。被评测的 agent 只要改判据，就能让任何实现变绿。
+    四类都算：
+
+    1. 测试前缀下的文件（`tests/...`）；
+    2. 任意位置的 `conftest.py` / `pytest.ini`；
+    3. `tox.ini` / `setup.cfg` / `pyproject.toml` / `pytest.ini` —— **动就算**（见上面注释的理由）；
+    4. `conftest.py` 里 import 的本地模块（有界静态分析，见 `conftest_imported_modules`）。
+    """
+    prefixes = tuple(test_prefixes or DEFAULT_TEST_PREFIXES)
+    imported = conftest_imported_modules(repo)
+    hit = []
+    for path in _paths_in_patch(patch_text):
+        if path in ("/dev/null", ""):
             continue
-        base = cur.rsplit("/", 1)[-1]
-        if base in JUDGMENT_CONFIG_FILES and line.startswith("+") and not line.startswith("+++"):
-            low = line.lower()
-            if any(marker in low for marker in _JUDGMENT_CONFIG_MARKERS) and cur not in config_touched:
-                config_touched.append(cur)
-
-    return sorted(touched + config_touched)
-
-
-def _note_judgment(path: str, prefixes, touched: list) -> None:
-    base = path.rsplit("/", 1)[-1]
-    if (path.startswith(prefixes) or base in JUDGMENT_PATHS) and path not in touched:
-        touched.append(path)
+        base = path.rsplit("/", 1)[-1]
+        stem = base[:-3] if base.endswith(".py") else base
+        if (
+            path.startswith(prefixes)
+            or base in JUDGMENT_PATHS
+            or base in JUDGMENT_CONFIG_FILES
+            or (imported and stem in imported)
+        ):
+            hit.append(path)
+    return sorted(hit)
 
 
 def patch_touches_tests(patch_text: str, test_prefixes) -> list[str]:
@@ -404,7 +441,7 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
                 patch_text = pathlib.Path(patch).read_text(encoding="utf-8", errors="replace")
             except OSError as exc:
                 return finish("infra_error", f"读不到补丁 {patch}：{exc}")
-            bad = patch_touches_judgment(patch_text, test_prefixes)
+            bad = patch_touches_judgment(patch_text, test_prefixes, repo)
             res["steps"]["patch_check"] = {"touched_tests": bad}
             if bad:
                 # 不是「没通过」，是**这份补丁不属于被评测的范围**：它改的是判据本身。

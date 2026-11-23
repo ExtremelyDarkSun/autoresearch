@@ -187,10 +187,11 @@ def pytest_collection_modifyitems(config, items):
 | 根目录加 `sitecustomize.py`（让 Python 启动时 monkeypatch 被测模块） | **打不进来**：`site` 在 `-m` 之前执行，cwd 还不在 `sys.path` 上；加与不加，测试都是 `1 failed` |
 | 改 `pytest.ini` 的 `addopts` / 加 `[tool.pytest.ini_options]` | 被拦 |
 | 改根 `conftest.py`（用例全 skip） | 被拦 |
-| **`conftest` 里 `import` 的辅助模块被改** | **没覆盖** —— 需要解析已有 conftest 再追依赖 |
+| **`conftest` 里 `import` 的辅助模块被改**（副机 L92 的 E2） | 已覆盖：`conftest_imported_modules()` 从仓库里每个 `conftest.py` 收集 import 的模块名，补丁动到同名文件就拒绝。有界分析，不追多层依赖 |
+| **已有 `[pytest]` 段里加 `addopts`**（副机 L92 的 E1；段头不在 diff 里） | 已覆盖：配置文件**动就算**，不再做内容判断 —— 内容判断实测不可靠 |
 | 环境变量（`PYTEST_ADDOPTS`）影响会话 | **没覆盖** —— 补丁改不到环境，但执行器可以 |
 
-后两行是**主动写出来的缺口**：因为「守卫没覆盖」和「守卫说没问题」在读的人眼里可能是同一件事。
+PYTEST_ADDOPTS 那一行是**主动写出来的缺口**：因为「守卫没覆盖」和「守卫说没问题」在读的人眼里可能是同一件事。
 
 ---
 
