@@ -495,7 +495,7 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                         regressions = [k for k, v in rout_short.items()
                                        if v == 'passed' and gout_short.get(k) == 'failed']
                         rec["fail_to_pass"] = f2p
-                        rec["difficulty"] = commit_size(repo, cand["commit"], src)
+                        rec["difficulty"] = commit_size(repo, cand["commit"], cand["src_files"])
                         rec["test_size"] = commit_size(repo, cand["commit"], cand["test_files"])
                         rec["green"]["targets_ok"] = bool(f2p) and not regressions
                         if f2p and not regressions:
