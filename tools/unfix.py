@@ -402,19 +402,29 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                         #
                         # junit 的 `file` 是相对 rootdir 的 basename（实测 file="test_file_proxy.py"），
                         # 拼不回完整 id，所以按「文件名::用例名」比对。歧义会表现为「缺失」→ 拒绝，不会假通过。
-                        def _short(x):
-                            return str(x).replace(chr(92), '/').split('/')[-1]
+                        # 比对键 = (文件名, 类名, 用例名)。
+                        # 只按「文件名::用例名」比会漏掉类：junit 的 `name` 不含类名，
+                        # 而 pytest 输出的 id 是 `path::Class::test`，两边对不上 ——
+                        # 实测 8e01d37：绿相位明明 74 passed，却被判「没有一条变成通过」。
+                        def _tkey(x):
+                            x = str(x).replace(chr(92), '/')
+                            if '::' in x:
+                                head, *rest = x.split('::')
+                                return (head.split('/')[-1],
+                                        rest[-2] if len(rest) >= 2 else '',
+                                        rest[-1])
+                            return (x.split('/')[-1], '', x)
 
-                        gout_short = {_short(k): v for k, v in gout.items()}
-                        rout_short = {_short(k): v for k, v in (_rout or {}).items()}
+                        gout_short = {_tkey(k): v for k, v in gout.items()}
+                        rout_short = {_tkey(k): v for k, v in (_rout or {}).items()}
                         red_ids_norm = [str(t).replace(chr(92), '/') for t in rids]
                         f2p = [t for t in red_ids_norm
-                               if gout_short.get(_short(t)) == 'passed']
+                               if gout_short.get(_tkey(t)) == 'passed']
                         skipped_targets = [t for t in red_ids_norm
-                                           if gout_short.get(_short(t)) == 'skipped']
+                                           if gout_short.get(_tkey(t)) == 'skipped']
                         # 回归：红相位**通过**的用例，绿相位不许变成失败
                         regressions = [k for k, v in rout_short.items()
-                                       if v == 'passed' and gout_short.get(_short(k)) == 'failed']
+                                       if v == 'passed' and gout_short.get(_tkey(k)) == 'failed']
                         rec["fail_to_pass"] = f2p
                         rec["green"]["targets_ok"] = bool(f2p) and not regressions
                         if f2p and not regressions:
@@ -423,7 +433,7 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                             gc_for_classify = 1
                             if not f2p:
                                 rec["green"]["no_flip"] = dict(list(
-                                    (t, gout_short.get(_short(t), '缺失')) for t in red_ids_norm)[:5])
+                                    (t, gout_short.get(_tkey(t), '缺失')) for t in red_ids_norm)[:5])
                             if regressions:
                                 rec["green"]["regressions"] = regressions[:5]
                         usable, why = classify(rc, gc_for_classify, red_ids_norm, rbroken,
