@@ -463,6 +463,11 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                         rec["classify_green_exit"] = gc_for_classify
                         # 把更贴近现象的理由放在前面（原来的「环境问题」会把人引到错的方向）
                         if not usable and rc != TIMEOUT_EXIT:
+                            # 「收集错误」要排在所有理由之前：测试根本没跑起来时，
+                            # 说「恢复后仍不过（环境问题）」会把人引去查依赖（实测 1710da7 就是这样）。
+                            if rbroken:
+                                why = (f"红相位是收集错误（pytest exit {rc}）：测试根本没跑起来，"
+                                       f"不是「测出失败」")
                             if skipped_targets and not f2p:
                                 why = f"绿相位里目标用例被跳过（{len(skipped_targets)} 条）：跳过不等于通过"
                             elif not f2p and red_ids_norm:
