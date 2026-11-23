@@ -257,6 +257,23 @@ class TestPreflight(unittest.TestCase):
             self.assertIn("D 预算授权 ✗", out)
             self.assertIn("不许提交 Kaggle", out)
 
+    def test_empty_ssh_private_key_is_rejected(self):
+        """0 字节私钥不能算「有」—— 文案早就写着「非空」，实现原来只查存在。
+
+        副机 L72 实测：把私钥清成 0 字节，C 项照样 ✓、整门 4/4。假绿的标准形状：
+        **文案承诺的判据比代码实际做的更严。**
+        """
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            f = make_fixtures(tmp)
+            empty_ssh = tmp / "ssh-empty"
+            empty_ssh.mkdir()
+            (empty_ssh / "id_testonly").write_text("", encoding="utf-8")
+            code, out = run(*args_for(f, ssh=empty_ssh))
+            self.assertEqual(code, 2, out)
+            self.assertIn("C 数据与访问权 ✗", out)
+            self.assertIn("0 字节", out, "要说清是「空的」而不是「没有」")
+
     def test_credentials_content_is_never_printed(self):
         with tempfile.TemporaryDirectory() as t:
             f = make_fixtures(pathlib.Path(t))

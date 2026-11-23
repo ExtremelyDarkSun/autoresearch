@@ -227,7 +227,19 @@ def check_profile(path: str | None, provenance: str | None = None) -> Check:
 
     ok, why = _verify_provenance(command, provenance)
     if ok:
-        return c.pass_(f"can_run=true，command {len(command)} 元素；provenance 哈希匹配（{why}）")
+        # ⚠️ 说清这一项到底证明了什么。副机 L72 用 `noop.py`（两行、什么都不做）
+        # 加一份**自己写的** provenance 拿到 4/4，证明了这条边界：
+        #
+        #   provenance 只能证明「这个入口与登记的内容一致」——即**没被偷换**；
+        #   它**不能**证明「这个入口真的会做评测」。
+        #
+        # 因为登记本身也是人写的。我把「唯一能识破真解释器跑假脚本的判据」写进
+        # commit message，那句话是错的。真正能证伪「假执行器」的只有行为负控：
+        # 拿一个必然失败的输入跑一次，要求它以非零退出且不产出合规结果。
+        return c.pass_(
+            f"can_run=true，command {len(command)} 元素；provenance 与登记一致（{why}，未被替换）"
+            "；注意：这只证明「没被偷换」，不证明「它真的会评测」"
+        )
     return c.fail(f"provenance 校验失败：{why}", "执行器被替换过？核对登记里的 sha256 与当前入口")
 
 
@@ -308,10 +320,23 @@ def check_data(args) -> Check:
     else:
         d = pathlib.Path(args.ssh_dir)
         keys = [p for p in d.glob("id_*") if p.is_file() and not p.name.endswith(".pub")] if d.is_dir() else []
+        # 副机 L72 实测的假绿：原来这里只查 `is_file()`，于是**0 字节私钥**被判 ✓，
+        # 而旁边的失败文案写的正是「没有**非空** id_* 私钥」—— 文案承诺「非空」，
+        # 实现只查「存在」。0 字节私钥不可能用于认证，这是标准的假绿形状。
+        # 顺带把「没有私钥」与「私钥是空的」分成两句话：操作者的下一步不一样。
+        nonempty = []
+        for p in keys:
+            try:
+                if p.stat().st_size > 0:
+                    nonempty.append(p)
+            except OSError:
+                pass
         if not keys:
-            problems.append(f"SSH 目录没有非空 id_* 私钥：{d}")
+            problems.append(f"SSH 目录里没有 id_* 私钥：{d}")
+        elif not nonempty:
+            problems.append(f"SSH 私钥是空的（0 字节，无法用于认证）：{d}")
         else:
-            ok_bits.append(f"SSH 私钥 {len(keys)} 个")
+            ok_bits.append(f"SSH 私钥 {len(nonempty)} 个（非空）")
 
     if problems:
         return c.fail("；".join(problems), "按列出的缺项逐条备料；凭据只查存在性，不读内容")
