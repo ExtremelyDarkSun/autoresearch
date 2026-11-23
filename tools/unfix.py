@@ -90,7 +90,8 @@ def git(repo, *args, timeout=600):
 
 
 def classify(red_exit: int, green_exit: int, red_ids: list[str],
-             collection_broken: bool = False) -> tuple[bool, str]:
+             collection_broken: bool = False,
+             red_stats=None, green_stats=None) -> tuple[bool, str]:
     """红/绿两阶段读数 → 「这道题成立吗」。返回 (usable, 理由)。
 
     纯函数，无副作用 —— 因为这套判据我连续错三次（见模块文档的表），
@@ -100,6 +101,14 @@ def classify(red_exit: int, green_exit: int, red_ids: list[str],
         return True, "红是挂住、绿是通过 ⇒ 可用（这个 bug 的表现就是挂死）"
     if red_exit == TIMEOUT_EXIT or green_exit == TIMEOUT_EXIT:
         return False, f"超时（red={red_exit} green={green_exit}）：两边都跑不完，测不出差别"
+    # 「全跳过」要**先于**「退回源码后仍全过」判掉。
+    # 否则一条都没跑也会落到那句「测试没覆盖这处改动」上 —— 结论对，理由错，
+    # 而理由会把人引到「去补测试覆盖」这条错路（实测：scan 在一个全 skip 的仓库上就是这么说的）。
+    if (red_stats and red_stats.get("total", 0) > 0
+            and red_stats.get("passed", 0) == 0
+            and red_stats.get("skipped") == red_stats.get("total")):
+        return False, (f"这条题的用例全被跳过（{red_stats.get('total')} 条，跑 0 条）："
+                       f"测不出东西 —— 跳过不等于通过")
     if red_exit == 0:
         return False, "退回源码后仍全过（测试没覆盖这处改动）"
     if green_exit != 0:
@@ -110,6 +119,14 @@ def classify(red_exit: int, green_exit: int, red_ids: list[str],
         return False, f"红不是「有测试失败」（pytest exit {red_exit}）"
     if not red_ids:
         return False, "红是 exit 1 但解析不到用例 id（输出里没有 FAILED 行）"
+    # 「跳过」既不是「通过」也不是「失败」：全 skip 的题两边都绿，但一条都没测。
+    # 实测（副机 L94 / 桥裁判）：让用例全 skip 的补丁让 pytest exit 0，被判 passed。
+    if green_stats and green_stats.get("total", 0) > 0 and green_stats.get("passed", 0) == 0:
+        return False, (f"绿是「一条都没真跑过」：passed={green_stats.get('passed')}、"
+                       f"skipped={green_stats.get('skipped')} —— 跳过不等于通过")
+    if (red_stats and red_stats.get("total", 0) > 0 and red_stats.get("passed", 0) == 0
+            and red_stats.get("skipped") == red_stats.get("total")):
+        return False, "红是全跳过：一条都没真跑，这种「红」测不出东西"
     return True, "红→绿成立"
 
 
@@ -192,15 +209,23 @@ def pytest_stats(xml_path) -> dict:
     return stats
 
 
-def pytest_ids(repo: pathlib.Path, py: pathlib.Path, test_paths, timeout=180):
+def pytest_ids(repo: pathlib.Path, py: pathlib.Path, test_paths, timeout=180, tag="scan"):
     if not test_paths:
-        return 5, [], "没有测试文件"
+        return 5, [], "没有测试文件", False, {"total": 0, "passed": 0, "failed": 0,
+                                              "skipped": 0, "error": 0}
+    xml_path = pathlib.Path(repo) / f".unfix-{tag}.junit.xml"
     code, out, err = sh([str(py), "-m", "pytest", *test_paths, "-q", "--no-header",
-                         "-p", "no:cacheprovider"], cwd=repo, timeout=timeout)
+                         "-p", "no:cacheprovider", f"--junitxml={xml_path}"],
+                        cwd=repo, timeout=timeout)
     tail = (out or "").strip().splitlines()[-3:]
     ids = sorted(set(re.findall(r"^FAILED (\S+)", out or "", flags=re.M)))
-    # 第三段之外再带一个「收集坏了吗」的布尔：调用方不该自己再去猜
-    return code, ids, " ⏎ ".join(tail), collection_broken_from(out)
+    stats = pytest_stats(xml_path)
+    try:
+        xml_path.unlink()
+    except OSError:
+        pass
+    # 除了「收集坏了吗」，再带一份统计：绿/红的用例里到底跑了几条
+    return code, ids, " ⏎ ".join(tail), collection_broken_from(out), stats
 
 
 def changed_files(repo: pathlib.Path, commit: str, src_prefixes,
@@ -259,12 +284,15 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                 if code != 0:
                     rec["why"] = f"退回源码失败：{e[:120]}"
                 else:
-                    rc, rids, rtail, rbroken = pytest_ids(repo, py, cand["test_files"])
+                    rc, rids, rtail, rbroken, rstats = pytest_ids(
+                        repo, py, cand["test_files"], tag="red")
                     rec["red"] = {"exit": rc, "failed_ids": rids, "tail": rtail}
                     git(repo, "checkout", "HEAD", "--", *cand["src_files"])
-                    gc, gids, gtail, _gbroken = pytest_ids(repo, py, cand["test_files"])
+                    gc, gids, gtail, _gbroken, gstats = pytest_ids(
+                        repo, py, cand["test_files"], tag="green")
                     rec["green"] = {"exit": gc, "failed_ids": gids, "tail": gtail}
-                    usable, why = classify(rc, gc, rids, rbroken)
+                    usable, why = classify(rc, gc, rids, rbroken,
+                                           red_stats=rstats, green_stats=gstats)
                     rec["usable"] = usable
                     rec["why"] = why
                     if usable and rc == TIMEOUT_EXIT:

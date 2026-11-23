@@ -544,7 +544,7 @@ class TestFalseGreens(unittest.TestCase):
         self.assertEqual(p.returncode, 1, p.stdout + "\n" + p.stderr)
         self.assertTrue(unfix.collection_broken_from(p.stdout),
                         "完整 stdout 里同时有 ERROR 与 failed：\n" + p.stdout)
-        rc, ids, tail, broken = unfix.pytest_ids(
+        rc, ids, tail, broken, _stats = unfix.pytest_ids(
             repo, self.PY, ["test_bad.py", "test_fail.py"])
         self.assertEqual(rc, 1, tail)
         self.assertIn("test_fail.py::test_x", ids)
@@ -975,6 +975,35 @@ class TestSkippedIsNotPassed(unittest.TestCase):
         self.assertIn('一条都没真跑过', rec['reason'])
         self.assertEqual(rec['steps']['pytest']['stats']['skipped'], 1)
         self.assertEqual(code, 2)
+
+
+
+class TestClassifySkipped(unittest.TestCase):
+    """`classify` 也要看「到底跑了几条」：跳过不是通过，也不是失败。
+
+    实测：一条全 skip 的题在 `scan` 里被说成「退回源码后仍全过（测试没覆盖这处改动）」——
+    结论对，理由错，而那个理由会把人引去「补测试覆盖」这条错路。
+    """
+
+    def test_green_all_skipped_is_not_usable(self):
+        green = {'total': 3, 'passed': 0, 'failed': 0, 'skipped': 3, 'error': 0}
+        usable, why = unfix.classify(1, 0, ['tests/a.py::t'], False, green_stats=green)
+        self.assertFalse(usable)
+        self.assertIn("跳过不等于通过", why)
+
+    def test_red_all_skipped_is_not_usable(self):
+        red = {'total': 2, 'passed': 0, 'failed': 0, 'skipped': 2, 'error': 0}
+        usable, why = unfix.classify(0, 0, [], False, red_stats=red)
+        self.assertFalse(usable)
+        self.assertIn("全被跳过", why)
+        self.assertNotIn("测试没覆盖", why, "全 skip 不该被说成「没覆盖」，那会把人引到补丁写法上")
+
+    def test_normal_case_still_usable(self):
+        red = {'total': 2, 'passed': 1, 'failed': 1, 'skipped': 0, 'error': 0}
+        green = {'total': 2, 'passed': 2, 'failed': 0, 'skipped': 0, 'error': 0}
+        usable, why = unfix.classify(1, 0, ['tests/a.py::t'], False,
+                                     red_stats=red, green_stats=green)
+        self.assertTrue(usable, why)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
