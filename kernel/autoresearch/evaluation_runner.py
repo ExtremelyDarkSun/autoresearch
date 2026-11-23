@@ -358,4 +358,46 @@ def run_evaluation(
             report["verdict"] = "all_passed" if proc.returncode == 0 else "not_all_passed"
             report["verdict_reason"] = "拿不到 n_passed/n_tasks，只能退回退出码判断"
 
+        # 两个口径都给出，谁也不许独占「通过率」这个名字。
+        #
+        # 背景（守卫 2026-11-23）：一批 3 题里 1 题 `infra_error`（根本没跑），
+        # `summary.pass_rate` 按契约只算 `passed/(passed+failed)` = **1.0**。
+        # 这个数字本身没错，但它是用户唯一会直接读成「全过」的对外读数 ——
+        # 而那题压根没测。契约（infra_error 不进分母）与直觉（3 题过了 2 题）
+        # 在这里分叉，分叉处必须把两个数都摆出来，让人自己看见差额。
+        report["rates"] = _rates(summary)
+
     return report
+
+
+def _rates(summary: dict | None) -> dict:
+    """给出两个通过率口径；分母为空（或一题都没测成）时都给 None。"""
+    s = summary or {}
+    n_passed = s.get("n_passed")
+    n_scored = s.get("n_scored")
+    n_tasks = s.get("n_tasks")
+    n_unscored = s.get("n_unscored")
+
+    # 一题都没测成时**两个都给 None**：`0/2` 不是「考了 0 分」，是「没测」。
+    # 这与 verdict=nothing_scored 是同一件事的两个面 —— 数字和结论不能各说各的。
+    nothing = isinstance(n_scored, int) and n_scored == 0
+
+    scored_rate = None
+    if not nothing and isinstance(n_passed, int) and isinstance(n_scored, int) and n_scored > 0:
+        scored_rate = round(n_passed / n_scored, 6)
+    all_rate = None
+    if not nothing and isinstance(n_passed, int) and isinstance(n_tasks, int) and n_tasks > 0:
+        all_rate = round(n_passed / n_tasks, 6)
+
+    note = None
+    if isinstance(n_unscored, int) and n_unscored > 0:
+        note = (
+            f"有 {n_unscored} 题没测成（infra_error/timed_out）；"
+            "pass_rate_scored 只算测出来的题，pass_rate_all 把没测成的算作没通过 —— "
+            "两个数都看，别只看大的那个"
+        )
+    return {
+        "pass_rate_scored": scored_rate,
+        "pass_rate_all": all_rate,
+        "note": note,
+    }

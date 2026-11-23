@@ -512,6 +512,83 @@ class TestCliTimeoutBoundary(unittest.TestCase):
         self.assertNotIn("Traceback", proc.stdout + proc.stderr)
 
 
+class TestPartialMeasurement(unittest.TestCase):
+    """两个通过率口径必须并排出现 —— 否则 1.0 会被读成「全过」。
+
+    守卫 2026-11-23：3 题里 1 题 `infra_error`（根本没跑），
+    `summary.pass_rate` 按契约是 `passed/(passed+failed)` = **1.0**。
+    契约没错，但它是用户唯一会直接读成「全过」的对外读数。所以再加一个
+    `pass_rate_all = passed/n_tasks`，两个数并排摆着，差额自己看得见。
+    """
+
+    def _stub(self, tmp: pathlib.Path, body: str) -> pathlib.Path:
+        tmp.mkdir(parents=True, exist_ok=True)
+        stub = tmp / "stub.py"
+        stub.write_text(
+            "import sys, json, pathlib\n"
+            "tasks = pathlib.Path(sys.argv[sys.argv.index('--tasks')+1])\n"
+            "out = pathlib.Path(sys.argv[sys.argv.index('--out')+1])\n"
+            "out.mkdir(parents=True, exist_ok=True)\n"
+            "rows = [json.loads(x) for x in tasks.read_text(encoding='utf-8-sig').splitlines() if x.strip()]\n"
+            + body,
+            encoding="utf-8",
+        )
+        return stub
+
+    def _run(self, tmp: pathlib.Path, body: str, task_ids=("d-1", "d-2")):
+        stub = self._stub(tmp, body)
+        profile = build_profile(tmp / "p", command=[
+            PY, "-X", "utf8", "-B", str(stub), "--tasks", "{tasks}", "--out", "{output}",
+        ])
+        tasks = write_tasks(tmp / "t.jsonl", [{"task_id": t, "statement": "x"} for t in task_ids])
+        return er.run_evaluation(profile, tasks=str(tasks), output=str(tmp / "o"), timeout=60)
+
+    def test_partial_measurement_reports_both_rates(self):
+        """部分没测成时必须同时给出两个口径 —— 否则 1.0 会被读成「全过」。
+
+        守卫 2026-11-23：3 题里 1 题 `infra_error`（根本没跑），
+        `summary.pass_rate` 按契约是 `passed/(passed+failed)` = **1.0**。
+        契约没错，但它是用户唯一会直接读成「全过」的对外读数。所以再加一个
+        `pass_rate_all = passed/n_tasks`，两个数并排摆着，差额自己看得见。
+        """
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run(tmp,
+                "with (out/'task_results.jsonl').open('w',encoding='utf-8',newline='\\n') as fh:\n"
+                "    for i, r in enumerate(rows):\n"
+                "        st = 'infra_error' if i == 1 else 'passed'\n"
+                "        fh.write(json.dumps({'task_id': r['task_id'], 'status': st})+'\\n')\n")
+            rates = report["rates"]
+            self.assertEqual(rates["pass_rate_scored"], 1.0, "测量口径：只算测出来的题")
+            self.assertEqual(rates["pass_rate_all"], 0.5, "全题口径：没测成的算作没通过")
+            self.assertIn("1 题没测成", rates["note"])
+            self.assertIn("别只看大的那个", rates["note"])
+
+    def test_clean_run_has_equal_rates_and_no_note(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run(tmp,
+                "with (out/'task_results.jsonl').open('w',encoding='utf-8',newline='\\n') as fh:\n"
+                "    for r in rows:\n"
+                "        fh.write(json.dumps({'task_id': r['task_id'], 'status':'passed'})+'\\n')\n")
+            rates = report["rates"]
+            self.assertEqual(rates["pass_rate_scored"], 1.0)
+            self.assertEqual(rates["pass_rate_all"], 1.0)
+            self.assertIsNone(rates["note"])
+
+    def test_nothing_scored_gives_no_rates(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run(tmp,
+                "with (out/'task_results.jsonl').open('w',encoding='utf-8',newline='\\n') as fh:\n"
+                "    for r in rows:\n"
+                "        fh.write(json.dumps({'task_id': r['task_id'], 'status':'infra_error'})+'\\n')\n")
+            self.assertEqual(report["verdict"], "nothing_scored")
+            self.assertIsNone(report["rates"]["pass_rate_scored"])
+            self.assertIsNone(report["rates"]["pass_rate_all"])
+            self.assertIn("没测成", report["rates"]["note"])
+
+
 class TestVerdictFromData(unittest.TestCase):
     """`verdict` 必须由**读数**推出来，不能由进程退出码推。
 
