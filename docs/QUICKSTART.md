@@ -221,12 +221,16 @@ python -X utf8 -B research.py eval --profile profiles\my-run --tasks tasks.jsonl
 | `verdict` | 含义 | 该怎么办 |
 |---|---|---|
 | `all_passed` | 跑完、覆盖齐、**每题都通过** | 正常 |
-| `not_all_passed` | 跑完、覆盖齐，但有题没通过 | **这是读数**，不是故障；看 `pass_rate` |
+| `not_all_passed` | 跑完、覆盖齐，但有题没通过（或没测成） | **这是读数**，不是故障；看 `pass_rate` |
 | `misaligned` | 结果覆盖与题单对不上（缺题/多题） | 读数不可用，先查执行器为什么吞题 |
 | `results_invalid` | 结果文件写了，但读不了（状态值非法、`task_id` 类型错、JSON 坏行） | 查执行器的输出格式 |
 | `no_results` | 结果文件根本没有 | 查 `result_file` 配置与执行器输出路径 |
+| `nothing_scored` | **一题都没进分母**（全 `infra_error` / 全 `timed_out`） | 这不是 0 分，是没测成；查依赖与环境，别汇报通过率 |
 | `timed_out` | 整次评测超时 | 调 `--timeout` |
 | `launch_failed` | 评测进程起不来 | 看 `stderr_tail` |
+
+每条报告还带一句 `verdict_reason`（例如「2/2 通过」「2/3 通过」「结果文件根本没有」），
+不用回头翻 summary 才知道这句判决是什么意思。
 
 **`verdict` 由读数推出来，不由进程退出码推。** 这两件事在真实执行器上会分叉：
 

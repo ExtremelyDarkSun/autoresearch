@@ -594,6 +594,49 @@ class TestVerdictFromData(unittest.TestCase):
             self.assertEqual(report["verdict"], "no_results")
             self.assertFalse((tmp / "o" / "task_results.jsonl").exists())
 
+    def test_all_infra_error_is_nothing_scored(self):
+        """一题都没进分母 ⇒ `nothing_scored`，不是 `not_all_passed`。
+
+        守卫 2026-11-23 指出的合法情形：全 infra_error / 全 timed_out 时
+        `n_scored=0`、`pass_rate=None`。若仍按「n_passed < n_tasks ⇒ not_all_passed」判，
+        等于把「没测成」记成「这次考了 0 分」——一次有效读数。
+        数字是 None，但 verdict 与 exit 都在说「这是一次正常的、不通过的评测」。
+        """
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run(tmp,
+                "with (out/'task_results.jsonl').open('w',encoding='utf-8',newline='\\n') as fh:\n"
+                "    for r in rows:\n"
+                "        fh.write(json.dumps({'task_id': r['task_id'], 'status':'infra_error',"
+                " 'reason':'依赖没装'})+'\\n')\n")
+            summary = report["results"]["summary"]
+            self.assertEqual(summary["n_scored"], 0)
+            self.assertIsNone(summary["pass_rate"])
+            self.assertEqual(report["verdict"], "nothing_scored")
+            self.assertFalse(report["ok"], "没测成不能算 ok")
+            self.assertIn("没测成", report["verdict_reason"])
+
+    def test_partial_measurement_keeps_denominator(self):
+        """部分没测成：分母只算测出来的题，但 verdict 要提示并非全部通过。
+
+        2 通过 + 1 infra_error ⇒ `pass_rate=1.0`（分母=2）、`verdict=not_all_passed`。
+        这不是假绿：`infra_error` 不进分母是**写在契约里**的口径，
+        而 `verdict` 与 `n_unscored` 会同时告诉你「有一题压根没跑」。
+        """
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run(tmp,
+                "with (out/'task_results.jsonl').open('w',encoding='utf-8',newline='\\n') as fh:\n"
+                "    for i, r in enumerate(rows):\n"
+                "        st = 'infra_error' if i == 1 else 'passed'\n"
+                "        fh.write(json.dumps({'task_id': r['task_id'], 'status': st})+'\\n')\n")
+            summary = report["results"]["summary"]
+            self.assertEqual(summary["pass_rate"], 1.0)
+            self.assertEqual(summary["n_scored"], 1)
+            self.assertEqual(summary["n_unscored"], 1)
+            self.assertEqual(report["verdict"], "not_all_passed")
+            self.assertIn("1/2", report["verdict_reason"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

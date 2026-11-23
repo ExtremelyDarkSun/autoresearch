@@ -166,6 +166,41 @@ SCENARIOS = [
         ),
         tasks=TASKS_3,
     ),
+    # ---- 「一题都没测成」：守卫 2026-11-23 指出的合法情形 ----
+    # 全 infra_error / 全 timed_out 时 n_scored=0、pass_rate=None。若仍按
+    # 「n_passed < n_tasks ⇒ not_all_passed」判，等于把「没测成」记成「这次考了 0 分」。
+    dict(
+        name="J 全部 infra_error",
+        expect="block",
+        stub=stub(
+            "with (out/'task_results.jsonl').open('w',encoding='utf-8',newline='\\n') as fh:\n"
+            "    for r in rows:\n"
+            "        fh.write(json.dumps({'task_id': r['task_id'], 'status':'infra_error',"
+            " 'reason':'依赖没装'})+'\\n')\n"
+        ),
+        tasks=TASKS_3,
+    ),
+    dict(
+        name="K 全部 timed_out",
+        expect="block",
+        stub=stub(
+            "with (out/'task_results.jsonl').open('w',encoding='utf-8',newline='\\n') as fh:\n"
+            "    for r in rows:\n"
+            "        fh.write(json.dumps({'task_id': r['task_id'], 'status':'timed_out'})+'\\n')\n"
+        ),
+        tasks=TASKS_3,
+    ),
+    dict(
+        name="L 2 通过 1 infra_error（部分没测成）",
+        expect="reading",
+        stub=stub(
+            "with (out/'task_results.jsonl').open('w',encoding='utf-8',newline='\\n') as fh:\n"
+            "    for i, r in enumerate(rows):\n"
+            "        st = 'infra_error' if i == 2 else 'passed'\n"
+            "        fh.write(json.dumps({'task_id': r['task_id'], 'status': st})+'\\n')\n"
+        ),
+        tasks=TASKS_3,
+    ),
 ]
 
 
@@ -232,7 +267,8 @@ def classify(rec: dict) -> tuple[str, str]:
     if rec.get("parse_error"):
         return "parse_error", "CLI 没吐出 JSON"
     verdict = rec.get("verdict")
-    if verdict in ("misaligned", "no_results", "results_invalid", "timed_out", "launch_failed"):
+    if verdict in ("misaligned", "no_results", "results_invalid", "timed_out",
+                   "launch_failed", "nothing_scored"):
         return "block", verdict
     if verdict == "all_passed" and rec.get("pass_rate") == 1.0 and rec.get("aligned") is not False:
         return "reading", "all_passed"

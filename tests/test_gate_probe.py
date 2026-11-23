@@ -41,7 +41,8 @@ class TestGateProbe(unittest.TestCase):
         text = TOOL.read_text(encoding="utf-8")
         for key in ("静默丢最后一题", "0 字节结果文件", "同一题号写两行",
                     "task_id 写成整数", "skipped", "首尾空格", "非 JSON",
-                    "全部 failed 但 exit 0"):
+                    "全部 failed 但 exit 0", "全部 infra_error", "全部 timed_out",
+                    "1 infra_error"):
             with self.subTest(key=key):
                 self.assertIn(key, text, f"场景「{key}」不见了")
 

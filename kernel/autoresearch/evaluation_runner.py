@@ -200,6 +200,7 @@ def run_evaluation(
         #   launch_failed   评测进程起不来
         #   no_results      跑完了但读不到结果文件
         "verdict": "not_run",
+        "verdict_reason": None,
     }
 
     try:
@@ -218,10 +219,12 @@ def run_evaluation(
         report["timed_out"] = True
         report["stderr_tail"] = f"整次评测超过 {timeout:g} 秒被中断"
         report["verdict"] = "timed_out"
+        report["verdict_reason"] = f"整次评测超过 {timeout:g} 秒被中断"
         return report
     except OSError as exc:
         report["stderr_tail"] = f"无法启动评测进程：{type(exc).__name__}: {exc}"
         report["verdict"] = "launch_failed"
+        report["verdict_reason"] = f"无法启动评测进程：{type(exc).__name__}"
         return report
 
     report["executed"] = True
@@ -246,6 +249,10 @@ def run_evaluation(
         #   读不了 → 去看执行器写出来的格式（状态值、task_id 类型、非法 JSON 行）
         # 早先两种情况都报 no_results，等于把诊断信息抹平了。
         report["verdict"] = "results_invalid" if _results_file_exists(output, profile) else "no_results"
+        report["verdict_reason"] = (
+            "结果文件存在但读不了（格式不在契约内）" if report["verdict"] == "results_invalid"
+            else "结果文件根本没有"
+        )
         return report
 
     report["results"] = results
@@ -270,6 +277,7 @@ def run_evaluation(
         report["alignment_error"] = f"读不到输入题单，无法确认结果覆盖完整：{exc}"
         report["ok"] = False
         report["verdict"] = "misaligned"
+        report["verdict_reason"] = f"读不到输入题单，无法确认结果覆盖完整：{exc}"
         return report
 
     expected = [str(t["task_id"]) for t in (tasklist.get("tasks") or [])]
@@ -301,6 +309,7 @@ def run_evaluation(
     if missing or unexpected:
         report["ok"] = False
         report["verdict"] = "misaligned"
+        report["verdict_reason"] = f"结果与题单不一致：缺 {len(missing)} 题、多 {len(unexpected)} 题"
         report["alignment_error"] = (
             f"结果与题单不一致：缺 {len(missing)} 题"
             + (f"（{', '.join(missing[:5])}）" if missing else "")
@@ -323,11 +332,30 @@ def run_evaluation(
         # 反过来，「全部通过但执行器按约定 exit 1」也会被误报成 launch_failed。
         #
         # 现在只认数据：n_passed 与 n_tasks 都在，就按它们判；拿不到读数才退回退出码。
+        #
+        # 再进一步（守卫的判断，2026-11-23）：`n_scored == 0` 时**一题都没测成**。
+        # 全 infra_error / 全 timed_out 的批次里，n_passed=n_failed=0，
+        # 若还按「n_passed < n_tasks ⇒ not_all_passed」判，等于把「没测成」记成
+        # 「这次考了 0 分」—— 一次有效读数。这是比假绿更隐蔽的一种：数字是 None，
+        # 但 verdict 与 exit 都在说「这是一次正常的、不通过的评测」。
         n_passed = (summary or {}).get("n_passed")
         n_tasks = (summary or {}).get("n_tasks")
-        if isinstance(n_passed, int) and isinstance(n_tasks, int):
+        n_scored = (summary or {}).get("n_scored")
+        if isinstance(n_scored, int) and n_scored == 0:
+            report["ok"] = False
+            report["verdict"] = "nothing_scored"
+            report["verdict_reason"] = (
+                "没有一道题进入通过率分母（全部 infra_error / timed_out）："
+                "这不是 0 分，是没测成"
+            )
+        elif isinstance(n_passed, int) and isinstance(n_tasks, int):
             report["verdict"] = "all_passed" if n_passed >= n_tasks else "not_all_passed"
+            report["verdict_reason"] = (
+                "全部题都通过" if n_passed >= n_tasks
+                else f"{n_passed}/{n_tasks} 通过"
+            )
         else:
             report["verdict"] = "all_passed" if proc.returncode == 0 else "not_all_passed"
+            report["verdict_reason"] = "拿不到 n_passed/n_tasks，只能退回退出码判断"
 
     return report
