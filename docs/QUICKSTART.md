@@ -220,12 +220,28 @@ python -X utf8 -B research.py eval --profile profiles\my-run --tasks tasks.jsonl
 
 | `verdict` | 含义 | 该怎么办 |
 |---|---|---|
-| `all_passed` | 跑完、覆盖齐、全通过 | 正常 |
+| `all_passed` | 跑完、覆盖齐、**每题都通过** | 正常 |
 | `not_all_passed` | 跑完、覆盖齐，但有题没通过 | **这是读数**，不是故障；看 `pass_rate` |
 | `misaligned` | 结果覆盖与题单对不上（缺题/多题） | 读数不可用，先查执行器为什么吞题 |
+| `results_invalid` | 结果文件写了，但读不了（状态值非法、`task_id` 类型错、JSON 坏行） | 查执行器的输出格式 |
+| `no_results` | 结果文件根本没有 | 查 `result_file` 配置与执行器输出路径 |
 | `timed_out` | 整次评测超时 | 调 `--timeout` |
 | `launch_failed` | 评测进程起不来 | 看 `stderr_tail` |
-| `no_results` | 跑完了但读不到结果文件 | 执行器没按 `result_file` 落盘 |
+
+**`verdict` 由读数推出来，不由进程退出码推。** 这两件事在真实执行器上会分叉：
+
+- 3 题全 `failed`、执行器仍 `exit 0` ⇒ `not_all_passed`（早先这里错报 `all_passed`）
+- 全部通过、执行器按自己的约定 `exit 1` ⇒ 仍是 `all_passed`
+
+`not_all_passed` 与 `misaligned` 的区别是「这批题考了 30 分」与「成绩单少了几页」；
+`results_invalid` 与 `no_results` 的区别是「格式不对」与「压根没写」。
+两种混淆都会把人引到错误的下一步。
+
+想自己验这套判定，跑对抗矩阵（九个场景，每个都真的执行一次 `eval`）：
+
+```powershell
+python -X utf8 -B tools\gate_probe.py
+```
 
 把 `not_all_passed` 当成 `misaligned` 是常见误读：前者说明「这批题考了 30 分」，
 后者说明「成绩单少了几页」。前者可以汇报，后者不能。

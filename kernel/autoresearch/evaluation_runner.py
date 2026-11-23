@@ -51,6 +51,15 @@ class EvaluationRunError(RuntimeError):
     """评测无法发起（配置不合规、执行器缺失等）。"""
 
 
+def _results_file_exists(output, profile) -> bool:
+    """结果文件到底存不存在？用来区分「没写」与「写了但读不了」。"""
+    evaluation = profile.get("evaluation") if isinstance(profile, dict) else None
+    name = "task_results.jsonl"
+    if isinstance(evaluation, dict) and isinstance(evaluation.get("result_file"), str):
+        name = evaluation["result_file"]
+    return (Path(output) / name).is_file()
+
+
 def resolve_budget(profile: dict, timeout) -> dict:
     """把 `[limits].total_budget_minutes` 与调用方给的 `timeout` 合成为一个生效值。
 
@@ -232,7 +241,11 @@ def run_evaluation(
     except ResultsError as exc:
         report["results_read_error"] = str(exc)
         report["ok"] = False
-        report["verdict"] = "no_results"
+        # 「没写结果」和「写的结果读不了」是两件事，操作者的下一步动作完全不同：
+        #   没写   → 去看执行器的输出路径 / result_file 配置对不对
+        #   读不了 → 去看执行器写出来的格式（状态值、task_id 类型、非法 JSON 行）
+        # 早先两种情况都报 no_results，等于把诊断信息抹平了。
+        report["verdict"] = "results_invalid" if _results_file_exists(output, profile) else "no_results"
         return report
 
     report["results"] = results
@@ -302,16 +315,19 @@ def run_evaluation(
             )
     else:
         report["ok"] = proc.returncode == 0
-        # 覆盖齐了之后 `exit != 0` 有两种含义：执行器按「有题没通过」返回非零（这是读数，
-        # 不是故障），或者真的出错。用 n_passed 与 n_tasks 区分，
-        # 别把「这批题考了 30 分」报成「评测跑挂了」。
+        # `verdict` 描述的是**结果**，不是进程的退出码。
+        #
+        # 早先这里写成「exit==0 ⇒ all_passed」，于是「3 题全 failed、执行器仍 exit 0」
+        # 会被报成 all_passed —— 而 pass_rate 明明是 0.0。名字里带 passed，却是靠
+        # 退出码推出来的，这就是最典型的一类假绿：判据看的是进程脸色，不是数据。
+        # 反过来，「全部通过但执行器按约定 exit 1」也会被误报成 launch_failed。
+        #
+        # 现在只认数据：n_passed 与 n_tasks 都在，就按它们判；拿不到读数才退回退出码。
         n_passed = (summary or {}).get("n_passed")
         n_tasks = (summary or {}).get("n_tasks")
-        if proc.returncode == 0:
-            report["verdict"] = "all_passed"
-        elif isinstance(n_passed, int) and isinstance(n_tasks, int) and n_tasks > n_passed:
-            report["verdict"] = "not_all_passed"
+        if isinstance(n_passed, int) and isinstance(n_tasks, int):
+            report["verdict"] = "all_passed" if n_passed >= n_tasks else "not_all_passed"
         else:
-            report["verdict"] = "launch_failed"
+            report["verdict"] = "all_passed" if proc.returncode == 0 else "not_all_passed"
 
     return report

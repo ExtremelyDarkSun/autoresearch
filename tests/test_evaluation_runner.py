@@ -512,5 +512,88 @@ class TestCliTimeoutBoundary(unittest.TestCase):
         self.assertNotIn("Traceback", proc.stdout + proc.stderr)
 
 
+class TestVerdictFromData(unittest.TestCase):
+    """`verdict` 必须由**读数**推出来，不能由进程退出码推。
+
+    `tools/gate_probe.py` 的对抗矩阵里抓到的：3 题全 `failed`、执行器仍 `exit 0`，
+    verdict 报成 `all_passed`，而 `pass_rate` 明明是 0.0。
+    名字里带 passed，却是靠退出码推的 —— 判据看进程脸色，不看数据。
+    反向的错也有：全部通过但执行器按自己的约定 `exit 1`，会被误报成 `launch_failed`。
+    """
+
+    def _stub(self, tmp: pathlib.Path, body: str) -> pathlib.Path:
+        tmp.mkdir(parents=True, exist_ok=True)
+        stub = tmp / "stub.py"
+        stub.write_text(
+            "import sys, json, pathlib\n"
+            "tasks = pathlib.Path(sys.argv[sys.argv.index('--tasks')+1])\n"
+            "out = pathlib.Path(sys.argv[sys.argv.index('--out')+1])\n"
+            "out.mkdir(parents=True, exist_ok=True)\n"
+            "rows = [json.loads(x) for x in tasks.read_text(encoding='utf-8-sig').splitlines() if x.strip()]\n"
+            + body,
+            encoding="utf-8",
+        )
+        return stub
+
+    def _run(self, tmp: pathlib.Path, body: str, task_ids=("d-1", "d-2")):
+        stub = self._stub(tmp, body)
+        profile = build_profile(tmp / "p", command=[
+            PY, "-X", "utf8", "-B", str(stub), "--tasks", "{tasks}", "--out", "{output}",
+        ])
+        tasks = write_tasks(tmp / "t.jsonl", [{"task_id": t, "statement": "x"} for t in task_ids])
+        return er.run_evaluation(profile, tasks=str(tasks), output=str(tmp / "o"), timeout=60)
+
+    def test_all_failed_but_exit_zero_is_not_all_passed(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run(tmp,
+                "with (out/'task_results.jsonl').open('w',encoding='utf-8',newline='\\n') as fh:\n"
+                "    for r in rows:\n"
+                "        fh.write(json.dumps({'task_id': r['task_id'], 'status':'failed'})+'\\n')\n"
+                "sys.exit(0)\n")
+            self.assertEqual(report["exit"], 0)
+            self.assertEqual(report["verdict"], "not_all_passed",
+                             "0/2 通过不能叫 all_passed，哪怕进程 exit 0")
+            self.assertEqual(report["results"]["summary"]["pass_rate"], 0.0)
+
+    def test_all_passed_but_exit_nonzero_is_still_all_passed(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run(tmp,
+                "with (out/'task_results.jsonl').open('w',encoding='utf-8',newline='\\n') as fh:\n"
+                "    for r in rows:\n"
+                "        fh.write(json.dumps({'task_id': r['task_id'], 'status':'passed'})+'\\n')\n"
+                "sys.exit(1)\n")
+            self.assertEqual(report["exit"], 1)
+            self.assertEqual(report["verdict"], "all_passed",
+                             "数据说全通过，退出码的约定不该改写结论")
+            self.assertEqual(report["results"]["summary"]["pass_rate"], 1.0)
+
+    def test_invalid_results_are_not_reported_as_missing(self):
+        """结果文件写了但格式不合法 ⇒ `results_invalid`，不是 `no_results`。
+
+        两种情况的下一步动作完全不同：没写去看输出路径/配置，写了读不了去看格式。
+        混成一个词等于把诊断信息抹平。
+        """
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run(tmp,
+                "with (out/'task_results.jsonl').open('w',encoding='utf-8',newline='\\n') as fh:\n"
+                "    for r in rows:\n"
+                "        fh.write(json.dumps({'task_id': r['task_id'], 'status':'skipped'})+'\\n')\n")
+            self.assertFalse(report["ok"])
+            self.assertEqual(report["verdict"], "results_invalid")
+            self.assertTrue((tmp / "o" / "task_results.jsonl").is_file(),
+                            "文件确实存在，只是读不了")
+
+    def test_missing_results_are_reported_as_no_results(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            report = self._run(tmp, "pass\n")
+            self.assertFalse(report["ok"])
+            self.assertEqual(report["verdict"], "no_results")
+            self.assertFalse((tmp / "o" / "task_results.jsonl").exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
