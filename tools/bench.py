@@ -98,39 +98,59 @@ def _top_dirs(repo: pathlib.Path, sample: int = 300, limit: int = 5) -> list[str
 
 def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path,
               src_prefixes, test_prefixes, patch_dir: pathlib.Path | None = None,
-              timeout: float = 180.0, budget_seconds: float = 600.0, only_commits=None) -> int:
+              timeout: float = 180.0, budget_seconds: float = 600.0, only_commits=None,
+              tasks_file=None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
-    scan_dir = out_dir / "scan"
-    print(f"[1/3] 造题与验证（limit={limit}）", flush=True)
-    rc = unfix.scan(repo, py, limit, scan_dir, src_prefixes, test_prefixes,
-                    only_commits=only_commits)
-    if rc != 0:
-        print(f"  scan 失败（exit {rc}），停止", file=sys.stderr)
-        return rc
 
-    cand_file = scan_dir / "candidates.jsonl"
-    if not cand_file.is_file():
-        # 0 个候选时 `scan` 不写这个文件，早期版本在这里直接 `FileNotFoundError` ——
-        # 那个报错把「本仓库没有同时改源码与测试的提交」说成了「文件不存在」，
-        # 读的人会去查磁盘，而真正的原因通常是前缀没匹配。
-        # 实测（副机 L85）：默认前缀 `fastapi/ httpx/ requests/ rich/ src/` 对一个
-        # 源码在 `kernel/`、`project/` 的仓库当然匹配不到。
-        print(f"没有候选：这个仓库里没有任何提交同时改了「{list(src_prefixes)}」下的源码"
-              f"和「{list(test_prefixes)}」下的测试。", file=sys.stderr)
-        print("多半是前缀与仓库布局不匹配 —— 用 --src-prefixes / --test-prefixes 指定。",
-              file=sys.stderr)
-        # 别让人自己去猜布局：直接把这个仓库最近改动过的目录名列出来。
-        hint = _top_dirs(repo)
-        if hint:
-            print(f"  这个仓库最近 300 个提交里，改动最多的顶层目录是：{'、'.join(hint)}",
+    if tasks_file:
+        # **题单驱动**：不重扫，直接吃一份已经被 scan 验过的题单。
+        # 这样 `research.py eval` 才能把它当成一次「真实评测」来驱动
+        # （profile 的 [evaluation].command 只允许 {tasks} 与 {output} 两个占位符）。
+        p = pathlib.Path(tasks_file)
+        if not p.is_file():
+            print(f"  题单不存在：{p}", file=sys.stderr)
+            return 2
+        rows = [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
+        need = ("commit", "test_files", "fail_to_pass")
+        bad = [i for i, r in enumerate(rows, 1)
+               if not all(r.get(k) for k in need)]
+        if bad:
+            print(f"  题单第 {bad[:5]} 行缺少 {need} 之一 —— 拒绝执行（不猜）", file=sys.stderr)
+            return 2
+        print(f"[1/3] 题单驱动：{len(rows)} 道题（不重扫）", flush=True)
+        usable = rows
+
+    else:
+        scan_dir = out_dir / "scan"
+        print(f"[1/3] 造题与验证（limit={limit}）", flush=True)
+        rc = unfix.scan(repo, py, limit, scan_dir, src_prefixes, test_prefixes,
+                        only_commits=only_commits)
+        if rc != 0:
+            print(f"  scan 失败（exit {rc}），停止", file=sys.stderr)
+            return rc
+        cand_file = scan_dir / "candidates.jsonl"
+        if not cand_file.is_file():
+            # 0 个候选时 `scan` 不写这个文件，早期版本在这里直接 `FileNotFoundError` ——
+            # 那个报错把「本仓库没有同时改源码与测试的提交」说成了「文件不存在」，
+            # 读的人会去查磁盘，而真正的原因通常是前缀没匹配。
+            # 实测（副机 L85）：默认前缀 `fastapi/ httpx/ requests/ rich/ src/` 对一个
+            # 源码在 `kernel/`、`project/` 的仓库当然匹配不到。
+            print(f"没有候选：这个仓库里没有任何提交同时改了「{list(src_prefixes)}」下的源码"
+                  f"和「{list(test_prefixes)}」下的测试。", file=sys.stderr)
+            print("多半是前缀与仓库布局不匹配 —— 用 --src-prefixes / --test-prefixes 指定。",
                   file=sys.stderr)
-            print(f"  例如：--src-prefixes \"{hint[0]}/\"", file=sys.stderr)
-        return 2
+            # 别让人自己去猜布局：直接把这个仓库最近改动过的目录名列出来。
+            hint = _top_dirs(repo)
+            if hint:
+                print(f"  这个仓库最近 300 个提交里，改动最多的顶层目录是：{'、'.join(hint)}",
+                      file=sys.stderr)
+                print(f"  例如：--src-prefixes \"{hint[0]}/\"", file=sys.stderr)
+            return 2
 
-    rows = [json.loads(line) for line in cand_file.read_text(
-        encoding="utf-8").splitlines() if line.strip()]
-    usable = [r for r in rows if r.get("usable")]
-    print(f"  候选 {len(rows)}，可用 {len(usable)}", flush=True)
+        rows = [json.loads(line) for line in cand_file.read_text(
+            encoding="utf-8").splitlines() if line.strip()]
+        usable = [r for r in rows if r.get("usable")]
+        print(f"  候选 {len(rows)}，可用 {len(usable)}", flush=True)
 
     if not usable:
         summary = summarize([])
@@ -196,6 +216,31 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
             task["patch_status"] = got["status"]
             task["patch_reason"] = got.get("reason")
         tasks.append(task)
+
+    # 给内核的那份结果（results schema：task_id + status 必填，其余可选）。
+    # 状态映射：passed / failed 原样；infra_error 与 no_patch 也写出来 ——
+    # **「评不了」必须占一行**，不能从结果里消失（否则分母悄悄变小）。
+    results_path = out_dir / "task_results.jsonl"
+    with results_path.open("w", encoding="utf-8", newline="\n") as fh:
+        for task in tasks:
+            st = task.get("patch_status") or task.get("skipped") or "no_patch"
+            # 内核只认四种状态：passed / failed / infra_error / timed_out。
+            # 于是「没有补丁」「预算跳过」「打补丁失败」都必须落到 infra_error ——
+            # **它们是「没评」，不是「没通过」**；写成 failed 会让通过率看起来像模型不行。
+            if st in ("passed", "failed"):
+                status = st
+            else:
+                status = "infra_error"
+            reason = task.get("patch_reason")
+            if status == "infra_error" and not reason:
+                reason = f"没评：{st}"
+            row = {
+                "task_id": task.get("commit"),
+                "status": status,
+                "reason": reason,
+                "notes": f"raw={st} neg={task.get('neg_status')} gold={task.get('gold_status')}",
+            }
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     summary = summarize(tasks)
     summary["budget_seconds"] = budget_seconds
@@ -267,8 +312,10 @@ def _markdown(summary: dict, tasks: list[dict]) -> str:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="bench.py")
-    ap.add_argument("--repo", required=True)
+    ap.add_argument("--repo", default=None, help="仓库路径；用 --tasks 时可从题单的 repo 字段取")
     ap.add_argument("--python", default=None, help="默认 <repo>/.venv/Scripts/python.exe")
+    ap.add_argument("--tasks", default=None,
+                    help="直接吃一份题单（JSONL，含 commit/test_files/fail_to_pass），不重扫")
     ap.add_argument("--only-commit", default=None,
                     help="只评指定提交（逗号分隔，可写短 sha）—— 复评已有补丁时用")
     ap.add_argument("--limit", type=int, default=3)
@@ -281,7 +328,18 @@ def main(argv=None) -> int:
                     help="整轮的时间预算；到点就停手并写出一份部分汇总")
     args = ap.parse_args(argv)
 
-    repo = pathlib.Path(args.repo).resolve()
+    if args.repo:
+        repo = pathlib.Path(args.repo).resolve()
+    elif args.tasks:
+        first = json.loads(pathlib.Path(args.tasks).read_text(encoding="utf-8").splitlines()[0])
+        if not first.get("repo"):
+            print("  题单里没有 repo 字段，也没有 --repo —— 不知道该在哪个仓库评", file=sys.stderr)
+            return 2
+        repo = pathlib.Path(first["repo"]).resolve()
+    else:
+        print("  必须给 --repo（或用 --tasks 并在题单里写 repo）", file=sys.stderr)
+        return 2
+
     py = pathlib.Path(args.python) if args.python else (repo / ".venv/Scripts/python.exe")
     if not py.exists():
         print(f"找不到解释器：{py}（用 --python 指定）", file=sys.stderr)
@@ -295,7 +353,7 @@ def main(argv=None) -> int:
                      test_prefixes,
                      pathlib.Path(args.patch_dir) if args.patch_dir else None,
                      args.timeout, args.budget_seconds,
-                                only_commits=args.only_commit)
+                                only_commits=args.only_commit, tasks_file=args.tasks)
 
 
 if __name__ == "__main__":

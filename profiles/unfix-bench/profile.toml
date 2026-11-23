@@ -1,0 +1,39 @@
+# 变更说明：首版。给 `research.py eval` 用的 profile —— 把 unfix/bench 这条评测链
+# 接进内核的 eval 通道，让它能被当成「一次真实评测」驱动。
+
+id = "unfix-bench"
+name = "unfix/bench 评测配置（题单驱动）"
+
+[evaluation]
+# 只允许 {tasks} 与 {output} 两个占位符；不经过 shell。
+# 指向 `tools/bench.py --tasks`：题单驱动，不重扫。
+command = ["python", "-X", "utf8", "-B", "tools/bench.py", "--tasks", "{tasks}", "--out", "{output}"]
+configured = true
+
+[instructions]
+required = []
+
+[limits]
+# 内核要求四项 + 整批预算。一道题通常 1–3 分钟（红/绿相位各跑一次 pytest），
+# 挂死的题会吃满 bench 的 `--timeout`（默认 180 秒），所以单题上限给 5 分钟。
+per_task_minutes = 5
+max_tool_calls = 40
+max_turns = 20
+command_timeout_seconds = 300
+total_budget_minutes = 60
+
+[trace]
+tool_names = []
+
+[workspace]
+allowed_roots = []
+forbidden_path_patterns = []
+
+[leak]
+sensitive_fragments = []
+include_observations = false
+
+[schema]
+tasklist = "../agent-harness/schemas/tasklist.schema.json"
+results = "../agent-harness/schemas/results.schema.json"
+trace = "../agent-harness/schemas/trace.schema.json"
