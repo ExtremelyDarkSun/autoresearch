@@ -625,7 +625,7 @@ def patch_touches_tests(patch_text: str, test_prefixes) -> list[str]:
 def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
             out_dir: pathlib.Path, apply_gold: bool, patch: str | None,
             timeout: float, src_prefixes, test_prefixes=DEFAULT_TEST_PREFIXES,
-            regression_tests=None, known_failures=()) -> int:
+            regression_tests=None, known_failures=(), strict_head=False) -> int:
     started = time.monotonic()
     res = {"task_id": commit, "reason": None, "notes": None, "status": "infra_error",
            "duration_seconds": None, "steps": {}}
@@ -644,6 +644,24 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
     code, dirty, _ = git(repo, "status", "--porcelain", "--untracked-files=no")
     if dirty:
         return finish("infra_error", "工作树不干净（跟踪文件有改动），先清理")
+
+    # **HEAD 闸**：工作树 HEAD 必须就是 `--commit`，否则红相位会混用两个版本。
+    # 实测（副机 L107）：`--commit 4e4ab38` 而工作树在 HEAD 时，红相位是
+    # 「4e4ab38^ 的源码 + HEAD 的测试」（76 vs 77 条用例）—— 判分对象错了却不报错。
+    code, head, _ = git(repo, "rev-parse", "HEAD")
+    code2, want, _ = git(repo, "rev-parse", commit)
+    head_s, want_s = (head or "").strip(), (want or "").strip()
+    mixed = bool(code == 0 and code2 == 0 and head_s and want_s and head_s != want_s)
+    if mixed:
+        # 记下来。**默认只记不拦**：存量用例与「在 main 上评旧提交」的流程都依赖能跑。
+        # 真实实验（bench / 对外读数）应加 --strict-head，把它变成硬失败。
+        res["steps"]["head_mismatch"] = {"repo_head": head_s[:12], "commit": want_s[:12]}
+        if strict_head:
+            return finish(
+                "infra_error",
+                f"工作树 HEAD（{head_s[:12]}）与 --commit（{want_s[:12]}）不一致："
+                f"红相位会混用两个版本的测试，读数不可信。"
+                f"先 `git worktree add --detach <目录> {commit}`，再在那个目录里跑")
 
     src, tests_changed = changed_files(repo, commit, src_prefixes, test_prefixes)
     if not src:
@@ -884,6 +902,8 @@ def main(argv=None) -> int:
     r.add_argument("--out", required=True)
     r.add_argument("--python", default=None)
     r.add_argument("--apply-gold", action="store_true")
+    r.add_argument("--strict-head", action="store_true",
+                   help="工作树 HEAD 与 --commit 不一致时直接判 infra_error（真实实验应当打开）")
     r.add_argument("--patch", default=None)
     r.add_argument("--timeout", type=float, default=120.0)
     r.add_argument("--src-prefixes", default=None)
@@ -962,7 +982,8 @@ def main(argv=None) -> int:
                      else DEFAULT_TEST_PREFIXES)
     return run_one(repo, py, args.commit, args.tests, pathlib.Path(args.out),
                    args.apply_gold, args.patch, args.timeout, prefixes, test_prefixes,
-                   args.regression_tests, set(args.known_failures or ()))
+                   args.regression_tests, set(args.known_failures or ()),
+                   strict_head=args.strict_head)
 
 
 if __name__ == "__main__":
