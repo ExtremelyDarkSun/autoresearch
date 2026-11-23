@@ -124,5 +124,45 @@ class TestLayoutPrefixes(unittest.TestCase):
         self.assertEqual(tests, ["test_mod.py"])
 
 
+class TestCliSelftest(unittest.TestCase):
+    """`--selftest` 是不带子命令的入口 —— 它曾经根本敲不通。
+
+    事故：`add_subparsers(required=True)` 之后再加 `--selftest`，于是
+    `unfix.py --selftest` 永远报「缺少 cmd」。而我在 RUNBOOK 里把它写成标准用法，
+    **照着自己的文档敲才发现敲不通** —— 文档比代码严，被打回来的是代码。
+    """
+
+    def test_selftest_flag_is_accepted_without_subcommand(self):
+        import unittest as ut
+        calls = {"discover": 0}
+        real_discover = ut.TestLoader.discover
+
+        def fake_discover(self, *a, **k):
+            calls["discover"] += 1
+            return ut.TestSuite()
+
+        ut.TestLoader.discover = fake_discover
+        try:
+            # 把内部那次 TextTestRunner 的输出吞掉：它会打一行 `Ran 0 tests`，
+            # 而那行会被 `research.py selftest` 的计数闸当成一个计数来源。
+            import contextlib
+            import io
+            with contextlib.redirect_stderr(io.StringIO()):
+                code = unfix.main(["--selftest"])
+        finally:
+            ut.TestLoader.discover = real_discover
+        self.assertEqual(code, 0, "返回非 0 说明 argparse 又把 --selftest 拦掉了")
+        self.assertEqual(calls["discover"], 1, "没有走到跑自测那条分支")
+
+    def test_no_subcommand_prints_help_instead_of_crashing(self):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = unfix.main([])
+        self.assertEqual(code, 2)
+        self.assertIn("usage", buf.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

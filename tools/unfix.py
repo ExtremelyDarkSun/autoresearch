@@ -304,7 +304,11 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="unfix.py")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    # `required=False`：`--selftest` 是一个**不带子命令**的入口。
+    # 之前写成 `required=True`，于是 `unfix.py --selftest` 永远报「缺少 cmd」——
+    # 而文档里我又把它写成标准用法。写 RUNBOOK 时逐条照着敲才发现：
+    # **文档比代码严，被文档打回来的是代码。**
+    sub = ap.add_subparsers(dest="cmd", required=False)
 
     s = sub.add_parser("scan", help="扫全历史，产出可用题集")
     s.add_argument("--repo", required=True)
@@ -328,13 +332,20 @@ def main(argv=None) -> int:
     ap.add_argument("--selftest", action="store_true", help="跑判据的单元测试")
 
     args = ap.parse_args(argv)
-    prefixes = (tuple(args.src_prefixes.split(",")) if getattr(args, "src_prefixes", None)
-                else DEFAULT_SRC_PREFIXES)
 
     if getattr(args, "selftest", False):
+        # 用路径加载，不依赖 cwd 是仓库根（在别的目录敲 `--selftest` 也该能跑）
         import unittest
-        suite = unittest.TestLoader().loadTestsFromName("tests.test_unfix")
+        tests_dir = pathlib.Path(__file__).resolve().parents[1] / "tests"
+        suite = unittest.TestLoader().discover(str(tests_dir), pattern="test_unfix.py")
         return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
+
+    if not args.cmd:
+        ap.print_help()
+        return 2
+
+    prefixes = (tuple(args.src_prefixes.split(",")) if getattr(args, "src_prefixes", None)
+                else DEFAULT_SRC_PREFIXES)
 
     if args.cmd == "scan":
         repo = pathlib.Path(args.repo).resolve()
