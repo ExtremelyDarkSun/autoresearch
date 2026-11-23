@@ -69,6 +69,25 @@ def summarize(tasks: list[dict]) -> dict:
     }
 
 
+def _top_dirs(repo: pathlib.Path, sample: int = 300, limit: int = 5) -> list[str]:
+    """这个仓库最近改动最多的顶层目录（用来提示 --src-prefixes 该怎么填）。
+
+    「前缀不对」这种报错，光说「不对」没用 —— 得给出「那该填什么」。
+    """
+    code, out, _ = unfix.git(repo, "log", f"-n{sample}", "--name-only", "--format=")
+    if code != 0:
+        return []
+    counts: dict[str, int] = {}
+    for line in out.splitlines():
+        line = line.strip()
+        if not line or not line.endswith(".py"):
+            continue
+        head = line.split("/")[0] if "/" in line else "."
+        counts[head] = counts.get(head, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [name for name, _ in ranked[:limit]]
+
+
 def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path,
               src_prefixes, test_prefixes, patch_dir: pathlib.Path | None = None,
               timeout: float = 180.0) -> int:
@@ -80,10 +99,40 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
         print(f"  scan 失败（exit {rc}），停止", file=sys.stderr)
         return rc
 
-    rows = [json.loads(line) for line in (scan_dir / "candidates.jsonl").read_text(
+    cand_file = scan_dir / "candidates.jsonl"
+    if not cand_file.is_file():
+        # 0 个候选时 `scan` 不写这个文件，早期版本在这里直接 `FileNotFoundError` ——
+        # 那个报错把「本仓库没有同时改源码与测试的提交」说成了「文件不存在」，
+        # 读的人会去查磁盘，而真正的原因通常是前缀没匹配。
+        # 实测（副机 L85）：默认前缀 `fastapi/ httpx/ requests/ rich/ src/` 对一个
+        # 源码在 `kernel/`、`project/` 的仓库当然匹配不到。
+        print(f"没有候选：这个仓库里没有任何提交同时改了「{list(src_prefixes)}」下的源码"
+              f"和「{list(test_prefixes)}」下的测试。", file=sys.stderr)
+        print("多半是前缀与仓库布局不匹配 —— 用 --src-prefixes / --test-prefixes 指定。",
+              file=sys.stderr)
+        # 别让人自己去猜布局：直接把这个仓库最近改动过的目录名列出来。
+        hint = _top_dirs(repo)
+        if hint:
+            print(f"  这个仓库最近 300 个提交里，改动最多的顶层目录是：{'、'.join(hint)}",
+                  file=sys.stderr)
+            print(f"  例如：--src-prefixes \"{hint[0]}/\"", file=sys.stderr)
+        return 2
+
+    rows = [json.loads(line) for line in cand_file.read_text(
         encoding="utf-8").splitlines() if line.strip()]
     usable = [r for r in rows if r.get("usable")]
     print(f"  候选 {len(rows)}，可用 {len(usable)}", flush=True)
+
+    if not usable:
+        summary = summarize([])
+        summary.update({"repo": str(repo), "patched": bool(patch_dir)})
+        (out_dir / "summary.json").write_text(
+            json.dumps({"summary": summary, "tasks": []}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
+        (out_dir / "summary.md").write_text(_markdown(summary, []), encoding="utf-8")
+        print(f"  候选 {len(rows)}，但**一道都没通过红→绿两关** —— 这不是通过率 0，是量具没成立。",
+              file=sys.stderr)
+        return 2
 
     tasks = []
     for i, row in enumerate(usable, 1):

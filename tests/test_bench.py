@@ -83,5 +83,50 @@ class TestSummarize(unittest.TestCase):
         self.assertEqual(s["pass_rate_all"], 1.0)
 
 
+class TestTopDirsHint(unittest.TestCase):
+    """「前缀不对」这种报错，光说「不对」没用 —— 得给出「那该填什么」。"""
+
+    def _repo(self, layout):
+        import shutil
+        import subprocess
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        for rel in layout:
+            p = tmp / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("x = 1\n", encoding="utf-8")
+        for argv in (["git", "init", "-q"], ["git", "add", "-A"],
+                     ["git", "-c", "user.name=t", "-c", "user.email=t@t",
+                      "commit", "-q", "-m", "1"]):
+            subprocess.run(argv, cwd=tmp, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL)
+        return tmp
+
+    def test_lists_most_changed_top_dirs(self):
+        repo = self._repo(["pkg/a.py", "pkg/b.py", "pkg/c.py", "tests/test_a.py", "docs/x.md"])
+        got = bench._top_dirs(repo)
+        self.assertEqual(got[0], "pkg", "改动最多的目录应排第一")
+        self.assertIn("tests", got)
+        self.assertNotIn("docs", got, "非 .py 文件不该进来")
+
+    def test_no_candidates_exits_2_with_a_hint(self):
+        import subprocess
+        repo = self._repo(["pkg/a.py", "pkg/b.py", "tests/test_a.py"])
+        out = repo / "out"
+        proc = subprocess.run(
+            [sys.executable, "-X", "utf8", "-B", str(ROOT / "tools" / "bench.py"),
+             "--repo", str(repo), "--python", sys.executable,
+             "--limit", "1", "--out", str(out), "--src-prefixes", "nope/",
+             "--timeout", "30"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=180, stdin=subprocess.DEVNULL)
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("没有候选", proc.stderr)
+        self.assertIn("--src-prefixes", proc.stderr)
+        # 报错里要给出这个仓库的实际布局（否则读的人只能猜）
+        self.assertIn("pkg/", proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
