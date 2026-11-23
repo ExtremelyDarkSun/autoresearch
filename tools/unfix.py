@@ -406,14 +406,23 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                         # 只按「文件名::用例名」比会漏掉类：junit 的 `name` 不含类名，
                         # 而 pytest 输出的 id 是 `path::Class::test`，两边对不上 ——
                         # 实测 8e01d37：绿相位明明 74 passed，却被判「没有一条变成通过」。
+                        # 比对键 = (类名, 用例名)，**不含文件路径**。
+                        # pytest 9 的 junit `file` 会把类名塞进路径（实测
+                        # `tests/test_unfix/TestClassify.py`），而 `FAILED` 行是
+                        # `tests/test_unfix.py::TestClassify::test_x` —— 两者的路径部分根本不同。
+                        # 只留「类 + 用例名」，两边才对得上。
                         def _tkey(x):
                             x = str(x).replace(chr(92), '/')
-                            if '::' in x:
-                                head, *rest = x.split('::')
-                                return (head.split('/')[-1],
-                                        rest[-2] if len(rest) >= 2 else '',
-                                        rest[-1])
-                            return (x.split('/')[-1], '', x)
+                            if '::' not in x:
+                                return ('', x)
+                            head, *rest = x.split('::')
+                            name = rest[-1]
+                            cls = rest[-2] if len(rest) >= 2 else ''
+                            if not cls:
+                                stem = head.split('/')[-1]
+                                stem = stem[:-3] if stem.endswith('.py') else stem
+                                cls = stem if stem[:1].isupper() else ''
+                            return (cls, name)
 
                         gout_short = {_tkey(k): v for k, v in gout.items()}
                         rout_short = {_tkey(k): v for k, v in (_rout or {}).items()}
