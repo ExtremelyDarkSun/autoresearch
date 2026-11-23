@@ -99,6 +99,7 @@ def _top_dirs(repo: pathlib.Path, sample: int = 300, limit: int = 5) -> list[str
 def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path,
               src_prefixes, test_prefixes, patch_dir: pathlib.Path | None = None,
               timeout: float = 180.0, budget_seconds: float = 600.0, only_commits=None,
+              task_budget: float = 240.0,
               tasks_file=None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -182,15 +183,28 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
             break
         task = {"commit": commit, "subject": row.get("subject"), "tests": tests,
                 "usable": True, "fail_to_pass": row.get("fail_to_pass", [])}
+        t_task = time.monotonic()
+        def _left():
+            # 单题预算：挂死一道题不该拖垮整轮。
+            return max(20.0, min(timeout, task_budget - (time.monotonic() - t_task)))
         print(f"[2/3] ({i}/{len(usable)}) {commit} 负控 / 正控", flush=True)
         neg = unfix._capture_run(repo, py, commit, tests, out_dir / f"neg-{commit}",
-                                apply_gold=False, patch=None, timeout=timeout,
+                                apply_gold=False, patch=None, timeout=_left(),
                                 src_prefixes=src_prefixes, test_prefixes=test_prefixes,
                                     # 判绿按题目要的用例，不是整文件：
                                     # 同文件有既有失败时，正确补丁会被误判 failed。
                                     fail_to_pass=task.get("fail_to_pass") or None)
+        # 负控都跑不完，说明这题在旧代码上就是挂死的：再花两个相位等超时没有信息量。
+        if neg.get("status") == "failed" and "挂住" in (neg.get("reason") or ""):
+            task["neg_status"] = "hang"
+            task["gold_status"] = "skipped"
+            task["patch_status"] = None
+            task["skipped"] = "neg_hang"
+            print("        负控挂住：跳过正控与判分", flush=True)
+            tasks.append(task)
+            continue
         gold = unfix._capture_run(repo, py, commit, tests, out_dir / f"gold-{commit}",
-                                 apply_gold=True, patch=None, timeout=timeout,
+                                 apply_gold=True, patch=None, timeout=_left(),
                                  src_prefixes=src_prefixes, test_prefixes=test_prefixes,
                                     # 判绿按题目要的用例，不是整文件：
                                     # 同文件有既有失败时，正确补丁会被误判 failed。
@@ -208,7 +222,7 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
         else:
             print(f"        评补丁 {patch.name}", flush=True)
             got = unfix._capture_run(repo, py, commit, tests, out_dir / f"patch-{commit}",
-                                    apply_gold=False, patch=str(patch), timeout=timeout,
+                                    apply_gold=False, patch=str(patch), timeout=_left(),
                                     src_prefixes=src_prefixes, test_prefixes=test_prefixes,
                                     # 判绿按题目要的用例，不是整文件：
                                     # 同文件有既有失败时，正确补丁会被误判 failed。
@@ -324,6 +338,8 @@ def main(argv=None) -> int:
     ap.add_argument("--test-prefixes", default=None)
     ap.add_argument("--patch-dir", default=None)
     ap.add_argument("--timeout", type=float, default=180.0)
+    ap.add_argument("--task-budget", type=float, default=240.0,
+                    help="单题墙钟上限（秒）：挂死一道题不该拖垮整轮")
     ap.add_argument("--budget-seconds", type=float, default=600.0,
                     help="整轮的时间预算；到点就停手并写出一份部分汇总")
     args = ap.parse_args(argv)
@@ -352,7 +368,7 @@ def main(argv=None) -> int:
     return run_bench(repo, py, args.limit, pathlib.Path(args.out), src_prefixes,
                      test_prefixes,
                      pathlib.Path(args.patch_dir) if args.patch_dir else None,
-                     args.timeout, args.budget_seconds,
+                     args.timeout, args.budget_seconds, task_budget=args.task_budget,
                                 only_commits=args.only_commit, tasks_file=args.tasks)
 
 
