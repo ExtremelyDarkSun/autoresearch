@@ -1027,6 +1027,8 @@ def main(argv=None) -> int:
     s.add_argument("--python", default=None)
     s.add_argument("--src-prefixes", default=None, help="逗号分隔，默认内置几种布局")
     s.add_argument("--test-prefixes", default=None, help="逗号分隔，默认 tests/")
+    s.add_argument("--only-commit", default=None,
+                    help="只验指定提交（逗号分隔，可写短 sha）")
     s.add_argument("--budget-seconds", type=float, default=900.0,
                     help="整轮时间预算；到点就停并写出已有结果（默认 15 分钟）")
 
@@ -1116,7 +1118,9 @@ def main(argv=None) -> int:
         out = pathlib.Path(args.out) if args.out else (repo.parent / f"unfix-sweep-{repo.name}")
         s_test_prefixes = (tuple(args.test_prefixes.split(","))
                            if getattr(args, "test_prefixes", None) else DEFAULT_TEST_PREFIXES)
-        return scan(repo, py, args.limit, out, prefixes, s_test_prefixes)
+        return scan(repo, py, args.limit, out, prefixes, s_test_prefixes,
+                    budget_seconds=args.budget_seconds,
+                    only_commits=getattr(args, "only_commit", None))
 
     repo = pathlib.Path(args.repo).resolve()
     py = pathlib.Path(args.python) if args.python else (repo / ".venv/Scripts/python.exe")
