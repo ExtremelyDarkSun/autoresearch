@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -70,10 +71,14 @@ def sh(argv, cwd=None, timeout=1800):
     **一个没有超时出口的执行器，会把「一道题挂了」变成「整批没跑」。**
     实测：一道 `tests/test_cells.py` 挂住的题，把整批 40 个候选的扫描打断在第 6 个。
     """
+    env = dict(os.environ)
+    # 子进程不要在工作树里留 __pycache__：它会出现在 `git status` 里，
+    # 也会让「跑一次评测」这件事产生被测对象之外的副作用。
+    env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
     try:
         proc = subprocess.run(argv, cwd=str(cwd) if cwd else None, capture_output=True,
                               text=True, encoding="utf-8", errors="replace",
-                              timeout=timeout, stdin=subprocess.DEVNULL)
+                              timeout=timeout, stdin=subprocess.DEVNULL, env=env)
     except subprocess.TimeoutExpired:
         return TIMEOUT_EXIT, "", f"超过 {timeout:g} 秒被中断"
     return proc.returncode, proc.stdout, proc.stderr
@@ -118,6 +123,35 @@ def restore(repo: pathlib.Path) -> None:
     sh(["git", "-C", str(repo), "checkout", "--", "."])
 
 
+def collection_broken_from(output) -> bool:
+    """这次 pytest 输出里有没有「收集阶段就错」。
+
+    为什么要单独判：`--continue-on-collection-errors` 下 pytest 会以 **exit 1** 退出，
+    报告里既有 `ERROR tests/x.py` 也有 `FAILED`。只看退出码会把「测试根本没跑起来」
+    当成「测出失败」——一个桶装两件事。
+
+    也不能只看尾部 3 行：收集错误清单可能很长，真错误在中间。
+    """
+    text = output or ""
+    return bool(re.search(r"^E?RROR\s+\S+", text, flags=re.M)) or "during collection" in text
+
+
+def regression_verdict(rcode: int, new_list) -> tuple[str | None, str | None]:
+    """回归检查的结论。返回 (要改成的状态, 原因)；None 表示「不改变题目本身的结论」。
+
+    四种退出码都吃过亏（`exit 4` 路径不存在、`124` 挂住、`5` 一条没收集到、`2` 收集错误）：
+    它们都会让 `FAILED` 行为空，于是 `new_list` 为空，闸就悄悄放过去了。
+    **回归检查没跑成，等于没查** —— 这时不能再说「题目通过了」。
+    """
+    if rcode in (0, 1):
+        if new_list:
+            return "failed", f"题目测试通过，但相对基线新增 {len(new_list)} 条回归失败：" + "; ".join(new_list[:5])
+        return None, None
+    if rcode == TIMEOUT_EXIT:
+        return "infra_error", f"回归检查在预算内没跑完（挂住，exit {rcode}）—— 等于没查"
+    return "infra_error", f"回归检查没跑成（pytest exit {rcode}）—— 等于没查，不能算通过"
+
+
 def pytest_ids(repo: pathlib.Path, py: pathlib.Path, test_paths, timeout=180):
     if not test_paths:
         return 5, [], "没有测试文件"
@@ -125,7 +159,8 @@ def pytest_ids(repo: pathlib.Path, py: pathlib.Path, test_paths, timeout=180):
                          "-p", "no:cacheprovider"], cwd=repo, timeout=timeout)
     tail = (out or "").strip().splitlines()[-3:]
     ids = sorted(set(re.findall(r"^FAILED (\S+)", out or "", flags=re.M)))
-    return code, ids, " ⏎ ".join(tail)
+    # 第三段之外再带一个「收集坏了吗」的布尔：调用方不该自己再去猜
+    return code, ids, " ⏎ ".join(tail), collection_broken_from(out)
 
 
 def changed_files(repo: pathlib.Path, commit: str, src_prefixes,
@@ -184,13 +219,12 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                 if code != 0:
                     rec["why"] = f"退回源码失败：{e[:120]}"
                 else:
-                    rc, rids, rtail = pytest_ids(repo, py, cand["test_files"])
+                    rc, rids, rtail, rbroken = pytest_ids(repo, py, cand["test_files"])
                     rec["red"] = {"exit": rc, "failed_ids": rids, "tail": rtail}
                     git(repo, "checkout", "HEAD", "--", *cand["src_files"])
-                    gc, gids, gtail = pytest_ids(repo, py, cand["test_files"])
+                    gc, gids, gtail, _gbroken = pytest_ids(repo, py, cand["test_files"])
                     rec["green"] = {"exit": gc, "failed_ids": gids, "tail": gtail}
-                    broken = "during collection" in (rtail or "")
-                    usable, why = classify(rc, gc, rids, broken)
+                    usable, why = classify(rc, gc, rids, rbroken)
                     rec["usable"] = usable
                     rec["why"] = why
                     if usable and rc == TIMEOUT_EXIT:
@@ -321,11 +355,10 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
                 "known_failures": sorted(known_failures),
                 "tail": " ⏎ ".join((rout or "").strip().splitlines()[-3:]),
             }
-            if new_list:
-                # 题目过了、别处坏了 —— 这不是通过，是**回归**
-                return finish("failed",
-                              f"题目测试通过，但相对基线新增 {len(new_list)} 条回归失败："
-                              + "; ".join(new_list[:5]))
+            verdict, why = regression_verdict(rcode, new_list)
+            if verdict:
+                # 两种都算「题目不能判通过」：真回归 / 回归检查没跑成
+                return finish(verdict, why)
     finally:
         restore(repo)
 

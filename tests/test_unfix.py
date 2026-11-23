@@ -232,5 +232,65 @@ class TestScanSmoke(unittest.TestCase):
         self.assertTrue(rows[0]["usable"], rows[0]["why"])
 
 
+
+class TestRegressionVerdict(unittest.TestCase):
+    """回归检查没跑成，等于没查 —— 这时不许说「题目通过了」。
+
+    四种退出码都吃过亏（4 路径不存在 / 124 挂住 / 5 一条没收集到 / 2 收集错误）：
+    它们让 FAILED 行为空，new_list 就为空，闸悄悄放过。
+    dca9116 之前的实测：status='passed'，而 steps.regression.exit=4。
+    """
+
+    def test_clean_run_without_new_failures_keeps_task_verdict(self):
+        self.assertEqual(unfix.regression_verdict(0, []), (None, None))
+        self.assertEqual(unfix.regression_verdict(1, []), (None, None))
+
+    def test_new_failures_mean_regression(self):
+        status, why = unfix.regression_verdict(1, ["tests/b.py::u"])
+        self.assertEqual(status, "failed")
+        self.assertIn("新增 1 条回归失败", why)
+        self.assertIn("tests/b.py::u", why)
+
+    def test_path_not_found_is_infra_error(self):
+        status, why = unfix.regression_verdict(4, [])
+        self.assertEqual(status, "infra_error")
+        self.assertIn("没跑成", why)
+
+    def test_hang_is_infra_error(self):
+        status, why = unfix.regression_verdict(unfix.TIMEOUT_EXIT, [])
+        self.assertEqual(status, "infra_error")
+        self.assertIn("挂住", why)
+
+    def test_zero_collected_is_infra_error(self):
+        self.assertEqual(unfix.regression_verdict(5, [])[0], "infra_error")
+        self.assertEqual(unfix.regression_verdict(2, [])[0], "infra_error")
+        self.assertEqual(unfix.regression_verdict(3, [])[0], "infra_error")
+
+
+class TestCollectionBroken(unittest.TestCase):
+    """exit 1 也可能是「收集阶段就错」—— 一个桶装两件事。"""
+
+    def test_error_line_means_broken(self):
+        out = "ERROR tests/test_x.py - ImportError\n\n1 failed, 2 passed in 0.10s\n"
+        self.assertTrue(unfix.collection_broken_from(out))
+
+    def test_during_collection_phrase_means_broken(self):
+        self.assertTrue(unfix.collection_broken_from(
+            "!!!!!!!!!!! Interrupted: 6 errors during collection !!!!!!!!!!!"))
+
+    def test_plain_failures_are_not_broken(self):
+        out = "FAILED tests/a.py::test_x - assert False\n1 failed in 0.10s\n"
+        self.assertFalse(unfix.collection_broken_from(out))
+
+    def test_empty_output_is_not_broken(self):
+        self.assertFalse(unfix.collection_broken_from(""))
+        self.assertFalse(unfix.collection_broken_from(None))
+
+    def test_error_word_inside_a_test_name_does_not_count(self):
+        """ERROR 必须是行首（^ERROR <path>），不能因为用例名里带 ERROR 就误判。"""
+        out = "FAILED tests/a.py::test_ERROR_handling - assert False\n"
+        self.assertFalse(unfix.collection_broken_from(out))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

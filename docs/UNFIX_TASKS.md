@@ -116,7 +116,11 @@ python -X utf8 -B tools/unfix.py run --repo <r> --commit <sha> --tests tests/x.p
 1. **不能要求回归全绿**。很多仓库基线本身就有失败（rich 在本机是 `7 failed / 976 passed`，
    与 pygments、终端有关的既有问题）。所以比的是「**相对基线有没有新增**」，
    `--known-failures` 就是基线那批已知失败。
-2. **用例 id 必须归一化路径分隔符再比**。pytest 在 Windows 上打 `tests\a.py::t`，
+2. **回归检查没跑成，等于没查**。四种退出码都吃过亏：`4`（路径不存在）、`124`（挂住）、
+   `5`（一条没收集到）、`2`（收集错误）。它们都让 `FAILED` 行为空，于是「新增 0 条」、
+   闸悄悄放过 —— 实测 `status='passed'` 而 `steps.regression.exit=4`。
+   现在这些一律判 `infra_error`，reason 写清「等于没查，不能算通过」。
+3. **用例 id 必须归一化路径分隔符再比**。pytest 在 Windows 上打 `tests\a.py::t`，
    人和文档写 `tests/a.py::t`。不归一化时每条已知失败都被算成新增，**闸永远红 ——
    一个永远红的闸等于没有闸**。
 
