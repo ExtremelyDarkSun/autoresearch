@@ -312,6 +312,35 @@ python -X utf8 -B research.py results runs\run1\task_results.jsonl
 
 **`doctor` 一直显示 `evaluation.can_run: false` 就是这个原因，不是装错了。**
 
+### 6.1 这四样到底缺哪几样？跑一条命令
+
+上表是分类，不是检查。要把「缺什么」变成可执行的结果，用**人件就绪门**：
+
+```powershell
+python -X utf8 -B tools\preflight.py `
+    --tasklist D:\work\tasks.jsonl `
+    --profile profiles\my-run `
+    --data-dir D:\work\data `
+    --kaggle $env:USERPROFILE\.kaggle\kaggle.json `
+    --ssh-dir $env:USERPROFILE\.ssh `
+    --autodl-file D:\work\secrets\autodl-token.txt `
+    --authorization D:\work\HUMAN-EVAL-AUTHORIZATION.md
+```
+
+四项检查，每项给 ✓/✗ 加一句「下一步」：
+
+| 项 | 查什么 |
+|---|---|
+| A 题单 | 存在、可解析、非空、**不是**随仓库分发的示例题单 |
+| B 执行器 | profile 能读、`can_run=true`、命令里没有 stub/placeholder 字样 |
+| C 数据与访问权 | 数据目录非空；Kaggle / AutoDL 文件存在且非空；SSH 有非空 `id_*` 私钥 |
+| D 预算授权 | 授权文件里四个标签齐：预算上限 / 授权人 / 有效期 / 允许提交 |
+
+**它只查形状**：不读凭据内容、不发网络请求、不放行任何评测。退出码 4/4 为 0，否则 2。
+
+**0/4 是常态，4/4 也不等于放行。** 4/4 只说「材料齐了」——真开跑仍需人明确表态。
+看到 ✗ 不要以为是程序坏了，那是它在如实说「还差人」。
+
 ---
 
 ## 附：六个必踩的坑
