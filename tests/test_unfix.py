@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import subprocess
 import sys
 import unittest
 
@@ -25,6 +26,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 import unfix  # noqa: E402
+import make_loop_fixture  # noqa: E402
 
 
 class TestClassify(unittest.TestCase):
@@ -1257,5 +1259,20 @@ class TestAuditRows(unittest.TestCase):
         self.assertTrue(rows[0]['usable'], rows[0])
         self.assertEqual(rows[0]['fail_to_pass'], ['tests/test_f.py::test_a'])
 
+class TestLoopFixture(unittest.TestCase):
+    """闭环夹具：先用三份已知答案把判分器钉住，再让模型做题。"""
+
+    def test_fixture_builds_two_commits_and_three_answers(self):
+        import shutil
+        import tempfile
+        dest = pathlib.Path(tempfile.mkdtemp(prefix="loop-fx-")) / "task"
+        self.addCleanup(shutil.rmtree, dest.parent, ignore_errors=True)
+        info = make_loop_fixture.build(dest)
+        self.assertNotEqual(info["c1"], info["c2"], "必须有两个提交，否则 run_one 退不回父提交")
+        for name in ("mod.py", "tests/test_double.py", "good.patch", "cheat.patch"):
+            self.assertTrue((dest / name).is_file(), name)
+        log = subprocess.run(["git", "-C", str(dest), "rev-list", "--count", "HEAD"],
+                             capture_output=True, text=True).stdout.strip()
+        self.assertEqual(log, "2")
 if __name__ == "__main__":
     unittest.main(verbosity=2)
