@@ -324,6 +324,12 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                 if code != 0:
                     rec["why"] = f"退回源码失败：{e[:120]}"
                 else:
+                    # **测试也要退回该提交自己的版本**，不能留 HEAD 的。
+                    #
+                    # 实测（夹具 attrib2）：c2 只改 f()，c3 之后又加了一条 test_later_added；
+                    # 留 HEAD 的测试会让 c2 的 fail_to_pass 里出现 c3 才写的用例 ——
+                    # **c2 冒领了 c3 的测试**，红→绿字面成立、归因不成立。
+                    git(repo, "checkout", cand["commit"], "--", *cand["test_files"])
                     rc, rids, rtail, rbroken, rstats = pytest_ids(
                         repo, py, cand["test_files"], tag="red")
                     rec["red"] = {"exit": rc, "failed_ids": rids, "tail": rtail}
@@ -331,6 +337,8 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                     gc, gids, gtail, _gbroken, gstats = pytest_ids(
                         repo, py, cand["test_files"], tag="green")
                     rec["green"] = {"exit": gc, "failed_ids": gids, "tail": gtail}
+                    # 收尾：把测试文件恢复到 HEAD，别把工作树留给下一个人
+                    git(repo, "checkout", "HEAD", "--", *cand["test_files"])
                     usable, why = classify(rc, gc, rids, rbroken,
                                            red_stats=rstats, green_stats=gstats)
                     rec["usable"] = usable

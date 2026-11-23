@@ -1158,5 +1158,58 @@ class TestAuditRows(unittest.TestCase):
         self.assertTrue(rows)
         self.assertEqual(rows[0].get('judge_version'), unfix.JUDGE_VERSION)
 
+
+    def test_scan_does_not_claim_later_tests(self):
+        """归因：一道题只能认领**它自己那次提交里**的测试。
+
+        实测（夹具 attrib2）：c2 只改了 `f()`，之后 c3 又加了一条
+        `test_later_added`（它恰好也被 c2 满足）。旧实现把 HEAD 的测试当成 c2 的测试，
+        于是 c2 的 `fail_to_pass` 里出现了 c3 才写的用例 —— **c2 冒领了 c3 的测试**，
+        红→绿字面成立、归因不成立。
+
+        修法：红/绿相位都先把测试文件 checkout 到 `commit` 自己的版本。
+        """
+        import shutil
+        import subprocess
+        import tempfile
+        repo = pathlib.Path(tempfile.mkdtemp(prefix='unfix-attrib-'))
+        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+        (repo / 'tests').mkdir()
+
+        def git(*args):
+            subprocess.run(['git', '-C', str(repo), *args], capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL)
+
+        def commit(msg):
+            git('add', '-A')
+            git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', msg)
+
+        git('init', '-q')
+        (repo / 'mod.py').write_text('def f():' + chr(10) + '    return 1' + chr(10), encoding='utf-8')
+        (repo / 'tests' / 'test_f.py').write_text(
+            'from mod import f' + chr(10) + chr(10) + 'def test_a():' + chr(10)
+            + '    assert f() == 1' + chr(10), encoding='utf-8')
+        commit('c1')
+        (repo / 'mod.py').write_text('def f():' + chr(10) + '    return 2' + chr(10), encoding='utf-8')
+        (repo / 'tests' / 'test_f.py').write_text(
+            'from mod import f' + chr(10) + chr(10) + 'def test_a():' + chr(10)
+            + '    assert f() == 2' + chr(10), encoding='utf-8')
+        commit('c2 the task')
+        (repo / 'mod.py').write_text('def f():' + chr(10) + '    return 2' + chr(10) + '# c3' + chr(10),
+                                     encoding='utf-8')
+        (repo / 'tests' / 'test_f.py').write_text(
+            'from mod import f' + chr(10) + chr(10) + 'def test_a():' + chr(10)
+            + '    assert f() == 2' + chr(10) + chr(10) + chr(10) + 'def test_later_added():' + chr(10)
+            + '    assert f() == 2' + chr(10), encoding='utf-8')
+        commit('c3 adds a test that c2 already satisfies')
+
+        self.assertEqual(unfix.scan(repo, pathlib.Path(sys.executable), 2, repo / 'scan',
+                                    ('mod.py',), ('tests/',)), 0)
+        rows = [json.loads(x) for x in (repo / 'scan' / 'candidates.jsonl').read_text(
+            encoding='utf-8').splitlines() if x.strip()]
+        c2 = [r for r in rows if r['subject'].startswith('c2')][0]
+        self.assertEqual(c2['fail_to_pass'], ['tests/test_f.py::test_a'],
+                         'c2 不能认领 c3 才写的 test_later_added')
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
