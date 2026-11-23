@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
 import unittest
@@ -181,6 +182,62 @@ class TestNoPatchVsInfraError(unittest.TestCase):
         self.assertIn("没有任何文件匹配", proc.stderr)
         self.assertIn("<commit>.patch", proc.stderr)
 
+
+
+
+class TestBudgetGate(unittest.TestCase):
+    """时间预算：到点停手，并且**写出一份部分汇总**。
+
+    为什么要有它：实测一次服务端任务被 14 分钟上限掐掉，一份报告都没留下 ——
+    「没做」和「做了被杀」在读数里完全一样。硬跑到底的代价不是慢，是**什么都没有**。
+    """
+
+    def test_skipped_tasks_do_not_count_as_usable(self):
+        tasks = [dict(_task(), skipped="budget"), _task()]
+        s = bench.summarize(tasks)
+        self.assertEqual(s["usable"], 1, "因预算跳过的题不进分母")
+        self.assertEqual(s["patch_scored"], 1)
+
+    def test_zero_budget_stops_immediately_but_still_writes_a_summary(self):
+        import shutil
+        import subprocess
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix='bench-budget-'))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+
+        def git(*args):
+            subprocess.run(['git', '-C', str(tmp), *args], capture_output=True,
+                           stdin=subprocess.DEVNULL)
+
+        (tmp / 'pkg').mkdir()
+        (tmp / 'tests').mkdir()
+        git('init', '-q')
+        (tmp / 'pkg' / 'm.py').write_text('def f():' + chr(10) + '    return 1' + chr(10), encoding='utf-8')
+        (tmp / 'tests' / 'test_m.py').write_text(
+            'from pkg.m import f' + chr(10) * 3 + 'def test_f():' + chr(10) + '    assert f() == 1' + chr(10), encoding='utf-8')
+        git('add', '-A')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', '1')
+        (tmp / 'pkg' / 'm.py').write_text('def f():' + chr(10) + '    return 2' + chr(10), encoding='utf-8')
+        (tmp / 'tests' / 'test_m.py').write_text(
+            'from pkg.m import f' + chr(10) * 3 + 'def test_f():' + chr(10) + '    assert f() == 2' + chr(10), encoding='utf-8')
+        git('add', '-A')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', '2')
+
+        out = tmp / 'out'
+        proc = subprocess.run(
+            [sys.executable, '-X', 'utf8', '-B', str(ROOT / 'tools' / 'bench.py'),
+             '--repo', str(tmp), '--python', sys.executable, '--limit', '1',
+             '--out', str(out), '--src-prefixes', 'pkg/', '--timeout', '60',
+             '--budget-seconds', '0'],
+            capture_output=True, text=True, encoding='utf-8', errors='replace',
+            timeout=300, stdin=subprocess.DEVNULL)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue((out / 'summary.json').is_file(), '预算用尽也必须写汇总')
+        summary = json.loads((out / 'summary.json').read_text(encoding='utf-8'))['summary']
+        self.assertTrue(summary["stopped_early"])
+        self.assertEqual(summary["skipped_budget"], 1)
+        self.assertEqual(summary["usable"], 0)
+        self.assertIn("因时间预算停止", (out / "summary.md").read_text(encoding="utf-8"))
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

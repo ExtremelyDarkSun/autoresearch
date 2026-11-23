@@ -21,6 +21,7 @@ import argparse
 import json
 import pathlib
 import sys
+import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
@@ -41,7 +42,7 @@ def summarize(tasks: list[dict]) -> dict:
     **一个桶装两件事的地方，就是把两个都写出来。**
     """
     total = len(tasks)
-    usable = [t for t in tasks if t.get("usable")]
+    usable = [t for t in tasks if t.get("usable") and not t.get("skipped")]
     neg_ok = [t for t in usable if t.get("neg_status") == "failed"]
     gold_ok = [t for t in usable if t.get("gold_status") == "passed"]
     scored = [t for t in usable if t.get("patch_status") in ("passed", "failed")]
@@ -97,7 +98,7 @@ def _top_dirs(repo: pathlib.Path, sample: int = 300, limit: int = 5) -> list[str
 
 def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path,
               src_prefixes, test_prefixes, patch_dir: pathlib.Path | None = None,
-              timeout: float = 180.0) -> int:
+              timeout: float = 180.0, budget_seconds: float = 600.0) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     scan_dir = out_dir / "scan"
     print(f"[1/3] 造题与验证（limit={limit}）", flush=True)
@@ -142,9 +143,22 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
         return 2
 
     tasks = []
+    t_start = time.monotonic()
+    stopped = False
     for i, row in enumerate(usable, 1):
         commit = row["commit"]
         tests = row["test_files"]
+        # 预算闸：到点就停，并且**写出一份部分汇总**。
+        # 硬跑到底的代价不是慢，是**一旦被杀就什么都没有**（实测被 14 分钟上限掐掉，零产出）。
+        if budget_seconds is not None and (time.monotonic() - t_start) > budget_seconds:
+            stopped = True
+            for rest in usable[i - 1:]:
+                tasks.append({"commit": rest["commit"], "subject": rest.get("subject"),
+                              "tests": rest.get("test_files", []), "usable": True,
+                              "skipped": "budget", "patch_status": None})
+            print(f"  预算用尽（>{budget_seconds:g}s）：剩 {len(usable) - i + 1} 道没跑，照常写部分汇总",
+                  file=sys.stderr)
+            break
         task = {"commit": commit, "subject": row.get("subject"), "tests": tests,
                 "usable": True, "fail_to_pass": row.get("fail_to_pass", [])}
         print(f"[2/3] ({i}/{len(usable)}) {commit} 负控 / 正控", flush=True)
@@ -174,6 +188,9 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
         tasks.append(task)
 
     summary = summarize(tasks)
+    summary["budget_seconds"] = budget_seconds
+    summary["skipped_budget"] = sum(1 for x in tasks if x.get("skipped") == "budget")
+    summary["stopped_early"] = bool(stopped)
 
     if patch_dir and summary["patch_scored"] == 0 and summary["no_patch"] == summary["usable"]:
         # 这不是「一道都没做出来」，是**一个补丁文件都没匹配上**。
@@ -202,9 +219,12 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
 
 
 def _markdown(summary: dict, tasks: list[dict]) -> str:
-    lines = [
-        "# 一轮小型评测：读数与口径",
-        "",
+    lines = ["# 一轮小型评测：读数与口径", ""]
+    if summary.get("stopped_early"):
+        lines += [f"> **这一轮因时间预算停止**：跑了 {summary['usable']} 道，"
+                  f"另有 {summary['skipped_budget']} 道没跑（`skipped=budget`）。",
+                  "> 部分读数也是读数 —— 比什么都没有强。", ""]
+    lines += [
         f"- 仓库：`{summary['repo']}`",
         f"- 可用题：**{summary['usable']}**（候选里过了红→绿两关的）",
         f"- 负控（不打补丁应红）：**{summary['neg_control_failed']}/{summary['usable']}**",
@@ -245,6 +265,8 @@ def main(argv=None) -> int:
     ap.add_argument("--test-prefixes", default=None)
     ap.add_argument("--patch-dir", default=None)
     ap.add_argument("--timeout", type=float, default=180.0)
+    ap.add_argument("--budget-seconds", type=float, default=600.0,
+                    help="整轮的时间预算；到点就停手并写出一份部分汇总")
     args = ap.parse_args(argv)
 
     repo = pathlib.Path(args.repo).resolve()
@@ -260,7 +282,7 @@ def main(argv=None) -> int:
     return run_bench(repo, py, args.limit, pathlib.Path(args.out), src_prefixes,
                      test_prefixes,
                      pathlib.Path(args.patch_dir) if args.patch_dir else None,
-                     args.timeout)
+                     args.timeout, args.budget_seconds)
 
 
 if __name__ == "__main__":
