@@ -91,5 +91,38 @@ class TestTimeoutExit(unittest.TestCase):
         self.assertEqual(unfix.TIMEOUT_EXIT, 124)
 
 
+class TestLayoutPrefixes(unittest.TestCase):
+    """源码/测试目录前缀是**假设**，不是事实。
+
+    实测踩到：测试放在根目录的仓库，工具报「该提交没有测试改动」——
+    而真正的原因是前缀没匹配。**原因写错了，等于把人引到错的方向。**
+    """
+
+    def _repo(self) -> pathlib.Path:
+        import subprocess
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        (tmp / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (tmp / "test_mod.py").write_text("def test_a():\n    pass\n", encoding="utf-8")
+        for argv in (["git", "init", "-q"], ["git", "add", "-A"],
+                     ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x"]):
+            subprocess.run(argv, cwd=tmp, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL)
+        return tmp
+
+    def test_default_prefixes_miss_flat_layout(self):
+        repo = self._repo()
+        src, tests = unfix.changed_files(repo, "HEAD", unfix.DEFAULT_SRC_PREFIXES)
+        self.assertEqual(src, [])
+        self.assertEqual(tests, [], "根目录的 test_mod.py 不属于默认的 tests/ 前缀")
+
+    def test_explicit_prefixes_pick_it_up(self):
+        repo = self._repo()
+        src, tests = unfix.changed_files(repo, "HEAD", ("mod.py",), ("test_",))
+        self.assertEqual(src, ["mod.py"])
+        self.assertEqual(tests, ["test_mod.py"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

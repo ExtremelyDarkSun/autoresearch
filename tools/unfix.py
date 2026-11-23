@@ -57,7 +57,10 @@ import time
 
 #: 源码目录前缀。不同仓库布局不同（`fastapi/` 平铺、`src/` 型、`rich/` 型）。
 DEFAULT_SRC_PREFIXES = ("fastapi/", "httpx/", "requests/", "rich/", "src/")
-TEST_PREFIXES = ("tests/",)
+#: 测试目录前缀。同样是**假设**：有的仓库把测试放在 `tests/`，有的放在根目录或 `test/`。
+#: 实测：一个测试放在根目录的仓库，工具报「该提交没有测试改动」—— 而真正的原因是前缀没匹配，
+#: 不是提交没改测试。**原因写错了，等于把人引到错的方向。**
+DEFAULT_TEST_PREFIXES = ("tests/",)
 TIMEOUT_EXIT = 124
 
 
@@ -125,13 +128,14 @@ def pytest_ids(repo: pathlib.Path, py: pathlib.Path, test_paths, timeout=180):
     return code, ids, " ⏎ ".join(tail)
 
 
-def changed_files(repo: pathlib.Path, commit: str, src_prefixes) -> tuple[list[str], list[str]]:
+def changed_files(repo: pathlib.Path, commit: str, src_prefixes,
+                  test_prefixes=DEFAULT_TEST_PREFIXES) -> tuple[list[str], list[str]]:
     code, out, err = git(repo, "show", "--name-only", "--format=", commit)
     if code != 0:
         raise SystemExit(f"读不到提交 {commit}：{err[:160]}")
     files = [ln for ln in out.splitlines() if ln.strip()]
     src = [f for f in files if f.startswith(tuple(src_prefixes))]
-    tests = [f for f in files if f.startswith(TEST_PREFIXES)]
+    tests = [f for f in files if f.startswith(tuple(test_prefixes))]
     return src, tests
 
 
@@ -215,7 +219,7 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
 
 def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
             out_dir: pathlib.Path, apply_gold: bool, patch: str | None,
-            timeout: float, src_prefixes) -> int:
+            timeout: float, src_prefixes, test_prefixes=DEFAULT_TEST_PREFIXES) -> int:
     started = time.monotonic()
     res = {"task_id": commit, "reason": None, "notes": None, "status": "infra_error",
            "duration_seconds": None, "steps": {}}
@@ -235,11 +239,15 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
     if dirty:
         return finish("infra_error", "工作树不干净（跟踪文件有改动），先清理")
 
-    src, tests_changed = changed_files(repo, commit, src_prefixes)
+    src, tests_changed = changed_files(repo, commit, src_prefixes, test_prefixes)
     if not src:
-        return finish("infra_error", "该提交没有源码改动，不能当反解题")
+        return finish("infra_error",
+                      f"该提交里没有文件匹配源码前缀 {list(src_prefixes)}；"
+                      f"若这个仓库布局不同，用 --src-prefixes 指定")
     if not tests_changed:
-        return finish("infra_error", "该提交没有测试改动，反解不出 fail-to-pass")
+        return finish("infra_error",
+                      f"该提交里没有文件匹配测试前缀 {list(test_prefixes)}，反解不出 fail-to-pass；"
+                      f"若测试不在这些目录下，用 --test-prefixes 指定")
 
     # 跑之前先对齐「你传的测试文件」与「这个提交改的测试文件」。
     #
@@ -315,6 +323,7 @@ def main(argv=None) -> int:
     r.add_argument("--patch", default=None)
     r.add_argument("--timeout", type=float, default=120.0)
     r.add_argument("--src-prefixes", default=None)
+    r.add_argument("--test-prefixes", default=None, help="逗号分隔，默认 tests/")
 
     ap.add_argument("--selftest", action="store_true", help="跑判据的单元测试")
 
@@ -335,8 +344,10 @@ def main(argv=None) -> int:
 
     repo = pathlib.Path(args.repo).resolve()
     py = pathlib.Path(args.python) if args.python else (repo / ".venv/Scripts/python.exe")
+    test_prefixes = (tuple(args.test_prefixes.split(",")) if getattr(args, "test_prefixes", None)
+                     else DEFAULT_TEST_PREFIXES)
     return run_one(repo, py, args.commit, args.tests, pathlib.Path(args.out),
-                   args.apply_gold, args.patch, args.timeout, prefixes)
+                   args.apply_gold, args.patch, args.timeout, prefixes, test_prefixes)
 
 
 if __name__ == "__main__":
