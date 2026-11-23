@@ -307,5 +307,54 @@ class TestStudyRound(unittest.TestCase):
         self.assertTrue(rep["ok"], rep)
         self.assertEqual(rep["patch_scored"], 0, rep)
         self.assertIsNone(rep["pass_rate_scored"], "没评必须是 None，不是 0.0")
+class TestTaskBudgetAndHang(unittest.TestCase):
+    """一道挂死的题不该拖垮整轮，也不该把读数搅浑。"""
+
+    def test_neg_hang_skips_remaining_phases(self):
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="hang-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo = tmp / "repo"
+        (repo / "tests").mkdir(parents=True)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repo), *args],
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+        def commit(msg):
+            git("add", "-A")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg)
+
+        git("init", "-q")
+        # 红相位会挂死：目标用例里 sleep 很久
+        (repo / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(
+            "import time\nfrom mod import f\n\n\ndef test_target():\n    time.sleep(30)\n    assert f() == 2\n",
+            encoding="utf-8")
+        commit("c1")
+        (repo / "mod.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(
+            "import time\nfrom mod import f\n\n\ndef test_target():\n    time.sleep(30)\n    assert f() == 2\n\n# c2\n",
+            encoding="utf-8")
+        commit("c2")
+
+        sha = git("rev-parse", "--short", "HEAD").stdout.strip()
+        tasks = tmp / "tasks.jsonl"
+        tasks.write_text(
+            json.dumps({"task_id": "x", "repo": str(repo), "commit": sha,
+                        "test_files": ["tests/test_m.py"],
+                        "fail_to_pass": ["tests/test_m.py::test_target"]}) + "\n",
+            encoding="utf-8")
+
+        rc = bench.run_bench(repo, pathlib.Path(sys.executable), 1, tmp / "out",
+                             ("mod.py",), ("tests/",), timeout=2.0,
+                             budget_seconds=120.0, tasks_file=str(tasks),
+                             task_budget=20.0)
+        self.assertEqual(rc, 0)
+        summary = json.loads((tmp / "out" / "summary.json").read_text(encoding="utf-8"))
+        task = summary["tasks"][0]
+        self.assertEqual(task.get("skipped"), "neg_hang", task)
+        self.assertIsNone(task.get("patch_status"), task)
 if __name__ == "__main__":
     unittest.main(verbosity=2)

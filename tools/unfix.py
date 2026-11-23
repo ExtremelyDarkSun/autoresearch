@@ -696,7 +696,14 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
         return finish("infra_error", f"找不到解释器：{py}")
     code, dirty, _ = git(repo, "status", "--porcelain", "--untracked-files=no")
     if dirty:
-        return finish("infra_error", "工作树不干净（跟踪文件有改动），先清理")
+        # **把是哪些文件列出来**：只报「不干净」时，人会以为是这道题坏了。
+        # 实测：上一轮被打断的 bench 把 `rich/cells.py` 留在暂存区，
+        # 之后每一道题都被判「工作树不干净」——看起来像三道具坏了。
+        files = "、".join(line.split(maxsplit=1)[-1] for line in dirty.splitlines()[:5])
+        more = f" 等 {len(dirty.splitlines())} 处" if len(dirty.splitlines()) > 5 else ""
+        return finish("infra_error",
+                      f"工作树不干净（跟踪文件有改动）：{files}{more}。"
+                      f"先 `git restore --staged --worktree .` 或 `git checkout -- .` 再跑")
 
     # **HEAD 闸**：工作树 HEAD 必须就是 `--commit`，否则红相位会混用两个版本。
     # 实测（副机 L107）：`--commit 4e4ab38` 而工作树在 HEAD 时，红相位是
