@@ -1005,5 +1005,51 @@ class TestClassifySkipped(unittest.TestCase):
                                      red_stats=red, green_stats=green)
         self.assertTrue(usable, why)
 
+
+    def test_conditional_skip_is_not_usable(self):
+        """副机 L95 找到的更刁的形状：红相位失败、绿相位**跳过**。
+
+        测试写成「源码看起来修好了就 skip」。于是：红相位（buggy 源码）`1 failed`，
+        绿相位（修好的源码）`1 skipped`。`classify(red=1, green=0, ids 非空)` 正好落进
+        「红→绿成立」，把一道**测不出东西**的题收进题集。
+
+        这条用例走真 `scan`（不只是纯函数），因为漏的是「stats 有没有从 pytest_ids
+        传到 classify」这段管线。
+        """
+        import shutil
+        import subprocess
+        import tempfile
+        repo = pathlib.Path(tempfile.mkdtemp(prefix='unfix-condskip-'))
+        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+        (repo / 'tests').mkdir()
+        body = ('import pytest' + chr(10) + 'from mod import target' + chr(10) + chr(10) + chr(10)
+                + 'def test_target():' + chr(10)
+                + '    if target() == 4:' + chr(10)
+                + "        pytest.skip('x')" + chr(10)
+                + '    assert target() == 4' + chr(10))
+        (repo / 'mod.py').write_text('def target():' + chr(10) + '    return 1' + chr(10), encoding='utf-8')
+        (repo / 'tests' / 'test_mod.py').write_text(body, encoding='utf-8')
+
+        def git(*args):
+            subprocess.run(['git', '-C', str(repo), *args], capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL)
+
+        git('init', '-q')
+        git('add', '-A')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', '1')
+        (repo / 'mod.py').write_text('def target():' + chr(10) + '    return 4' + chr(10), encoding='utf-8')
+        (repo / 'tests' / 'test_mod.py').write_text(body + '# c2' + chr(10), encoding='utf-8')
+        git('add', '-A')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', '2')
+
+        rc = unfix.scan(repo, pathlib.Path(sys.executable), 1, repo / 'scan',
+                        ('mod.py',), ('tests/',))
+        self.assertEqual(rc, 0)
+        rows = [json.loads(x) for x in (repo / 'scan' / 'candidates.jsonl').read_text(
+            encoding='utf-8').splitlines() if x.strip()]
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(rows[0]['usable'], rows[0])
+        self.assertIn('跳过不等于通过', rows[0]['why'])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
