@@ -235,9 +235,25 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
     if dirty:
         return finish("infra_error", "工作树不干净（跟踪文件有改动），先清理")
 
-    src, _ = changed_files(repo, commit, src_prefixes)
+    src, tests_changed = changed_files(repo, commit, src_prefixes)
     if not src:
         return finish("infra_error", "该提交没有源码改动，不能当反解题")
+    if not tests_changed:
+        return finish("infra_error", "该提交没有测试改动，反解不出 fail-to-pass")
+
+    # 跑之前先对齐「你传的测试文件」与「这个提交改的测试文件」。
+    #
+    # 为什么必须查：传错测试文件时，**退回源码后那些测试照样全过**，于是正控负控都绿，
+    # 一道根本不成立的题看起来完全正常 —— 这是题集层面的假绿。
+    # 实测踩到：`648ceda2` 改的是 `tests/test_file_proxy.py`，我传了 `tests/test_cells.py`，
+    # 负控直接 passed。
+    wanted = {pathlib.PurePosixPath(p).as_posix() for p in tests_changed}
+    given = {pathlib.PurePosixPath(p).as_posix() for p in tests}
+    if not (wanted & given):
+        return finish(
+            "infra_error",
+            f"传给 --tests 的文件与这个提交改的测试文件不相交；"
+            f"这个提交改的是：{'、'.join(sorted(wanted))}")
 
     try:
         code, _, err = git(repo, "checkout", f"{commit}^", "--", *src)
