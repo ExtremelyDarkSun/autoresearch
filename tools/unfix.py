@@ -462,8 +462,12 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                         skipped_targets = [t for t in red_ids_norm
                                            if gout_short.get(test_key(t)) == 'skipped']
                         # 回归：红相位**通过**的用例，绿相位不许变成失败
+                        # 注意：`rout_short` 的 key **已经是**归一化过的 (类名, 用例名)，
+                        # 不能再 `test_key(k)` 一次 —— 那会把元组转成字符串再拆，得到的键永远匹配不上，
+                        # 于是 regressions 恒为空、targets_ok 恒为 True。
+                        # 实测：rich `4ca56966` 修好一条、弄坏同文件另 3 条，却被判 usable=True。
                         regressions = [k for k, v in rout_short.items()
-                                       if v == 'passed' and gout_short.get(test_key(k)) == 'failed']
+                                       if v == 'passed' and gout_short.get(k) == 'failed']
                         rec["fail_to_pass"] = f2p
                         rec["green"]["targets_ok"] = bool(f2p) and not regressions
                         if f2p and not regressions:
