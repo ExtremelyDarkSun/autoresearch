@@ -407,6 +407,32 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
     return finish("infra_error", f"不是「没通过」，是没测成（pytest exit {code}）：{tail}")
 
 
+def _capture_run(repo, py, commit, tests, out_dir, apply_gold=False, patch=None,
+                 timeout=180.0, src_prefixes=DEFAULT_SRC_PREFIXES,
+                 test_prefixes=DEFAULT_TEST_PREFIXES, regression_tests=None,
+                 known_failures=()):
+    """跑一道题并**返回记录**（而不是打印 + 退码）。给 `bench.py` 用。
+
+    刻意复用 `run_one`：这样 bench 与 CLI 走的是同一条路径，不会出现「两套评分逻辑各修各的」
+    ——那种分叉在两周后一定会变成两个数字对不上。
+
+    副作用只有两个，都在 out_dir 里：`<commit>.json` 与 pytest 的临时文件。
+    """
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        run_one(repo, py, commit, tests, pathlib.Path(out_dir),
+                apply_gold=apply_gold, patch=patch, timeout=timeout,
+                src_prefixes=src_prefixes, test_prefixes=test_prefixes,
+                regression_tests=regression_tests, known_failures=known_failures)
+    rec_path = pathlib.Path(out_dir) / f"{commit}.json"
+    if not rec_path.is_file():
+        return {"status": "infra_error", "reason": f"没写出结果文件：{rec_path}"}
+    return json.loads(rec_path.read_text(encoding="utf-8"))
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="unfix.py")
     # `required=False`：`--selftest` 是一个**不带子命令**的入口。

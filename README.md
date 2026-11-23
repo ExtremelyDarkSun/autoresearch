@@ -85,6 +85,8 @@ python -X utf8 -B research.py selftest --plugins     # 需要 Node.js
 
 `selftest` 运行 Python 回归；加 `--plugins` 再跑五个插件的模拟宿主测试。测试不启动云机，不调用真实模型，不外发消息。
 
+**跑一轮完整的小型评测（造题 → 负控 → 正控 → 评补丁 → 汇总）：** `python -X utf8 -B tools/bench.py --repo <仓库> --limit 3 --out <目录> --patch-dir <补丁目录>`
+
 **没有判分清单时，怎么造出能判对错的题：** [从仓库历史反解可判定任务](<docs/UNFIX_TASKS.md>)（`tools/unfix.py`）。
 
 **读任何读数之前，先读一遍[假绿分类学](<docs/FALSE-GREEN-TAXONOMY.md>)。** 十四条「看起来通过、其实没测」的
