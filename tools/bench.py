@@ -46,7 +46,12 @@ def summarize(tasks: list[dict]) -> dict:
     gold_ok = [t for t in usable if t.get("gold_status") == "passed"]
     scored = [t for t in usable if t.get("patch_status") in ("passed", "failed")]
     passed = [t for t in scored if t.get("patch_status") == "passed"]
-    unscored = [t for t in usable if t.get("patch_status") in ("no_patch", "infra_error")]
+    # `no_patch` 与 `infra_error` 都算「没评成」，但原因完全不同：
+    # 前者是没给补丁（可能只是文件名没对上），后者是给了但被判据拒绝（例如改了测试）。
+    # 合成一个数会让「一道都没匹配上」看起来像「一道都没做出来」。
+    no_patch = [t for t in usable if t.get("patch_status") == "no_patch"]
+    patch_errors = [t for t in usable if t.get("patch_status") == "infra_error"]
+    unscored = no_patch + patch_errors
 
     def rate(a: int, b: int):
         return None if b == 0 else round(a / b, 4)
@@ -62,6 +67,8 @@ def summarize(tasks: list[dict]) -> dict:
         "patch_scored": len(scored),
         "patch_passed": len(passed),
         "unscored": len(unscored),
+        "no_patch": len(no_patch),
+        "patch_infra_error": len(patch_errors),
         "pass_rate_scored": rate(len(passed), len(scored)),
         "pass_rate_all": rate(len(passed), len(usable)),
         "note": ("两个口径都给了：scored 是「真评过」的分母，all 是「全部可用题」的分母；"
@@ -167,6 +174,16 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
         tasks.append(task)
 
     summary = summarize(tasks)
+
+    if patch_dir and summary["patch_scored"] == 0 and summary["no_patch"] == summary["usable"]:
+        # 这不是「一道都没做出来」，是**一个补丁文件都没匹配上**。
+        # 最常见的错因：文件名要求 `<commit>.patch`，而人给的是 `<完整 40 位 sha>.patch`。
+        sample = "、".join(f"{x['commit']}.patch" for x in usable[:3])
+        print(f"注意：--patch-dir {patch_dir} 里没有任何文件匹配这些题的文件名。", file=sys.stderr)
+        print(f"  约定是 `<commit>.patch`，例如：{sample}", file=sys.stderr)
+        print("  所以 pass_rate_all=0.0 是「没评」不是「没做出来」——看 unscored/no_patch 两个字段。",
+              file=sys.stderr)
+
     summary["repo"] = str(repo)
     summary["patched"] = bool(patch_dir)
     (out_dir / "summary.json").write_text(

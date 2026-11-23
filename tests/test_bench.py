@@ -128,5 +128,59 @@ class TestTopDirsHint(unittest.TestCase):
         self.assertIn("pkg/", proc.stderr)
 
 
+class TestNoPatchVsInfraError(unittest.TestCase):
+    """「没给补丁」和「给了但被拒」都算没评成，但原因完全不同。
+
+    合成一个数会让「一道补丁都没匹配上」（多半是文件名不对）看起来像
+    「一道都没做出来」—— 而这两件事对读的人意味着相反的下一步。
+    """
+
+    def test_counts_are_split(self):
+        tasks = [_task(patch="no_patch"), _task(patch="infra_error"), _task(patch="passed")]
+        s = bench.summarize(tasks)
+        self.assertEqual(s["no_patch"], 1)
+        self.assertEqual(s["patch_infra_error"], 1)
+        self.assertEqual(s["unscored"], 2)
+        self.assertEqual(s["patch_scored"], 1)
+
+    def test_warns_when_no_patch_file_matches(self):
+        import shutil
+        import subprocess
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+
+        def commit(files, msg):
+            for rel, body in files.items():
+                p = tmp / rel
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(body, encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=tmp, capture_output=True, stdin=subprocess.DEVNULL)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t",
+                            "commit", "-q", "-m", msg], cwd=tmp, capture_output=True,
+                           stdin=subprocess.DEVNULL)
+
+        subprocess.run(["git", "init", "-q"], cwd=tmp, capture_output=True, stdin=subprocess.DEVNULL)
+        commit({"pkg/m.py": "def f():\n    return 1\n",
+                "tests/test_m.py": "from pkg.m import f\n\n\ndef test_f():\n    assert f() == 1\n"}, "1")
+        commit({"pkg/m.py": "def f():\n    return 2\n",
+                "tests/test_m.py": "from pkg.m import f\n\n\ndef test_f():\n    assert f() == 2\n"}, "2")
+
+        empty_patches = tmp / "patches"
+        empty_patches.mkdir()
+        (empty_patches / "not-the-commit-name.patch").write_text("", encoding="utf-8")
+
+        proc = subprocess.run(
+            [sys.executable, "-X", "utf8", "-B", str(ROOT / "tools" / "bench.py"),
+             "--repo", str(tmp), "--python", sys.executable, "--limit", "1",
+             "--out", str(tmp / "out"), "--src-prefixes", "pkg/",
+             "--patch-dir", str(empty_patches), "--timeout", "60"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=300, stdin=subprocess.DEVNULL)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("没有任何文件匹配", proc.stderr)
+        self.assertIn("<commit>.patch", proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
