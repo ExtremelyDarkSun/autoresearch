@@ -82,10 +82,10 @@ python -X utf8 -B research.py selftest --plugins
 |---|---|
 | `doctor` | exit 0；JSON 里 `errors: []`；`evaluation.can_run: false`（**这是初始正常态**，不是故障） |
 | `demo` | exit 0；`.local/demo/` 下生成 `REPORT.md` / `REPORT.json` / `runtime.autoresearch/` |
-| `selftest` | exit 0；输出里出现 `Ran 272 tests ... OK` 和 `Ran 1485 tests ... OK (skipped=11)` |
+| `selftest` | exit 0；输出里出现 `Ran 272 tests ... OK` 和 `Ran 1486 tests ... OK (skipped=11)` |
 | `selftest --plugins` | exit 0；末行 `51 passed` |
 
-合计 **1757 个 Python 测试 + 51 个 Node 插件测试**。
+合计 **1758 个 Python 测试 + 51 个 Node 插件测试**。
 
 > ⚠️ **只看关键字会误判**：`selftest` 的 stderr 里有一行
 > `decisions_cli: error: argument --channel-config: not allowed with argument --channel`，

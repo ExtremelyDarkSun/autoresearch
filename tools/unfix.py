@@ -217,6 +217,46 @@ def real_pass_missing(stats) -> tuple:
     return False, ""
 
 
+def pytest_outcomes(xml_path) -> dict:
+    """每个用例的结局：`{"tests/test_x.py::test_a": "passed" | "failed" | "skipped" | "error"}`。
+
+    为什么需要逐条：绿相位原来要求**整个测试文件** exit 0。可真实仓库里同一文件常有
+    与本次改动无关的既有失败（rich 基线实测就有 7 条），于是好题被误杀 ——
+    实测 `4ca56966`：它自己的目标用例能过，同文件的 `test_decode_example` 等 3 条一直是红的。
+    """
+    import xml.etree.ElementTree as ET
+
+    out = {}
+    p = pathlib.Path(xml_path)
+    if not p.is_file():
+        return out
+    try:
+        root = ET.parse(p).getroot()
+    except ET.ParseError:
+        return out
+    for case in root.iter("testcase"):
+        name = case.get("name") or ""
+        # junit 的 `file` 属性才是 pytest 眼里的路径。`classname` 在「测试目录没有 __init__.py」
+        # 时**是空的** —— 实测 tests/test_file_proxy.py 的 classname 为空，于是 id 少了 `tests/`
+        # 前缀，目标用例全部匹配不上，绿相位一律判「缺失」、好题全被误杀。
+        fpath = (case.get("file") or "").replace(chr(92), "/")
+        if fpath:
+            tid = f"{fpath}::{name}"
+        else:
+            cls = (case.get("classname") or "").replace(".", "/")
+            tid = f"{cls}.py::{name}" if cls else name
+        tags = {child.tag for child in case}
+        if "failure" in tags:
+            out[tid] = "failed"
+        elif "error" in tags:
+            out[tid] = "error"
+        elif "skipped" in tags:
+            out[tid] = "skipped"
+        else:
+            out[tid] = "passed"
+    return out
+
+
 def pytest_stats(xml_path) -> dict:
     """从 `--junitxml` 里数出「真跑过几条」。
 
@@ -250,8 +290,8 @@ def pytest_stats(xml_path) -> dict:
 
 def pytest_ids(repo: pathlib.Path, py: pathlib.Path, test_paths, timeout=180, tag="scan"):
     if not test_paths:
-        return 5, [], "没有测试文件", False, {"total": 0, "passed": 0, "failed": 0,
-                                              "skipped": 0, "error": 0}
+        return (5, [], "没有测试文件", False,
+                {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "error": 0}, {})
     xml_path = pathlib.Path(repo) / f".unfix-{tag}.junit.xml"
     code, out, err = sh([str(py), "-m", "pytest", *test_paths, "-q", "--no-header",
                          "-p", "no:cacheprovider", f"--junitxml={xml_path}"],
@@ -259,12 +299,13 @@ def pytest_ids(repo: pathlib.Path, py: pathlib.Path, test_paths, timeout=180, ta
     tail = (out or "").strip().splitlines()[-3:]
     ids = sorted(set(re.findall(r"^FAILED (\S+)", out or "", flags=re.M)))
     stats = pytest_stats(xml_path)
+    outcomes = pytest_outcomes(xml_path)
     try:
         xml_path.unlink()
     except OSError:
         pass
     # 除了「收集坏了吗」，再带一份统计：绿/红的用例里到底跑了几条
-    return code, ids, " ⏎ ".join(tail), collection_broken_from(out), stats
+    return code, ids, " ⏎ ".join(tail), collection_broken_from(out), stats, outcomes
 
 
 def changed_files(repo: pathlib.Path, commit: str, src_prefixes,
@@ -320,33 +361,87 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
             rec["why"] = "工作树不干净（跟踪文件有改动）"
         else:
             try:
-                code, o, e = git(repo, "checkout", f"{cand['commit']}^", "--", *cand["src_files"])
-                if code != 0:
-                    rec["why"] = f"退回源码失败：{e[:120]}"
+                # **整棵 worktree**，不是局部 checkout。
+                #
+                # 局部 checkout 有两个毛病，都是实测出来的：
+                # 1. 只回退源码、测试留 HEAD ⇒ 红相位跑的是 HEAD 的测试，
+                #    于是 c2 会**冒领** c3 才写的用例（归因错）；
+                # 2. 连测试也退回该提交后，其他模块仍停在 HEAD（可能几千个提交之后），
+                #    历史版本自己配不齐 ⇒ 绿相位「恢复后仍不过」，好题被误杀。
+                #
+                # 所以两个相位各用一棵完整的树：红 = `commit^` + 该 commit 的测试；绿 = `commit` 整棵。
+                wt_root = pathlib.Path(out_dir) / "_wt"
+                wt_root.mkdir(parents=True, exist_ok=True)
+                tag = str(cand["commit"])[:12]
+                wt_red = wt_root / f"red-{tag}"
+                wt_green = wt_root / f"green-{tag}"
+                ok, err = _make_worktree(repo, f"{cand['commit']}^", wt_red)
+                if not ok:
+                    rec["why"] = f"建红相位 worktree 失败：{err[:120]}"
                 else:
-                    # **测试也要退回该提交自己的版本**，不能留 HEAD 的。
-                    #
-                    # 实测（夹具 attrib2）：c2 只改 f()，c3 之后又加了一条 test_later_added；
-                    # 留 HEAD 的测试会让 c2 的 fail_to_pass 里出现 c3 才写的用例 ——
-                    # **c2 冒领了 c3 的测试**，红→绿字面成立、归因不成立。
-                    git(repo, "checkout", cand["commit"], "--", *cand["test_files"])
-                    rc, rids, rtail, rbroken, rstats = pytest_ids(
-                        repo, py, cand["test_files"], tag="red")
+                    # 把该提交自己的测试放进红相位（新增的测试文件会因此出现，正是要的）
+                    git(wt_red, "checkout", cand["commit"], "--", *cand["test_files"])
+                    rc, rids, rtail, rbroken, rstats, _rout = pytest_ids(
+                        wt_red, py, cand["test_files"], tag="red")
                     rec["red"] = {"exit": rc, "failed_ids": rids, "tail": rtail}
-                    git(repo, "checkout", "HEAD", "--", *cand["src_files"])
-                    gc, gids, gtail, _gbroken, gstats = pytest_ids(
-                        repo, py, cand["test_files"], tag="green")
-                    rec["green"] = {"exit": gc, "failed_ids": gids, "tail": gtail}
-                    # 收尾：把测试文件恢复到 HEAD，别把工作树留给下一个人
-                    git(repo, "checkout", "HEAD", "--", *cand["test_files"])
-                    usable, why = classify(rc, gc, rids, rbroken,
-                                           red_stats=rstats, green_stats=gstats)
-                    rec["usable"] = usable
-                    rec["why"] = why
-                    if usable and rc == TIMEOUT_EXIT:
-                        rec["fail_mode"] = "hang"
-                    if usable:
-                        rec["fail_to_pass"] = rids
+                    _drop_worktree(repo, wt_red)
+
+                    ok, err = _make_worktree(repo, cand["commit"], wt_green)
+                    if not ok:
+                        rec["why"] = f"建绿相位 worktree 失败：{err[:120]}"
+                    else:
+                        gc, gids, gtail, _gbroken, gstats, gout = pytest_ids(
+                            wt_green, py, cand["test_files"], tag="green")
+                        rec["green"] = {"exit": gc, "failed_ids": gids, "tail": gtail}
+                        _drop_worktree(repo, wt_green)
+                        # **fail_to_pass 的定义**（SWE-bench 口径）：
+                        #   红相位失败、绿相位通过的用例。
+                        # 同文件里与本题无关的既有失败会**两边都失败**，因此自然被排除，
+                        # 不会连坐（实测 rich 4ca56966：同文件 3 条既有失败，旧实现把这道好题扔了）。
+                        #
+                        # junit 的 `file` 是相对 rootdir 的 basename（实测 file="test_file_proxy.py"），
+                        # 拼不回完整 id，所以按「文件名::用例名」比对。歧义会表现为「缺失」→ 拒绝，不会假通过。
+                        def _short(x):
+                            return str(x).replace(chr(92), '/').split('/')[-1]
+
+                        gout_short = {_short(k): v for k, v in gout.items()}
+                        rout_short = {_short(k): v for k, v in (_rout or {}).items()}
+                        red_ids_norm = [str(t).replace(chr(92), '/') for t in rids]
+                        f2p = [t for t in red_ids_norm
+                               if gout_short.get(_short(t)) == 'passed']
+                        skipped_targets = [t for t in red_ids_norm
+                                           if gout_short.get(_short(t)) == 'skipped']
+                        # 回归：红相位**通过**的用例，绿相位不许变成失败
+                        regressions = [k for k, v in rout_short.items()
+                                       if v == 'passed' and gout_short.get(_short(k)) == 'failed']
+                        rec["fail_to_pass"] = f2p
+                        rec["green"]["targets_ok"] = bool(f2p) and not regressions
+                        if f2p and not regressions:
+                            gc_for_classify = 0
+                        else:
+                            gc_for_classify = 1
+                            if not f2p:
+                                rec["green"]["no_flip"] = dict(list(
+                                    (t, gout_short.get(_short(t), '缺失')) for t in red_ids_norm)[:5])
+                            if regressions:
+                                rec["green"]["regressions"] = regressions[:5]
+                        usable, why = classify(rc, gc_for_classify, red_ids_norm, rbroken,
+                                               red_stats=rstats, green_stats=gstats)
+                        # 把更贴近现象的理由放在前面（原来的「环境问题」会把人引到错的方向）
+                        if not usable and rc != TIMEOUT_EXIT:
+                            if skipped_targets and not f2p:
+                                why = f"绿相位里目标用例被跳过（{len(skipped_targets)} 条）：跳过不等于通过"
+                            elif not f2p and red_ids_norm:
+                                why = (f"红相位失败的 {len(red_ids_norm)} 条用例在绿相位里没有一条变成通过"
+                                       f"（同文件既有失败不算）")
+                            elif regressions:
+                                why = f"有回归：红相位通过的 {len(regressions)} 条用例在绿相位失败了"
+                        rec["usable"] = usable
+                        rec["why"] = why
+                        if usable and rc == TIMEOUT_EXIT:
+                            rec["fail_mode"] = "hang"
+                        if usable:
+                            rec["fail_to_pass"] = f2p  # 只认「红了又绿」的那些
             finally:
                 restore(repo)
         rows.append(rec)
@@ -640,6 +735,16 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
     if code == TIMEOUT_EXIT:
         return finish("failed", f"测试在 {timeout:g} 秒内没跑完（挂住）—— 这个 bug 还在：{tail}")
     return finish("infra_error", f"不是「没通过」，是没测成（pytest exit {code}）：{tail}")
+
+
+def _make_worktree(repo, ref, path):
+    """在 `path` 上物化一个 detached worktree。返回 (ok, 错误文本)。"""
+    code, _o, err = git(repo, "worktree", "add", "--detach", str(path), str(ref))
+    return code == 0, err
+
+
+def _drop_worktree(repo, path):
+    git(repo, "worktree", "remove", "--force", str(path))
 
 
 def audit_rows(rows) -> dict:

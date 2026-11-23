@@ -550,7 +550,7 @@ class TestFalseGreens(unittest.TestCase):
         self.assertEqual(p.returncode, 1, p.stdout + "\n" + p.stderr)
         self.assertTrue(unfix.collection_broken_from(p.stdout),
                         "完整 stdout 里同时有 ERROR 与 failed：\n" + p.stdout)
-        rc, ids, tail, broken, _stats = unfix.pytest_ids(
+        rc, ids, tail, broken, _stats, _outcomes = unfix.pytest_ids(
             repo, self.PY, ["test_bad.py", "test_fail.py"])
         self.assertEqual(rc, 1, tail)
         self.assertIn("test_fail.py::test_x", ids)
@@ -1210,6 +1210,52 @@ class TestAuditRows(unittest.TestCase):
         c2 = [r for r in rows if r['subject'].startswith('c2')][0]
         self.assertEqual(c2['fail_to_pass'], ['tests/test_f.py::test_a'],
                          'c2 不能认领 c3 才写的 test_later_added')
+
+
+    def test_pre_existing_failure_in_same_file_does_not_kill_task(self):
+        """绿相位只看**目标用例**：同文件里与本题无关的既有失败不该连坐。
+
+        实测（rich 仓库 4ca56966）：它自己的目标用例能过，同文件还有 3 条与它无关的既有失败，
+        旧实现要求整个文件 exit 0 ⇒ 好题被误杀（分类学第十八条：更严不等于更对）。
+
+        现在绿相位按 junit 逐条比对：红相位里失败的那些用例，在绿相位里必须**各自** passed。
+        """
+        import shutil
+        import subprocess
+        import tempfile
+        repo = pathlib.Path(tempfile.mkdtemp(prefix='unfix-prefail-'))
+        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+        (repo / 'tests').mkdir()
+
+        def git(*args, cwd=None):
+            subprocess.run(['git', '-C', str(cwd or repo), *args], capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL)
+
+        def commit(msg):
+            git('add', '-A')
+            git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', msg)
+
+        git('init', '-q')
+        (repo / 'mod.py').write_text('def f():' + chr(10) + '    return 1' + chr(10), encoding='utf-8')
+        (repo / 'tests' / 'test_f.py').write_text(
+            'from mod import f' + chr(10) * 2 + 'def test_a():' + chr(10) + '    assert f() == 1' + chr(10)
+            + chr(10) + chr(10) + 'def test_always_red():' + chr(10) + '    assert False, "既有失败，与本题无关"' + chr(10),
+            encoding='utf-8')
+        commit('c1')
+        (repo / 'mod.py').write_text('def f():' + chr(10) + '    return 2' + chr(10), encoding='utf-8')
+        (repo / 'tests' / 'test_f.py').write_text(
+            'from mod import f' + chr(10) * 2 + 'def test_a():' + chr(10) + '    assert f() == 2' + chr(10)
+            + chr(10) + chr(10) + 'def test_always_red():' + chr(10) + '    assert False, "既有失败，与本题无关"' + chr(10),
+            encoding='utf-8')
+        commit('c2')
+
+        self.assertEqual(unfix.scan(repo, pathlib.Path(sys.executable), 1, repo / 'scan',
+                                    ('mod.py',), ('tests/',)), 0)
+        rows = [json.loads(x) for x in (repo / 'scan' / 'candidates.jsonl').read_text(
+            encoding='utf-8').splitlines() if x.strip()]
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]['usable'], rows[0])
+        self.assertEqual(rows[0]['fail_to_pass'], ['tests/test_f.py::test_a'])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
