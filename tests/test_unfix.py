@@ -857,5 +857,57 @@ class TestJudgmentParserPrecision(unittest.TestCase):
         self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), ["conftest.py"])
 
 
+
+    def test_run_one_passes_repo_to_judgment_check(self):
+        """端到端：`run_one` 必须把 repo 传给守卫，否则 E2 那条口子还开着。
+
+        纯函数用例证明「给了 repo 就能认出来」，但**管线有没有把 repo 传下去**
+        是另一件事 —— 参数漏传不会报错，只会静默退回旧行为。
+        """
+        import shutil
+        import subprocess
+        import tempfile
+        repo = pathlib.Path(tempfile.mkdtemp(prefix='unfix-e2e-'))
+        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+        (repo / 'tests').mkdir()
+        (repo / 'mod.py').write_text('def f():' + chr(10) + '    return 1' + chr(10), encoding='utf-8')
+        (repo / 'judge_helper.py').write_text('def pytest_collection_modifyitems(c, i):' + chr(10) + '    pass' + chr(10), encoding='utf-8')
+        (repo / 'conftest.py').write_text('from judge_helper import pytest_collection_modifyitems' + chr(10), encoding='utf-8')
+        (repo / 'tests' / 'test_f.py').write_text(
+            'from mod import f' + chr(10) * 3 + 'def test_f():' + chr(10) + '    assert f() == 1' + chr(10), encoding='utf-8')
+
+        def git(*args):
+            subprocess.run(['git', '-C', str(repo), *args], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL)
+
+        git('init', '-q')
+        git('add', '-A')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', '1')
+        (repo / 'mod.py').write_text('def f():' + chr(10) + '    return 2' + chr(10), encoding='utf-8')
+        (repo / 'tests' / 'test_f.py').write_text(
+            'from mod import f' + chr(10) * 3 + 'def test_f():' + chr(10) + '    assert f() == 2' + chr(10), encoding='utf-8')
+        git('add', '-A')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', '2')
+
+        # 作弊补丁：只改 conftest 引用的辅助模块，把用例全 skip
+        cheat = repo / 'cheat.patch'
+        cheat.write_text(
+            'diff --git a/judge_helper.py b/judge_helper.py' + chr(10)
+            + '--- a/judge_helper.py' + chr(10) + '+++ b/judge_helper.py' + chr(10)
+            + '@@ -1,2 +1,4 @@' + chr(10)
+            + '-def pytest_collection_modifyitems(c, i):' + chr(10) + '-    pass' + chr(10)
+            + '+import pytest' + chr(10)
+            + '+def pytest_collection_modifyitems(c, i):' + chr(10)
+            + '+    for it in i:' + chr(10)
+            + "+        it.add_marker(pytest.mark.skip(reason='x'))" + chr(10), encoding='utf-8')
+
+        code = unfix.run_one(repo, pathlib.Path(sys.executable), 'HEAD', ['tests/test_f.py'],
+                             repo / 'out', apply_gold=False, patch=str(cheat), timeout=90,
+                             src_prefixes=('mod.py', 'judge_helper.py'))
+        rec = json.loads((repo / 'out' / 'HEAD.json').read_text(encoding='utf-8'))
+        self.assertEqual(rec['status'], 'infra_error', rec)
+        self.assertIn('judge_helper.py', rec['reason'])
+        self.assertEqual(code, 2)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
