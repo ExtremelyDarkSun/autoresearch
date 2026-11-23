@@ -262,6 +262,30 @@ def new_failures(failed_ids, known_ids) -> list[str]:
     return [i for i in (failed_ids or ()) if norm(i) not in known]
 
 
+def patch_touches_tests(patch_text: str, test_prefixes) -> list[str]:
+    """补丁里有没有改到测试文件。
+
+    这是评测器**最危险的假绿**：判据（fail-to-pass）来自测试，被评测的 agent 只要改测试，
+    就能让任何实现变绿。判据本身没问题，是它被喂了假证据。
+
+    只看 `+++ b/<path>` / `--- a/<path>` 两种行头 —— 不解析 hunk，不做模糊匹配。
+    返回被改到的测试文件列表（空表示没动测试）。
+    """
+    prefixes = tuple(test_prefixes or DEFAULT_TEST_PREFIXES)
+    touched = []
+    for line in (patch_text or "").splitlines():
+        if not line.startswith(("+++ ", "--- ")):
+            continue
+        path = line[4:].strip()
+        if path.startswith(("b/", "a/")):
+            path = path[2:]
+        if path == "/dev/null" or not path:
+            continue
+        if path.startswith(prefixes) and path not in touched:
+            touched.append(path)
+    return sorted(touched)
+
+
 def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
             out_dir: pathlib.Path, apply_gold: bool, patch: str | None,
             timeout: float, src_prefixes, test_prefixes=DEFAULT_TEST_PREFIXES,
@@ -316,6 +340,18 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
             return finish("infra_error", f"退回源码失败：{err[:160]}")
 
         if patch:
+            # 先查这个补丁有没有动测试。动了就不评 —— 因为判据来自测试。
+            try:
+                patch_text = pathlib.Path(patch).read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                return finish("infra_error", f"读不到补丁 {patch}：{exc}")
+            bad = patch_touches_tests(patch_text, test_prefixes)
+            res["steps"]["patch_check"] = {"touched_tests": bad}
+            if bad:
+                # 不是「没通过」，是**这份补丁不属于被评测的范围**：它改的是判据本身。
+                joined = "、".join(bad)
+                return finish("infra_error",
+                              f"补丁修改了测试文件：{joined}。判据来自测试，改测试等于改判据 —— 这份补丁不能评")
             code, _, err = sh(["git", "-C", str(repo), "apply", patch])
             res["steps"]["apply"] = {"source": "指定补丁", "exit": code}
             if code != 0:

@@ -126,7 +126,27 @@ python -X utf8 -B tools/unfix.py run --repo <r> --commit <sha> --tests tests/x.p
 
 ---
 
-## 7. 已知边界
+## 7. 最危险的假绿：补丁改测试
+
+判据（fail-to-pass）来自测试。被评测的 agent 只要**改测试**，任何实现都能变绿。
+
+实测（`648ceda2`）：源码仍是修复前，一份**只把断言改成 `assert True`** 的补丁让 `pytest` 报
+`4 passed in 0.05s` —— 如果不拦，评测器会诚实地判它 `passed`。
+
+现在 `--patch` 会先读补丁，检查 `+++ b/<path>` / `--- a/<path>` 行头有没有落到测试前缀下；
+落到了就拒绝，**并且状态是 `infra_error` 不是 `failed`**：
+
+```
+reason = 补丁修改了测试文件：tests/test_file_proxy.py。
+         判据来自测试，改测试等于改判据 —— 这份补丁不能评
+```
+
+为什么是 `infra_error` 而不是 `failed`：这不是「没做对」，是**这份提交不属于被评测的范围**。
+把它记成 `failed` 会污染通过率的分母。
+
+---
+
+## 8. 已知边界
 
 - **只认「源码+测试同改」的提交**。只改源码或只改测试的提交，反解不出 fail-to-pass。
 - **源码目录与测试目录的前缀是假设，不是事实**。默认 `fastapi/ httpx/ requests/ rich/ src/` 与 `tests/`；

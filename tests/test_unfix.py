@@ -292,5 +292,46 @@ class TestCollectionBroken(unittest.TestCase):
         self.assertFalse(unfix.collection_broken_from(out))
 
 
+class TestPatchTouchesTests(unittest.TestCase):
+    """被评测的 agent 改测试 = 改判据 —— 这是评测器最危险的假绿。
+
+    实测：源码仍是修复前，但一份只改断言的补丁让 `pytest` 变成 `4 passed`。
+    工具现在直接拒绝这种补丁（`infra_error`），而不是给它一个 `passed`。
+    """
+
+    def test_patch_editing_tests_is_detected(self):
+        patch = (
+            "diff --git a/tests/test_x.py b/tests/test_x.py\n"
+            "--- a/tests/test_x.py\n"
+            "+++ b/tests/test_x.py\n"
+            "@@ -1 +1 @@\n"
+            "-    assert f() == 2\n"
+            "+    assert True\n"
+        )
+        self.assertEqual(unfix.patch_touches_tests(patch, ("tests/",)), ["tests/test_x.py"])
+
+    def test_patch_editing_only_source_is_clean(self):
+        patch = (
+            "diff --git a/rich/cells.py b/rich/cells.py\n"
+            "--- a/rich/cells.py\n"
+            "+++ b/rich/cells.py\n"
+            "@@ -1 +1 @@\n-x\n+y\n"
+        )
+        self.assertEqual(unfix.patch_touches_tests(patch, ("tests/",)), [])
+
+    def test_dev_null_headers_are_ignored(self):
+        patch = "--- /dev/null\n+++ b/rich/new.py\n--- a/old.py\n+++ /dev/null\n"
+        self.assertEqual(unfix.patch_touches_tests(patch, ("tests/",)), [])
+
+    def test_custom_prefixes_are_honoured(self):
+        patch = "--- a/test_x.py\n+++ b/test_x.py\n"
+        self.assertEqual(unfix.patch_touches_tests(patch, ("tests/",)), [])
+        self.assertEqual(unfix.patch_touches_tests(patch, ("test_",)), ["test_x.py"])
+
+    def test_empty_patch_is_clean(self):
+        self.assertEqual(unfix.patch_touches_tests("", ("tests/",)), [])
+        self.assertEqual(unfix.patch_touches_tests(None, ("tests/",)), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
