@@ -632,7 +632,7 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
             out_dir: pathlib.Path, apply_gold: bool, patch: str | None,
             timeout: float, src_prefixes, test_prefixes=DEFAULT_TEST_PREFIXES,
             regression_tests=None, known_failures=(), strict_head=False,
-            fail_to_pass=None) -> int:
+            fail_to_pass=None, allow_no_ftp=False) -> int:
     started = time.monotonic()
     res = {"task_id": commit, "reason": None, "notes": None, "status": "infra_error",
            "duration_seconds": None, "steps": {}}
@@ -693,6 +693,18 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
             "infra_error",
             f"传给 --tests 的文件与这个提交改的测试文件不相交；"
             f"这个提交改的是：{'、'.join(sorted(wanted))}")
+
+    # 评补丁必须知道「这道题考哪几条」。
+    #
+    # 不知道就只能看整文件退出码，而同文件里可能混着与本题无关的既有失败 ——
+    # 那样**正确补丁会被判 failed**（实测夹具 samefile：test_target 修好、test_always_red 永远红）。
+    # 宁可拒评，也不给一个更"好看"的错读数：静默退回退出码正是两套口径分叉的根源。
+    if patch and not fail_to_pass and not allow_no_ftp:
+        return finish(
+            "infra_error",
+            "评补丁必须给 --fail-to-pass（这道题要考哪些用例）。"
+            "不给就只能按整文件退出码判，同文件有既有失败时正确补丁会被误判；"
+            "确实要按整文件判，加 --allow-no-ftp")
 
     broken = False
     try:
@@ -965,6 +977,8 @@ def main(argv=None) -> int:
     r.add_argument("--out", required=True)
     r.add_argument("--python", default=None)
     r.add_argument("--apply-gold", action="store_true")
+    r.add_argument("--allow-no-ftp", action="store_true",
+                   help="评补丁时允许不给 --fail-to-pass（按整文件退出码判，不推荐）")
     r.add_argument("--fail-to-pass", default=None,
                    help="这道题要考哪些用例（逗号分隔）。给了就按它判，而不是整个文件")
     r.add_argument("--strict-head", action="store_true",
@@ -1049,7 +1063,8 @@ def main(argv=None) -> int:
                    args.apply_gold, args.patch, args.timeout, prefixes, test_prefixes,
                    args.regression_tests, set(args.known_failures or ()),
                    strict_head=args.strict_head,
-                   fail_to_pass=([x for x in (args.fail_to_pass or '').split(',') if x] or None))
+                   fail_to_pass=([x for x in (args.fail_to_pass or '').split(',') if x] or None),
+                   allow_no_ftp=args.allow_no_ftp)
 
 
 if __name__ == "__main__":

@@ -662,7 +662,8 @@ class TestFalseGreens(unittest.TestCase):
             encoding="utf-8", newline="\n")
         out = self._tmp()
         unfix.run_one(repo, self.PY, task, ["tests/test_mod.py"], out,
-                      False, str(cheat), 30, ("mod.py",), ("tests/",))
+                      False, str(cheat), 30, ("mod.py",), ("tests/",),
+                      allow_no_ftp=True)
         res = json.loads((out / f"{task}.json").read_text(encoding="utf-8"))
         self.assertEqual(res["status"], "infra_error", res)
         self.assertIn("补丁修改了测试文件", res["reason"])
@@ -913,7 +914,8 @@ class TestJudgmentParserPrecision(unittest.TestCase):
 
         code = unfix.run_one(repo, pathlib.Path(sys.executable), 'HEAD', ['tests/test_f.py'],
                              repo / 'out', apply_gold=False, patch=str(cheat), timeout=90,
-                             src_prefixes=('mod.py', 'judge_helper.py'))
+                             src_prefixes=('mod.py', 'judge_helper.py'),
+                      allow_no_ftp=True)
         rec = json.loads((repo / 'out' / 'HEAD.json').read_text(encoding='utf-8'))
         self.assertEqual(rec['status'], 'infra_error', rec)
         self.assertIn('judge_helper.py', rec['reason'])
@@ -1417,5 +1419,43 @@ class TestFailToPassJudging(unittest.TestCase):
         res = json.loads((out / f"{c2}.json").read_text(encoding="utf-8"))
         self.assertEqual(res["status"], "failed", res)
         self.assertIn("test_target", res["reason"])
+class TestFtpRequiredForScoring(unittest.TestCase):
+    """评补丁不给 ftp 就拒评：静默退回整文件口径正是两套口径分叉的根源。"""
+
+    def test_patch_without_ftp_is_refused(self):
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="nofp-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo = tmp / "repo"
+        (repo / "tests").mkdir(parents=True)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repo), *args],
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+        def commit(msg):
+            git("add", "-A")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg)
+
+        body = "from mod import f\n\n\ndef test_target():\n    assert f() == 2\n"
+        git("init", "-q")
+        (repo / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(body, encoding="utf-8")
+        commit("c1")
+        (repo / "mod.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(body + "# c2\n", encoding="utf-8")
+        commit("c2")
+        c2 = git("rev-parse", "--short", "HEAD").stdout.strip()
+        fix = tmp / "fix.patch"
+        fix.write_text("diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n"
+                       "@@ -1,2 +1,2 @@\n def f():\n-    return 1\n+    return 2\n",
+                       encoding="utf-8")
+        out = tmp / "out"
+        unfix.run_one(repo, pathlib.Path(sys.executable), c2, ["tests/test_m.py"], out,
+                      False, str(fix), 60, ("mod.py",), ("tests/",))
+        res = json.loads((out / f"{c2}.json").read_text(encoding="utf-8"))
+        self.assertEqual(res["status"], "infra_error", res)
+        self.assertIn("--fail-to-pass", res["reason"])
 if __name__ == "__main__":
     unittest.main(verbosity=2)

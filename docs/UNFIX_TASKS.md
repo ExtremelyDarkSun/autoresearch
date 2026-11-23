@@ -278,3 +278,18 @@ python -X utf8 -B tools/unfix.py run --repo <repo> --commit <sha> \
 
 **为什么要靠元数据**：光看「红相位里所有失败」不行 —— 那里面就混着既有失败。
 「这道题考哪几条」只有造题时（`scan` 的 `fail_to_pass`）才知道。
+
+### 评补丁不给 `--fail-to-pass` 就拒评
+
+上一节说「给了 ftp 就按 ftp 判，不给则退回整文件」。**这个退化路径本身就是洞的来源**——
+静默退回让人以为评过了，其实口径已经变了。
+
+现在：
+
+| 命令 | 结果 |
+|---|---|
+| `run --patch p` | `infra_error`：「评补丁必须给 --fail-to-pass…」 |
+| `run --patch p --fail-to-pass "x::y"` | 按 ftp 判 |
+| `run --patch p --allow-no-ftp` | 旧行为（整文件 exit 0），显式选择才允许 |
+
+**宁可拒评，也不给一个更"好看"的错读数。**
