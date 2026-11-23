@@ -181,55 +181,69 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
             print(f"  预算用尽（>{budget_seconds:g}s）：剩 {len(usable) - i + 1} 道没跑，照常写部分汇总",
                   file=sys.stderr)
             break
-        task = {"commit": commit, "subject": row.get("subject"), "tests": tests,
-                "usable": True, "fail_to_pass": row.get("fail_to_pass", [])}
-        t_task = time.monotonic()
-        def _left():
-            # 单题预算：挂死一道题不该拖垮整轮。
-            return max(20.0, min(timeout, task_budget - (time.monotonic() - t_task)))
-        print(f"[2/3] ({i}/{len(usable)}) {commit} 负控 / 正控", flush=True)
-        neg = unfix._capture_run(repo, py, commit, tests, out_dir / f"neg-{commit}",
-                                apply_gold=False, patch=None, timeout=_left(),
-                                src_prefixes=src_prefixes, test_prefixes=test_prefixes,
-                                    # 判绿按题目要的用例，不是整文件：
-                                    # 同文件有既有失败时，正确补丁会被误判 failed。
-                                    fail_to_pass=task.get("fail_to_pass") or None)
-        # 负控都跑不完，说明这题在旧代码上就是挂死的：再花两个相位等超时没有信息量。
-        if neg.get("status") == "failed" and "挂住" in (neg.get("reason") or ""):
-            task["neg_status"] = "hang"
-            task["gold_status"] = "skipped"
+        # 单题异常不许炸整轮：一道题里的 SystemExit / 异常只该让它自己记 infra_error。
+        # 实测：题单里写了一个不存在的 commit，`changed_files` 抛 SystemExit，整轮直接退出，
+        # 前面的读数全丢 —— 那是最贵的一种失败（跑了半小时，什么都没留下）。
+        try:
+            task = {"commit": commit, "subject": row.get("subject"), "tests": tests,
+                    "usable": True, "fail_to_pass": row.get("fail_to_pass", [])}
+            t_task = time.monotonic()
+            def _left():
+                # 单题预算：挂死一道题不该拖垮整轮。
+                return max(20.0, min(timeout, task_budget - (time.monotonic() - t_task)))
+            print(f"[2/3] ({i}/{len(usable)}) {commit} 负控 / 正控", flush=True)
+            neg = unfix._capture_run(repo, py, commit, tests, out_dir / f"neg-{commit}",
+                                    apply_gold=False, patch=None, timeout=_left(),
+                                    src_prefixes=src_prefixes, test_prefixes=test_prefixes,
+                                        # 判绿按题目要的用例，不是整文件：
+                                        # 同文件有既有失败时，正确补丁会被误判 failed。
+                                        fail_to_pass=task.get("fail_to_pass") or None)
+            # 负控都跑不完，说明这题在旧代码上就是挂死的：再花两个相位等超时没有信息量。
+            if neg.get("status") == "failed" and "挂住" in (neg.get("reason") or ""):
+                task["neg_status"] = "hang"
+                task["gold_status"] = "skipped"
+                task["patch_status"] = None
+                task["skipped"] = "neg_hang"
+                print("        负控挂住：跳过正控与判分", flush=True)
+                tasks.append(task)
+                continue
+            gold = unfix._capture_run(repo, py, commit, tests, out_dir / f"gold-{commit}",
+                                     apply_gold=True, patch=None, timeout=_left(),
+                                     src_prefixes=src_prefixes, test_prefixes=test_prefixes,
+                                        # 判绿按题目要的用例，不是整文件：
+                                        # 同文件有既有失败时，正确补丁会被误判 failed。
+                                        fail_to_pass=task.get("fail_to_pass") or None)
+            task["neg_status"] = neg["status"]
+            task["gold_status"] = gold["status"]
+
+            patch = None
+            if patch_dir:
+                cand = patch_dir / f"{commit}.patch"
+                if cand.exists():
+                    patch = cand
+            if patch is None:
+                task["patch_status"] = "no_patch"
+            else:
+                print(f"        评补丁 {patch.name}", flush=True)
+                got = unfix._capture_run(repo, py, commit, tests, out_dir / f"patch-{commit}",
+                                        apply_gold=False, patch=str(patch), timeout=_left(),
+                                        src_prefixes=src_prefixes, test_prefixes=test_prefixes,
+                                        # 判绿按题目要的用例，不是整文件：
+                                        # 同文件有既有失败时，正确补丁会被误判 failed。
+                                        fail_to_pass=task.get("fail_to_pass") or None)
+                task["patch_status"] = got["status"]
+                task["patch_reason"] = got.get("reason")
+            tasks.append(task)
+        except (SystemExit, Exception) as _exc:  # noqa: BLE001
+            task["usable"] = task.get("usable", True)
+            task["neg_status"] = task.get("neg_status")
+            task["gold_status"] = task.get("gold_status")
             task["patch_status"] = None
-            task["skipped"] = "neg_hang"
-            print("        负控挂住：跳过正控与判分", flush=True)
+            task["skipped"] = "error"
+            task["error"] = f"{type(_exc).__name__}: {str(_exc)[:160]}"
+            print(f"        单题异常，记 infra_error 继续：{task['error']}", flush=True)
             tasks.append(task)
             continue
-        gold = unfix._capture_run(repo, py, commit, tests, out_dir / f"gold-{commit}",
-                                 apply_gold=True, patch=None, timeout=_left(),
-                                 src_prefixes=src_prefixes, test_prefixes=test_prefixes,
-                                    # 判绿按题目要的用例，不是整文件：
-                                    # 同文件有既有失败时，正确补丁会被误判 failed。
-                                    fail_to_pass=task.get("fail_to_pass") or None)
-        task["neg_status"] = neg["status"]
-        task["gold_status"] = gold["status"]
-
-        patch = None
-        if patch_dir:
-            cand = patch_dir / f"{commit}.patch"
-            if cand.exists():
-                patch = cand
-        if patch is None:
-            task["patch_status"] = "no_patch"
-        else:
-            print(f"        评补丁 {patch.name}", flush=True)
-            got = unfix._capture_run(repo, py, commit, tests, out_dir / f"patch-{commit}",
-                                    apply_gold=False, patch=str(patch), timeout=_left(),
-                                    src_prefixes=src_prefixes, test_prefixes=test_prefixes,
-                                    # 判绿按题目要的用例，不是整文件：
-                                    # 同文件有既有失败时，正确补丁会被误判 failed。
-                                    fail_to_pass=task.get("fail_to_pass") or None)
-            task["patch_status"] = got["status"]
-            task["patch_reason"] = got.get("reason")
-        tasks.append(task)
 
     # 给内核的那份结果（results schema：task_id + status 必填，其余可选）。
     # 状态映射：passed / failed 原样；infra_error 与 no_patch 也写出来 ——
@@ -259,6 +273,10 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
     summary = summarize(tasks)
     summary["budget_seconds"] = budget_seconds
     summary["skipped_budget"] = sum(1 for x in tasks if x.get("skipped") == "budget")
+    # 负控就挂住的题：它既不进 `usable`（没测成），也不该从报告里消失，
+    # 否则读者看到「跑了 3 道、可用 2 道」会去猜第 3 道怎么了。
+    summary["skipped_neg_hang"] = sum(1 for x in tasks if x.get("skipped") == "neg_hang")
+    summary["tasks_attempted"] = len(tasks)
     summary["stopped_early"] = bool(stopped)
 
     if patch_dir and summary["patch_scored"] == 0 and summary["no_patch"] == summary["usable"]:
@@ -296,6 +314,7 @@ def _markdown(summary: dict, tasks: list[dict]) -> str:
     lines += [
         f"- 仓库：`{summary['repo']}`",
         f"- 可用题：**{summary['usable']}**（候选里过了红→绿两关的）",
+    f"- 其中 **{summary.get('skipped_neg_hang', 0)}** 道负控就挂住，已跳过（不是没通过，是没测成）",
         f"- 负控（不打补丁应红）：**{summary['neg_control_failed']}/{summary['usable']}**",
         f"- 正控（打 gold 应绿）：**{summary['gold_control_passed']}/{summary['usable']}**",
         f"- 量具成立：**{summary['instrument_ok']}**（两条对照都成立且至少有一道题）",

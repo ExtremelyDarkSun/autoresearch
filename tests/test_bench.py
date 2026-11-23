@@ -356,5 +356,48 @@ class TestTaskBudgetAndHang(unittest.TestCase):
         task = summary["tasks"][0]
         self.assertEqual(task.get("skipped"), "neg_hang", task)
         self.assertIsNone(task.get("patch_status"), task)
+class TestSingleTaskErrorDoesNotKillRound(unittest.TestCase):
+    """一道题异常不能炸整轮 —— 跑了半小时什么都没留下是最贵的失败。"""
+
+    def test_unknown_commit_is_recorded_and_round_continues(self):
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="badc-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo = tmp / "repo"
+        (repo / "tests").mkdir(parents=True)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repo), *args],
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+        git("init", "-q")
+        (repo / "mod.py").write_text("x = 1\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text("def test_a():\n    assert True\n",
+                                                  encoding="utf-8")
+        git("add", "-A")
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "c1")
+        sha = git("rev-parse", "--short", "HEAD").stdout.strip()
+
+        tasks = tmp / "tasks.jsonl"
+        tasks.write_text("\n".join([
+            json.dumps({"task_id": "bad", "repo": str(repo), "commit": "deadbeef",
+                        "test_files": ["tests/test_m.py"],
+                        "fail_to_pass": ["tests/test_m.py::test_a"]}),
+            json.dumps({"task_id": "ok", "repo": str(repo), "commit": sha,
+                        "test_files": ["tests/test_m.py"],
+                        "fail_to_pass": ["tests/test_m.py::test_a"]}),
+        ]) + "\n", encoding="utf-8")
+
+        rc = bench.run_bench(repo, pathlib.Path(sys.executable), 2, tmp / "out",
+                             ("mod.py",), ("tests/",), timeout=30.0,
+                             budget_seconds=120.0, tasks_file=str(tasks),
+                             task_budget=60.0)
+        self.assertEqual(rc, 0, "整轮不该以崩溃收场")
+        summary = json.loads((tmp / "out" / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(summary["tasks"]), 2, "两道题都要留下记录")
+        bad = [t for t in summary["tasks"] if t["commit"] == "deadbeef"][0]
+        self.assertEqual(bad.get("skipped"), "error", bad)
+        self.assertIn("error", bad, "要把异常原文留在记录里")
 if __name__ == "__main__":
     unittest.main(verbosity=2)
