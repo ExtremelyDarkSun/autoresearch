@@ -46,6 +46,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import sys
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -63,7 +64,12 @@ from kernel.autoresearch.profiles import (  # noqa: E402
 )
 
 #: 授权文件里必须出现的四个标签（只看标签，不看值）。
-AUTH_LABELS = ("预算上限", "授权人", "有效期", "允许提交")
+AUTH_LABELS = {
+    "预算上限": ("预算上限", "花费上限"),
+    "授权人": ("授权人", "批准人"),
+    "有效期": ("有效期", "有效至"),
+    "允许提交": ("允许提交", "准入提交"),
+}
 
 #: 随仓库分发的示例题单 —— 它是形状说明，不是真数据。指向它要判 ✗ 并说清原因。
 EXAMPLE_TASKLISTS = ("tasklist.example.jsonl",)
@@ -73,20 +79,37 @@ STUB_MARKERS = ("stub", "fake", "placeholder", "dummy", "example")
 
 
 class Check:
+    """三态：`ok` / `bad` / `unknown`。
+
+    为什么不是布尔值：副机 L69 指出得对 ——「没发现 stub 字样」推不出「执行器是真的」。
+    一个门只会说 ✓/✗，就会把「没证据」压成「通过」。`unknown` 是诚实的第三态：
+    配置完整、但没证明它是真实执行器。
+    """
+
     def __init__(self, key: str, title: str):
         self.key = key
         self.title = title
-        self.ok = False
+        self.state = "bad"          # ok / bad / unknown
         self.detail = ""
         self.next_step = ""
 
+    @property
+    def ok(self) -> bool:
+        return self.state == "ok"
+
     def pass_(self, detail: str) -> "Check":
-        self.ok = True
+        self.state = "ok"
         self.detail = detail
         return self
 
     def fail(self, detail: str, next_step: str = "") -> "Check":
-        self.ok = False
+        self.state = "bad"
+        self.detail = detail
+        self.next_step = next_step
+        return self
+
+    def unknown(self, detail: str, next_step: str = "") -> "Check":
+        self.state = "unknown"
         self.detail = detail
         self.next_step = next_step
         return self
@@ -99,11 +122,17 @@ def check_tasklist(path: str | None) -> Check:
     p = pathlib.Path(path)
     if not p.is_file():
         return c.fail(f"找不到题单文件：{p}", "确认路径；题单是输入，不是结果")
-    if p.name.lower() in EXAMPLE_TASKLISTS:
+
+    # 判「是不是随仓库分发的示例」要看**内容**，不能看文件名。
+    # 副机 L69 实测：把 `tasklist.example.jsonl` 原样复制成 `tasks-copied-example.jsonl`，
+    # 改名即绕过 —— 只认名字的判据挡不住任何想绕过的人。
+    example = REPO / "profiles" / "agent-harness" / "examples" / "tasklist.example.jsonl"
+    if example.is_file() and _same_file_content(p, example):
         return c.fail(
-            f"这是随仓库分发的示例题单（{p.name}），不是真数据",
-            "示例只描述形状、不带 command 字段，照它跑会一题都跑不起来",
+            f"这份题单与随仓库分发的示例逐字节相同（{p.name}），不是真数据",
+            "示例只描述形状；照它跑等于拿合成数据当研究结果",
         )
+
     try:
         got = read_tasklist(str(p))
     except ResultsError as exc:
@@ -122,10 +151,41 @@ def check_tasklist(path: str | None) -> Check:
         return isinstance(cmd, list) and bool(cmd)
 
     with_cmd = sum(1 for t in tasks if _has_command(t))
-    return c.pass_(f"strict 可读，n_tasks={len(tasks)}，{with_cmd} 条自带 command")
+    detail = f"strict 可读，n_tasks={len(tasks)}，{with_cmd} 条自带 command"
+    if with_cmd == 0:
+        # 题单本身合法，但每题都不带命令 ⇒ 用 `--per-task-command` 跑会一题都跑不起来。
+        # 这不是「题单不合格」，是「题单 + 执行器模式」不匹配，所以是 unknown 不是 bad。
+        return c.unknown(
+            detail + "（每题都不带 command：只有执行器用统一 `--task-cmd` 模板时才跑得起来）",
+            "要么每题加 command，要么确认执行器用的是统一命令模板",
+        )
+    return c.pass_(detail)
 
 
-def check_profile(path: str | None) -> Check:
+def _same_file_content(a: pathlib.Path, b: pathlib.Path) -> bool:
+    try:
+        if a.stat().st_size != b.stat().st_size:
+            return False
+        return a.read_bytes() == b.read_bytes()
+    except OSError:
+        return False
+
+
+def check_profile(path: str | None, provenance: str | None = None) -> Check:
+    """三态判执行器。
+
+    副机 L69 把这件事拆得很清楚，采纳它的结论：
+
+    * **配置完整性** —— `evaluation_state()` 已经做了（command 非空、`configured`、
+      limits 齐、`command[0]` 非占位符/存在/非目录/后缀合格）。它证明的是「没配错」，
+      **不是「执行器是真的」**。
+    * **身份（provenance）** —— 真实执行器应当有可核对的登记：入口的内容哈希。
+      「假脚本」和「真脚本」在文件存在性上完全一样，只有哈希能区分。
+    * **行为负控** —— 拿一个故意不能跑的输入真跑一次。这会真的执行执行器，
+      可能联网/计费，所以**默认不做**，留给人明确批准。
+
+    所以：`can_run=false` ⇒ ✗；配好了但没 provenance ⇒ **`?`（未证实）**，不是 ✓。
+    """
     c = Check("B", "执行器")
     if not path:
         return c.fail("未指定 --profile", "用 tools/make_profile.py 生成一份，或给出已有 profile 目录")
@@ -138,14 +198,82 @@ def check_profile(path: str | None) -> Check:
     if not state.get("can_run"):
         blocking = "；".join(state.get("blocking") or ["未知原因"])
         return c.fail(f"can_run=false：{blocking}", "补齐 command / configured / limits")
+
+    # 能否被驱动：`{tasks}` 与 `{output}` 必须是独立元素，否则内核替换不了。
+    missing_ph = [ph for ph in ("{tasks}", "{output}") if ph not in command]
+    if missing_ph:
+        return c.fail(
+            f"command 里缺占位符 {'、'.join(missing_ph)}，无法被驱动",
+            "command 必须含独立的 {tasks} 与 {output} 元素",
+        )
+
+    # 名字里像桩 ⇒ 降级为 unknown，**不判 ✗**：`my_stubby_runner.py` 是误伤，
+    # `runner.py --dry-run` 是合法旗标。名字不是判据。
     joined = " ".join(str(x) for x in command).lower()
     hit = [m for m in STUB_MARKERS if m in joined]
     if hit:
-        return c.fail(
-            f"命令里出现桩/占位标记 {'/'.join(hit)}，这不是真实执行器：{joined[:120]}",
-            "把 command 换成真正跑评测的那个入口",
+        return c.unknown(
+            f"command 里出现像桩的词 {'/'.join(hit)}：{joined[:120]}",
+            "名字不是判据；请提供执行器 provenance，或人工确认它不是桩",
         )
-    return c.pass_(f"可解析，can_run=true，command {len(command)} 元素")
+
+    if not provenance:
+        return c.unknown(
+            f"可解析，can_run=true，command {len(command)} 元素；"
+            "但「配置完整」不等于「这是真实执行器」—— 缺 provenance 登记",
+            "给 --executor-provenance 一份清单（含入口 sha256）；"
+            "或用拒绝性负控（空题单应非零退出）来证明它会做评测",
+        )
+
+    ok, why = _verify_provenance(command, provenance)
+    if ok:
+        return c.pass_(f"can_run=true，command {len(command)} 元素；provenance 哈希匹配（{why}）")
+    return c.fail(f"provenance 校验失败：{why}", "执行器被替换过？核对登记里的 sha256 与当前入口")
+
+
+def _resolve_entry(command: list) -> tuple[str, pathlib.Path | None, str]:
+    """把 command 归成 `(kind, path, 说明)`：kind ∈ script / inline / binary。"""
+    first = str(command[0])
+    # `python -c "..."`：入口是 -c 后面的整段 payload，没有文件可哈希。
+    for i, element in enumerate(command):
+        if element == "-c" and i + 1 < len(command):
+            return "inline", None, str(command[i + 1])
+    # 否则取第一个「看起来是文件」的元素（跳过解释器与 -X/-B 这类旗标）。
+    for element in command[1:]:
+        s = str(element)
+        if s.startswith("-") or s.startswith("{"):
+            continue
+        p = pathlib.Path(s)
+        if p.is_file():
+            return "script", p, s
+    return "binary", pathlib.Path(first) if pathlib.Path(first).is_file() else None, first
+
+
+def _verify_provenance(command: list, provenance_path: str) -> tuple[bool, str]:
+    import hashlib
+
+    try:
+        blob = json.loads(pathlib.Path(provenance_path).read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, f"读不了 provenance：{exc}"
+    if not isinstance(blob, dict):
+        return False, "provenance 不是 JSON 对象"
+    entry = blob.get("entry") if isinstance(blob.get("entry"), dict) else {}
+    want = entry.get("sha256")
+    if not isinstance(want, str) or len(want) != 64:
+        return False, "provenance.entry.sha256 缺失或不是 64 位十六进制"
+
+    kind, path, detail = _resolve_entry(command)
+    if kind == "inline":
+        actual = hashlib.sha256(detail.encode("utf-8")).hexdigest()
+        return (actual == want, f"inline payload 哈希 {actual[:12]}…")
+    if path is None:
+        return False, "找不到可哈希的入口文件（command[0] 也不是文件）"
+    try:
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as exc:
+        return False, f"读不了入口文件：{exc}"
+    return (actual == want, f"{path.name} 哈希 {actual[:12]}…")
 
 
 def check_data(args) -> Check:
@@ -201,13 +329,42 @@ def check_authorization(path: str | None) -> Check:
         text = p.read_text(encoding="utf-8-sig", errors="replace")
     except OSError as exc:
         return c.fail(f"读不了授权文件：{exc}")
-    missing = [label for label in AUTH_LABELS if label not in text]
+
+    # 标签用**别名集合**：副机 L69 实测，两套实现一个要「预算上限」、一个要「花费上限」，
+    # 于是同一份授权文件在两边给出相反结论 —— 「同一批事实、两个实现、结论相反」
+    # 比任何单边判据都糟。同义词都收，但每个标签必须**后面跟着值**（见下）。
+    missing = [label for label, aliases in AUTH_LABELS.items()
+               if not any(a in text for a in aliases)]
     if missing:
         return c.fail(
             f"授权文件缺标签：{'、'.join(missing)}",
-            f"四个标签都要有：{' / '.join(AUTH_LABELS)}",
+            "每项都要有："
+            + " / ".join(f"{label}（{'或'.join(aliases)}）" for label, aliases in AUTH_LABELS.items()),
         )
-    return c.pass_(f"四标签齐（{' / '.join(AUTH_LABELS)}）；未回显任何值")
+
+    # 只查「标签在不在」会放过 `允许提交=是` —— 而「不许提交 Kaggle」是本项目的铁律。
+    # 所以这一项的值必须解析出来，`是` 直接一票否决。
+    submit = _label_value(text, AUTH_LABELS["允许提交"])
+    if submit is None:
+        return c.fail("「允许提交」没有值（只有标签）", "写成「允许提交：否」这种带值的形式")
+    if submit.strip() not in ("否", "no", "false", "0", "不允许"):
+        return c.fail(
+            f"「允许提交」的值是 {submit.strip()!r}，本项目不许提交 Kaggle",
+            "把「允许提交」改成「否」；要提交必须人来改这条铁律，不是改授权文件",
+        )
+
+    return c.pass_(
+        "四标签齐且「允许提交=否」；其余值不回显（避免把金额/姓名打到日志里）"
+    )
+
+
+def _label_value(text: str, aliases) -> str | None:
+    """取某个标签后面的值：支持 `标签：值` / `标签: 值` / `标签=值`。"""
+    for alias in aliases:
+        m = re.search(re.escape(alias) + r"\s*[:：=]\s*(.+)$", text, flags=re.M)
+        if m:
+            return m.group(1).strip()
+    return None
 
 
 def main(argv=None) -> int:
@@ -219,40 +376,45 @@ def main(argv=None) -> int:
     ap.add_argument("--ssh-dir", default=None, help="SSH 目录（需含非空 id_* 私钥）")
     ap.add_argument("--autodl-file", default=None, help="AutoDL token 文件（只查存在与大小）")
     ap.add_argument("--authorization", default=None, help="预算授权文件")
+    ap.add_argument("--executor-provenance", default=None,
+                    help="执行器 provenance 清单（含 entry.sha256）；不给则 B 项只能给「未证实」")
     ap.add_argument("--json", default=None, help="把结果写成 JSON")
     args = ap.parse_args(argv)
 
     checks = [
         check_tasklist(args.tasklist),
-        check_profile(args.profile),
+        check_profile(args.profile, args.executor_provenance),
         check_data(args),
         check_authorization(args.authorization),
     ]
 
     print(f"人件就绪门 · 仓库 {REPO}")
     for c in checks:
-        mark = "✓" if c.ok else "✗"
+        mark = {"ok": "✓", "bad": "✗"}.get(c.state, "?")
         print(f"{c.key} {c.title} {mark}")
         print(f"    {c.detail}")
         if not c.ok and c.next_step:
             print(f"    下一步：{c.next_step}")
 
-    done = sum(1 for c in checks if c.ok)
+    done = sum(1 for c in checks if c.state == "ok")
+    unknown = sum(1 for c in checks if c.state == "unknown")
+    bad = sum(1 for c in checks if c.state == "bad")
     total = len(checks)
     verdict = 0 if done == total else 2
     print(
-        f"结论：四项中 {done}/{total} 齐；exit {verdict}。"
+        f"结论：{done}/{total} 齐，{unknown} 项未证实，{bad} 项缺；exit {verdict}。"
         "齐只表示人件形状齐，不是放行评测 —— 放行仍需人明确表态。"
     )
 
     if args.json:
         payload = {
             "checks": [
-                {"key": c.key, "title": c.title, "ok": c.ok,
+                {"key": c.key, "title": c.title, "state": c.state, "ok": c.ok,
                  "detail": c.detail, "next_step": c.next_step}
                 for c in checks
             ],
-            "done": done, "total": total, "exit": verdict,
+            "done": done, "unknown": unknown, "bad": bad,
+            "total": total, "exit": verdict,
         }
         pathlib.Path(args.json).write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
