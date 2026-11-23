@@ -160,6 +160,38 @@ reason = 补丁修改了测试文件：tests/test_file_proxy.py。
 为什么是 `infra_error` 而不是 `failed`：这不是「没做对」，是**这份提交不属于被评测的范围**。
 把它记成 `failed` 会污染通过率的分母。
 
+### 不止是测试文件
+
+实测（副机 L89/L90）：一道源码 `f()==1`、测试要 `2` 的**必红题**，补丁只往仓库根加一个 `conftest.py`：
+
+```python
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        item.add_marker(pytest.mark.skip(reason="x"))
+```
+
+`status` 就变成 `passed` —— **代码一行没改**。它不在 `tests/` 前缀下，前缀守卫对它完全无感。
+
+现在判据守卫认三类（`patch_touches_judgment()`）：
+
+1. 测试前缀下的文件；
+2. **任意位置**的 `conftest.py` / `pytest.ini`；
+3. `tox.ini` / `setup.cfg` / `pyproject.toml` 里动到 `[pytest]` / `[tool:pytest*]` 段。
+
+### 这个守卫的边界（实测过，别当成万能）
+
+它是一条**白名单**，不是静态分析：
+
+| 入口 | 实测结果 |
+|---|---|
+| 根目录加 `sitecustomize.py`（让 Python 启动时 monkeypatch 被测模块） | **打不进来**：`site` 在 `-m` 之前执行，cwd 还不在 `sys.path` 上；加与不加，测试都是 `1 failed` |
+| 改 `pytest.ini` 的 `addopts` / 加 `[tool.pytest.ini_options]` | 被拦 |
+| 改根 `conftest.py`（用例全 skip） | 被拦 |
+| **`conftest` 里 `import` 的辅助模块被改** | **没覆盖** —— 需要解析已有 conftest 再追依赖 |
+| 环境变量（`PYTEST_ADDOPTS`）影响会话 | **没覆盖** —— 补丁改不到环境，但执行器可以 |
+
+后两行是**主动写出来的缺口**：因为「守卫没覆盖」和「守卫说没问题」在读的人眼里可能是同一件事。
+
 ---
 
 ## 8. 已知边界
