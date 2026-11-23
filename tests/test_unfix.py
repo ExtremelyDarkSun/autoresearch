@@ -1072,5 +1072,81 @@ class TestClassifySkipped(unittest.TestCase):
         missing, why = unfix.real_pass_missing({'total': 3, 'passed': 2, 'skipped': 1})
         self.assertFalse(missing, '只要有一条真跑过就不算缺失')
 
+
+
+class TestAuditRows(unittest.TestCase):
+    """复核已存题集：结论对不等于理由对，而且文件没写它是哪版判据产出的。
+
+    实测（离线复核 40 行）：9 行写着「超时：usable=False」，而当前代码同一条会判
+    「红是挂住 ⇒ usable=True」。结论变了、文件没变、**文件里没有版本信息**。
+    """
+
+    def _row(self, why, usable, version=None, red=1, green=0, ids=('a::t',)):
+        row = {'commit': 'x', 'usable': usable, 'why': why,
+               'red': {'exit': red, 'failed_ids': list(ids), 'tail': ''},
+               'green': {'exit': green, 'failed_ids': [], 'tail': ''}}
+        if version is not None:
+            row['judge_version'] = version
+        return row
+
+    def test_matching_reason_is_clean(self):
+        rep = unfix.audit_rows([self._row('红→绿成立', True, unfix.JUDGE_VERSION)])
+        self.assertEqual(rep['mismatches'], [])
+        self.assertEqual(rep['stale'], 0)
+
+    def test_stale_reason_is_reported(self):
+        rep = unfix.audit_rows([self._row('超时：跑不完', False, unfix.JUDGE_VERSION,
+                                        red=unfix.TIMEOUT_EXIT)])
+        self.assertEqual(len(rep['mismatches']), 1)
+        self.assertIn('挂住', rep['mismatches'][0]['why_now'])
+
+    def test_old_version_counts_as_stale(self):
+        rep = unfix.audit_rows([self._row('红→绿成立', True, '2026-01-01.1')])
+        self.assertEqual(rep['stale'], 1)
+        self.assertIn('2026-01-01.1', rep['versions'])
+
+    def test_missing_version_counts_as_stale(self):
+        rep = unfix.audit_rows([self._row('红→绿成立', True)])
+        self.assertEqual(rep['stale'], 1, '没写版本 = 不知道哪版产的 = 不可信')
+
+
+    def test_scan_stamps_judge_version(self):
+        """`scan` 写出的每一行都要带版本戳 —— 纯函数用例守不住这段管线。
+
+        反证：把 `rec.update` 里的 `judge_version` 去掉，这条会红；
+        而只测 `audit_rows` 的用例**不会**红（它们自己造 row）。
+        """
+        import shutil
+        import subprocess
+        import tempfile
+        repo = pathlib.Path(tempfile.mkdtemp(prefix='unfix-stamp-'))
+        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+        (repo / 'tests').mkdir()
+        (repo / 'mod.py').write_text('def f():' + chr(10) + '    return 1' + chr(10), encoding='utf-8')
+        (repo / 'tests' / 'test_f.py').write_text(
+            'from mod import f' + chr(10) + chr(10) + 'def test_f():' + chr(10)
+            + '    assert f() == 1' + chr(10), encoding='utf-8')
+
+        def git(*args):
+            subprocess.run(['git', '-C', str(repo), *args], capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL)
+
+        git('init', '-q')
+        git('add', '-A')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', '1')
+        (repo / 'mod.py').write_text('def f():' + chr(10) + '    return 2' + chr(10), encoding='utf-8')
+        (repo / 'tests' / 'test_f.py').write_text(
+            'from mod import f' + chr(10) + chr(10) + 'def test_f():' + chr(10)
+            + '    assert f() == 2' + chr(10), encoding='utf-8')
+        git('add', '-A')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', '2')
+
+        self.assertEqual(unfix.scan(repo, pathlib.Path(sys.executable), 1, repo / 'scan',
+                                    ('mod.py',), ('tests/',)), 0)
+        rows = [json.loads(x) for x in (repo / 'scan' / 'candidates.jsonl').read_text(
+            encoding='utf-8').splitlines() if x.strip()]
+        self.assertTrue(rows)
+        self.assertEqual(rows[0].get('judge_version'), unfix.JUDGE_VERSION)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

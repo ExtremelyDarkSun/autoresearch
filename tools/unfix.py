@@ -64,6 +64,14 @@ DEFAULT_SRC_PREFIXES = ("fastapi/", "httpx/", "requests/", "rich/", "src/")
 DEFAULT_TEST_PREFIXES = ("tests/",)
 TIMEOUT_EXIT = 124
 
+#: 判据的**语义版本**。判据的规则一改（例如「红是挂住也算可用」「跳过不算通过」），就要往上跳一位。
+#:
+#: 为什么要它：离线复核已经存下来的题集时发现 —— 同一份 `candidates.jsonl` 里有 9 条记着
+#: 「超时：usable=False」，而**当**前代码同一条会判「红是挂住 ⇒ usable=True」。
+#: 结论变了，文件没变，而文件里没有任何东西说明它是哪一版判据产出的。
+#: 于是「这道题能不能用」变成了一个**取决于你什么时候跑的问题**。
+JUDGE_VERSION = "2026-11-23.4"
+
 
 def sh(argv, cwd=None, timeout=1800):
     """跑子进程；超时返回 124 而不是抛异常。
@@ -301,7 +309,8 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
     rows = []
     for i, cand in enumerate(keep[:limit], 1):
         rec = dict(cand)
-        rec.update({"red": {}, "green": {}, "fail_to_pass": [], "usable": False,
+        rec.update({"judge_version": JUDGE_VERSION,
+                    "red": {}, "green": {}, "fail_to_pass": [], "usable": False,
                     "fail_mode": "assert", "why": None})
         code, dirty, _ = git(repo, "status", "--porcelain", "--untracked-files=no")
         if dirty:
@@ -622,6 +631,41 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
     return finish("infra_error", f"不是「没通过」，是没测成（pytest exit {code}）：{tail}")
 
 
+def audit_rows(rows) -> dict:
+    """复核一批已存候选行：判据版本 + 理由是否还对得上当前代码。
+
+    为什么需要：判据改过几轮之后，旧文件里的 `why` 可能已经**不是当前代码会给出的理由**。
+    实例（离线复核发现）：同一份 `candidates.jsonl` 里 9 条写着「超时：usable=False」，
+    而当前代码同一条会判「红是挂住 ⇒ usable=True」。结论变了、文件没变、文件里没有版本信息 ——
+    于是「这道题能不能用」取决于你是**什么时候**跑的。
+
+    返回 `{"rows": n, "versions": {...}, "stale": n, "mismatches": [...]}`。
+    """
+    versions = {}
+    mismatches = []
+    for r in rows:
+        ver = r.get("judge_version") or "(无版本)"
+        versions[ver] = versions.get(ver, 0) + 1
+        red = r.get("red") or {}
+        green = r.get("green") or {}
+        red_ids = red.get("failed_ids") or []
+        broken = bool(red.get("collection_broken")) or "during collection" in (red.get("tail") or "")
+        try:
+            usable_now, why_now = classify(red.get("exit"), green.get("exit"), red_ids, broken)
+        except TypeError:
+            continue
+        stored_why = (r.get("why") or "").strip()
+        if why_now.strip() != stored_why:
+            mismatches.append({"commit": r.get("commit"),
+                               "stored_usable": r.get("usable"),
+                               "stored_why": stored_why,
+                               "usable_now": usable_now,
+                               "why_now": why_now})
+    stale = sum(v for k, v in versions.items() if k != JUDGE_VERSION)
+    return {"rows": len(rows), "versions": versions, "stale": stale,
+            "mismatches": mismatches}
+
+
 def _capture_run(repo, py, commit, tests, out_dir, apply_gold=False, patch=None,
                  timeout=180.0, src_prefixes=DEFAULT_SRC_PREFIXES,
                  test_prefixes=DEFAULT_TEST_PREFIXES, regression_tests=None,
@@ -664,6 +708,9 @@ def main(argv=None) -> int:
     s.add_argument("--src-prefixes", default=None, help="逗号分隔，默认内置几种布局")
     s.add_argument("--test-prefixes", default=None, help="逗号分隔，默认 tests/")
 
+    au = sub.add_parser("audit", help="复核已存的 candidates.jsonl（版本 + 理由漂移）")
+    au.add_argument("--file", required=True)
+    au.add_argument("--show", type=int, default=10)
     r = sub.add_parser("run", help="跑一道题（正控 / 负控 / 评补丁）")
     r.add_argument("--repo", required=True)
     r.add_argument("--commit", required=True)
@@ -683,6 +730,8 @@ def main(argv=None) -> int:
     ap.add_argument("--selftest", action="store_true", help="跑判据的单元测试")
 
     args = ap.parse_args(argv)
+    args.audit_file = getattr(args, "file", None) if args.cmd == "audit" else None
+    args.audit_show = getattr(args, "show", 10)
 
     if getattr(args, "selftest", False):
         # 用路径加载，不依赖 cwd 是仓库根（在别的目录敲 `--selftest` 也该能跑）
@@ -706,6 +755,22 @@ def main(argv=None) -> int:
         tests_dir = pathlib.Path(__file__).resolve().parents[1] / "tests"
         suite = unittest.TestLoader().discover(str(tests_dir), pattern="test_unfix.py")
         return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
+
+    if getattr(args, "audit_file", None):
+        import json as _json
+        p = pathlib.Path(args.audit_file)
+        rows = [_json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
+        rep = audit_rows(rows)
+        print(f"{p.name}：{rep['rows']} 行；版本分布 {rep['versions']}；"
+              f"非当前版本 {rep['stale']} 行")
+        if rep["stale"]:
+            print(f"  注意：当前判据版本是 {JUDGE_VERSION} —— 旧版本产出的文件，"
+                  f"结论可能与现在不同，别直接当题集用")
+        print(f"  理由与当前代码不一致：{len(rep['mismatches'])} 行")
+        for m in rep["mismatches"][:args.audit_show]:
+            print(f"  - {m['commit']}：旧 usable={m['stored_usable']} why={m['stored_why']}")
+            print(f"      今 usable={m['usable_now']} why={m['why_now']}")
+        return 0 if not rep["mismatches"] and not rep["stale"] else 1
 
     if not args.cmd:
         ap.print_help()
