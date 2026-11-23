@@ -339,7 +339,8 @@ def changed_files(repo: pathlib.Path, commit: str, src_prefixes,
 
 
 def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path,
-         src_prefixes, test_prefixes=DEFAULT_TEST_PREFIXES, budget_seconds: float = 900.0) -> int:
+         src_prefixes, test_prefixes=DEFAULT_TEST_PREFIXES, budget_seconds: float = 900.0,
+         only_commits=None) -> int:
     code, out, err = git(repo, "log", "--name-only", "--format=@@%h|%s", timeout=900)
     if code != 0:
         raise SystemExit("git log 失败：" + err[:160])
@@ -367,6 +368,19 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
             keep.append({"commit": c["commit"], "subject": c["subject"],
                          "src_files": src, "test_files": tst})
     print(f"候选（源码+测试同改）：{len(keep)}；本轮验证前 {min(limit, len(keep))}", flush=True)
+
+    # 只验指定提交：复评一份已有补丁时，把 9 道题全扫一遍再过滤是浪费
+    # （实测：9 道题扫了十几分钟，最后只用到其中 1 道）。
+    if only_commits:
+        wanted = {c.strip()[:12] for c in str(only_commits).split(",") if c.strip()}
+        before = len(keep)
+        keep = [c for c in keep if str(c["commit"])[:12] in wanted]
+        hit = {str(c["commit"])[:12] for c in keep}
+        missing = wanted - hit
+        if missing:
+            print(f"  警告：这些提交不在候选里（或不是源码+测试同改）：{sorted(missing)}",
+                  file=sys.stderr)
+        print(f"  --only-commit 过滤：{before} → {len(keep)}", flush=True)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     rows = []

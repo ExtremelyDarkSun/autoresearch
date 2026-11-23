@@ -85,3 +85,34 @@ python -X utf8 -B tools/unfix.py run --repo <repo> --commit <sha> --patch <候�
 
 前十几轮防的是「补丁改判据」；这一条防的是**「模型直接看答案」**——
 它不需要改任何东西，只要 `git log`。**判据再严也拦不住。**
+
+## 复评一份已有补丁：`--only-commit`
+
+`bench` 原来只能从 `scan` 的第一名往后取 `--limit` 道，**没法按指定 commit 评**。
+想拿一份已存在的补丁复评，只能靠 `--limit` 碰运气碰上那个 commit。
+
+现在：
+
+```bash
+python -X utf8 -B tools\bench.py --repo <repo> --python <py> \
+    --src-prefixes "rich/" --only-commit 4ca56966 \
+    --out <dir> --patch-dir <dir>
+```
+
+实测（rich 仓库）：
+
+| | 耗时 | 扫了几道 |
+|---|---|---|
+| 旧：`--limit 9` 再靠运气 | 十几分钟 | 9 |
+| 新：`--only-commit 4ca56966` | **4 秒** | 1 |
+
+关键是**在验证之前过滤**，不是验证完再过滤 —— `scan` 也支持 `only_commits` 参数，
+`bench` 把 `--only-commit` 直接传下去。
+
+### 顺带一个坑
+
+被测仓库的工作树若被上一次**中断**的 scan 留在改动状态（哪怕只是暂存区），
+之后所有 run 都会以「工作树不干净」失败。实测踩到：`M rich/cells.py` 停在暂存区，
+`--only-commit` 直接报不可用。清理后才 4 秒通过。
+
+**中断运行的残留会伪装成「这道题坏了」。**

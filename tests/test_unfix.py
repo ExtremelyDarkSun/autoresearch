@@ -1457,5 +1457,40 @@ class TestFtpRequiredForScoring(unittest.TestCase):
         res = json.loads((out / f"{c2}.json").read_text(encoding="utf-8"))
         self.assertEqual(res["status"], "infra_error", res)
         self.assertIn("--fail-to-pass", res["reason"])
+class TestOnlyCommitFilter(unittest.TestCase):
+    """复评一份已有补丁时，不该把全部候选扫一遍再过滤（实测 9 道题扫十几分钟，只用到 1 道）。"""
+
+    def test_scan_validates_only_requested_commit(self):
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="onlyc-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo = tmp / "repo"
+        (repo / "tests").mkdir(parents=True)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repo), *args],
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+        def commit(msg):
+            git("add", "-A")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg)
+
+        git("init", "-q")
+        for i in (1, 2, 3):
+            (repo / "mod.py").write_text(f"def f():\n    return {i}\n", encoding="utf-8")
+            (repo / "tests" / "test_f.py").write_text(
+                f"from mod import f\n\n\ndef test_f():\n    assert f() == {i}\n", encoding="utf-8")
+            commit(f"c{i}")
+        second = git("rev-parse", "--short", "HEAD~1").stdout.strip()
+
+        out = repo / "scan"
+        rc = unfix.scan(repo, pathlib.Path(sys.executable), 10, out, ("mod.py",), ("tests/",),
+                        only_commits=second)
+        self.assertEqual(rc, 0)
+        rows = [json.loads(x) for x in (out / "candidates.jsonl").read_text(
+            encoding="utf-8").splitlines() if x.strip()]
+        self.assertEqual([r["commit"][:7] for r in rows], [second],
+                         "只该验指定那一道")
 if __name__ == "__main__":
     unittest.main(verbosity=2)

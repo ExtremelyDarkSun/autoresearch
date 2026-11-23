@@ -98,11 +98,12 @@ def _top_dirs(repo: pathlib.Path, sample: int = 300, limit: int = 5) -> list[str
 
 def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path,
               src_prefixes, test_prefixes, patch_dir: pathlib.Path | None = None,
-              timeout: float = 180.0, budget_seconds: float = 600.0) -> int:
+              timeout: float = 180.0, budget_seconds: float = 600.0, only_commits=None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     scan_dir = out_dir / "scan"
     print(f"[1/3] 造题与验证（limit={limit}）", flush=True)
-    rc = unfix.scan(repo, py, limit, scan_dir, src_prefixes, test_prefixes)
+    rc = unfix.scan(repo, py, limit, scan_dir, src_prefixes, test_prefixes,
+                    only_commits=only_commits)
     if rc != 0:
         print(f"  scan 失败（exit {rc}），停止", file=sys.stderr)
         return rc
@@ -268,6 +269,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="bench.py")
     ap.add_argument("--repo", required=True)
     ap.add_argument("--python", default=None, help="默认 <repo>/.venv/Scripts/python.exe")
+    ap.add_argument("--only-commit", default=None,
+                    help="只评指定提交（逗号分隔，可写短 sha）—— 复评已有补丁时用")
     ap.add_argument("--limit", type=int, default=3)
     ap.add_argument("--out", required=True)
     ap.add_argument("--src-prefixes", default=None)
@@ -291,7 +294,8 @@ def main(argv=None) -> int:
     return run_bench(repo, py, args.limit, pathlib.Path(args.out), src_prefixes,
                      test_prefixes,
                      pathlib.Path(args.patch_dir) if args.patch_dir else None,
-                     args.timeout, args.budget_seconds)
+                     args.timeout, args.budget_seconds,
+                                only_commits=args.only_commit)
 
 
 if __name__ == "__main__":
