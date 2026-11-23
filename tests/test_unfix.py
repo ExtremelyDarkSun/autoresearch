@@ -1538,5 +1538,43 @@ class TestRegressionCheckIsLive(unittest.TestCase):
         row = next(r for r in rows if r["subject"].startswith("c2"))
         self.assertFalse(row["usable"], row)
         self.assertIn("回归", row["why"] or "", row)
+class TestCommitSize(unittest.TestCase):
+    """改动规模只算源码侧，且不能被别的候选的变量串味。
+
+    实测踩到：`commit_size(..., src)` 里的 `src` 是上一轮循环残留的变量，
+    于是 648ceda2 的「源码规模」把测试文件的 17 行也算进去了（+20 而不是 +3）。
+    """
+
+    def test_counts_only_given_files(self):
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="size-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo = tmp / "repo"
+        (repo / "tests").mkdir(parents=True)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repo), *args],
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+        def commit(msg):
+            git("add", "-A")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg)
+
+        git("init", "-q")
+        (repo / "mod.py").write_text("a\nb\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text("x\n", encoding="utf-8")
+        commit("c1")
+        (repo / "mod.py").write_text("a\nb\nc\nd\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text("x\ny\nz\n", encoding="utf-8")
+        commit("c2")
+
+        only_src = unfix.commit_size(repo, "HEAD", ["mod.py"])
+        self.assertEqual(only_src["src_files"], 1)
+        self.assertEqual(only_src["added"], 2, only_src)
+        self.assertEqual(only_src["deleted"], 0, only_src)
+
+        only_test = unfix.commit_size(repo, "HEAD", ["tests/test_m.py"])
+        self.assertEqual(only_test["added"], 2, only_test)
 if __name__ == "__main__":
     unittest.main(verbosity=2)
