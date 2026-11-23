@@ -92,7 +92,37 @@ fastapi 低的原因清楚：新功能提交会在测试里用它自己新增的
 
 ---
 
-## 6. 已知边界
+## 6. 回归闸：题目过了不等于没把库弄坏
+
+`--tests` 只跑那道题相关的文件。**这正是本工具的一个假绿入口** ——
+一个补丁完全可能「修好这道题、弄坏别处」，而默认判定照样给 `passed`。
+
+实测（同一个提交、同一道题）：
+
+| 补丁内容 | 不带回归检查 | 带回归检查 |
+|---|---|---|
+| 只修 `file_proxy.py` 的 `isatty` | `passed` | `passed`（新增 0 条） |
+| 修好同一处 **+ 悄悄改坏 `set_cell_size`** | **`passed`（假绿）** | `failed`：`tests/test_cells.py::test_set_cell_size` |
+
+用法：
+
+```powershell
+python -X utf8 -B tools/unfix.py run --repo <r> --commit <sha> --tests tests/x.py --out <o> `
+  --patch fix.patch --regression-tests tests --known-failures tests/a.py::t1 tests/b.py::t2
+```
+
+两条设计约束，都是被实际情况逼出来的：
+
+1. **不能要求回归全绿**。很多仓库基线本身就有失败（rich 在本机是 `7 failed / 976 passed`，
+   与 pygments、终端有关的既有问题）。所以比的是「**相对基线有没有新增**」，
+   `--known-failures` 就是基线那批已知失败。
+2. **用例 id 必须归一化路径分隔符再比**。pytest 在 Windows 上打 `tests\a.py::t`，
+   人和文档写 `tests/a.py::t`。不归一化时每条已知失败都被算成新增，**闸永远红 ——
+   一个永远红的闸等于没有闸**。
+
+---
+
+## 7. 已知边界
 
 - **只认「源码+测试同改」的提交**。只改源码或只改测试的提交，反解不出 fail-to-pass。
 - **源码目录与测试目录的前缀是假设，不是事实**。默认 `fastapi/ httpx/ requests/ rich/ src/` 与 `tests/`；

@@ -217,9 +217,21 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
     return 0
 
 
+def new_failures(failed_ids, known_ids) -> list[str]:
+    """回归检查：这批失败里，哪些是基线里没有的（= 真的新增了回归）。
+
+    分隔符必须归一化再比：pytest 在 Windows 上打 `tests\\a.py::t`，而人和文档写 `tests/a.py::t`。
+    不归一化的话每条已知失败都会被算成新增，闸永远红 —— **一个永远红的闸等于没有闸**。
+    """
+    norm = lambda s: s.replace("\\", "/")
+    known = {norm(k) for k in (known_ids or ())}
+    return [i for i in (failed_ids or ()) if norm(i) not in known]
+
+
 def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
             out_dir: pathlib.Path, apply_gold: bool, patch: str | None,
-            timeout: float, src_prefixes, test_prefixes=DEFAULT_TEST_PREFIXES) -> int:
+            timeout: float, src_prefixes, test_prefixes=DEFAULT_TEST_PREFIXES,
+            regression_tests=None, known_failures=()) -> int:
     started = time.monotonic()
     res = {"task_id": commit, "reason": None, "notes": None, "status": "infra_error",
            "duration_seconds": None, "steps": {}}
@@ -290,6 +302,30 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
         res["steps"]["pytest"] = {"exit": code, "seconds": round(time.monotonic() - t0, 1),
                                   "tail": " ⏎ ".join((out or "").strip().splitlines()[-3:])}
         tail = res["steps"]["pytest"]["tail"]
+
+        # 回归检查：题目测试过了，不代表没把库弄坏。
+        #
+        # 这是本工具的一个**真实假绿入口**：`--tests` 只跑那道题相关的文件。
+        # 一个补丁完全可能「修好这道题、弄坏别处」，而这里照样判 passed。
+        # 实测：我自己的四份补丁跑 rich 全量 976 passed，但基线本来就有 7 条既有失败 ——
+        # 所以这里**不能要求全绿**，只能比较「相对基线有没有新增」。
+        if regression_tests and code == 0:
+            t0 = time.monotonic()
+            rcode, rout, _ = sh([str(py), "-m", "pytest", *regression_tests, "-q", "--no-header",
+                                 "-p", "no:cacheprovider"], cwd=repo, timeout=timeout)
+            rids = sorted(set(re.findall(r"^FAILED (\S+)", rout or "", flags=re.M)))
+            new_list = new_failures(rids, known_failures)
+            res["steps"]["regression"] = {
+                "exit": rcode, "seconds": round(time.monotonic() - t0, 1),
+                "failed": rids, "new_failures": new_list,
+                "known_failures": sorted(known_failures),
+                "tail": " ⏎ ".join((rout or "").strip().splitlines()[-3:]),
+            }
+            if new_list:
+                # 题目过了、别处坏了 —— 这不是通过，是**回归**
+                return finish("failed",
+                              f"题目测试通过，但相对基线新增 {len(new_list)} 条回归失败："
+                              + "; ".join(new_list[:5]))
     finally:
         restore(repo)
 
@@ -328,6 +364,10 @@ def main(argv=None) -> int:
     r.add_argument("--timeout", type=float, default=120.0)
     r.add_argument("--src-prefixes", default=None)
     r.add_argument("--test-prefixes", default=None, help="逗号分隔，默认 tests/")
+    r.add_argument("--regression-tests", nargs="*", default=None,
+                   help="题目测试通过后再跑这些（查有没有把别处弄坏）；可传目录")
+    r.add_argument("--known-failures", nargs="*", default=[],
+                   help="基线里本来就失败的用例 id，回归检查时不算新增")
 
     ap.add_argument("--selftest", action="store_true", help="跑判据的单元测试")
 
@@ -358,7 +398,8 @@ def main(argv=None) -> int:
     test_prefixes = (tuple(args.test_prefixes.split(",")) if getattr(args, "test_prefixes", None)
                      else DEFAULT_TEST_PREFIXES)
     return run_one(repo, py, args.commit, args.tests, pathlib.Path(args.out),
-                   args.apply_gold, args.patch, args.timeout, prefixes, test_prefixes)
+                   args.apply_gold, args.patch, args.timeout, prefixes, test_prefixes,
+                   args.regression_tests, set(args.known_failures or ()))
 
 
 if __name__ == "__main__":

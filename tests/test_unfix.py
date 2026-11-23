@@ -164,5 +164,30 @@ class TestCliSelftest(unittest.TestCase):
         self.assertIn("usage", buf.getvalue())
 
 
+class TestRegressionGate(unittest.TestCase):
+    """回归闸：题目测试过了，不代表没把库弄坏。
+
+    这是本工具的一个**真实假绿入口**（实测）：一个补丁把 `rich/file_proxy.py` 的题修好、
+    同时悄悄改坏 `set_cell_size`，不带回归检查时判 `passed`；带上之后判 `failed` 并指出
+    `tests/test_cells.py::test_set_cell_size`。
+    """
+
+    def test_known_failures_match_across_separators(self):
+        """pytest 在 Windows 上打 `tests\\a.py::t`，人和文档写 `tests/a.py::t`。
+
+        不归一化的话每条已知失败都算新增，闸永远红 —— 一个永远红的闸等于没有闸。
+        """
+        self.assertEqual(unfix.new_failures(["tests\\a.py::t"], ["tests/a.py::t"]), [])
+        self.assertEqual(unfix.new_failures(["tests/a.py::t"], ["tests\\a.py::t"]), [])
+
+    def test_truly_new_failure_is_reported(self):
+        got = unfix.new_failures(["tests\\a.py::t", "tests\\b.py::u"], ["tests/a.py::t"])
+        self.assertEqual(got, ["tests\\b.py::u"])
+
+    def test_empty_known_means_everything_is_new(self):
+        self.assertEqual(unfix.new_failures(["tests/a.py::t"], []), ["tests/a.py::t"])
+        self.assertEqual(unfix.new_failures([], ["tests/a.py::t"]), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
