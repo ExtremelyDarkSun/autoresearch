@@ -831,19 +831,25 @@ class TestJudgmentParserPrecision(unittest.TestCase):
         patch = self._patch("kernel/a.py", "@@ -1 +1 @@" + chr(10) + "-x" + chr(10) + "+y" + chr(10))
         self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), [])
 
-    def test_content_line_that_looks_like_a_diff_header_is_not_a_header(self):
-        """hunk 里一行内容 `+++ b/pyproject.toml` 不是文件头。
+    def test_added_content_that_renders_as_a_diff_header_is_not_a_header(self):
+        """真补丁里，「一行内容看起来像文件头」长什么样 —— 副机 L92 的 E1 纠了我一次。
 
-        实测（`cmp_parsers.py` 对比新旧实现）：旧解析会把 cur 切到 pyproject.toml，
-        于是同一份补丁里后面那个 `+[tool.pytest.ini_options]` 把它判成判据 ——
-        **误杀真补丁**，而补丁本身只改了 `kernel/a.py`。
-        这是唯一一条能区分新旧实现的用例；其余四条在两边输出相同，守不住任何东西。
+        我第一版用例写的补丁内容是 `+++ b/pyproject.toml`。**那在真补丁里不可能出现**：
+        git diff 会给内容行加一个 `+` 前缀，内容 `+++ b/x` 会渲染成 `++++ b/x`。
+
+        真实形状是：源文件里新增一行 `++ b/pyproject.toml`（两个加号），
+        在补丁里那一行就是 `+++ b/pyproject.toml` —— 和文件头长得一模一样。
+        旧解析从「任意以 `+++ ` 开头的行」取路径，于是 cur 被切成 pyproject.toml，
+        紧随其后的 `+[tool.pytest.ini_options]` 就被判成判据：误杀一份只改了 kernel/a.py 的补丁。
+
+        这条用例用的就是那个真实形状（副机 L92 复现过：旧实现返回 pyproject.toml，新实现返回空）。
         """
-        patch = (f"diff --git a/kernel/a.py b/kernel/a.py" + chr(10)
-                 + f"--- a/kernel/a.py" + chr(10) + f"+++ b/kernel/a.py" + chr(10)
+        patch = ("diff --git a/kernel/a.py b/kernel/a.py" + chr(10)
+                 + "--- a/kernel/a.py" + chr(10) + "+++ b/kernel/a.py" + chr(10)
                  + "@@ -1 +1,3 @@" + chr(10) + " x" + chr(10)
                  + "+++ b/pyproject.toml" + chr(10) + "+[tool.pytest.ini_options]" + chr(10))
         self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), [])
+
     def test_new_root_conftest_is_flagged(self):
         patch = ("diff --git a/conftest.py b/conftest.py" + chr(10) + "new file mode 100644" + chr(10)
                  + "--- /dev/null" + chr(10) + "+++ b/conftest.py" + chr(10)
