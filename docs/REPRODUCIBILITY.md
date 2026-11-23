@@ -16,7 +16,7 @@
 | 层 | 内容 | 判定 | 判据（可复算） |
 |---|---|---|---|
 | **L0** | clone | ✅ 通过 | `HEAD` 与公开提交逐字相等 |
-| **L1** | 零依赖自检 | ✅ 通过 | `selftest` exit 0：`Ran 272 tests OK` + `Ran 1218 tests OK (skipped=11)`；`--plugins` 末行 `51 passed`；**未装任何依赖** |
+| **L1** | 零依赖自检 | ✅ 通过 | `selftest` exit 0：`Ran 272 tests OK` + `Ran 1371 tests OK (skipped=11)`；`--plugins` 末行 `51 passed`；**未装任何依赖** |
 | **L2** | `init` 工作区 | ✅ 通过 | exit 0；约 53 目录 / 125 文件；`state.empty=true`、`workspace_layout.ok=true` |
 | **L3** | 建专题 + 负责人 | ✅ 通过 | `provision.json`: `status=provisioned`、`isolation=empty-independent-git`；`owner_session` 已绑定 |
 | **L4** | 独立 venv | ✅ 通过 | `pyvenv.cfg`: `version`、`include-system-site-packages=false`、`command` 含 `--without-pip`；`environment_verified=true` |
