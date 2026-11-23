@@ -662,5 +662,69 @@ class TestFalseGreens(unittest.TestCase):
         self.assertNotIn("pytest", res["steps"], "没打补丁就该拒，绝不能跑测试")
 
 
+class TestCollectionErrorOutranksExitOne(unittest.TestCase):
+    """`exit 1` 也可能是「收集阶段就错」—— 副机 L88 报的第三条判据层假绿。
+
+    实测（副机报告 220）：`2 passed, 1 error` + exit 1 被报成 `failed`；
+    全过但收集中有错被报成 `passed`。两者都该是 `infra_error`。
+
+    同时要防**反向**错误：`ERROR tests/x.py::test_y` 是用例级错误（fixture/setup 抛异常），
+    那是真实失败信号，算成「没测成」会把「做错了」从分母里拿掉。
+    """
+
+    def _repo(self):
+        import shutil
+        import subprocess
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="unfix-ce-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "tests").mkdir()
+        # 让 pytest 遇到收集错误继续跑，才可能产生「有 error 也有 passed」的 exit 1
+        (tmp / "pytest.ini").write_text(
+            "[pytest]" + chr(10) + "addopts = --continue-on-collection-errors"
+            + chr(10) + "testpaths = tests" + chr(10), encoding="utf-8")
+        (tmp / "mod.py").write_text("def value():" + chr(10) + "    return 1" + chr(10),
+                                    encoding="utf-8")
+        (tmp / "tests" / "test_ok.py").write_text(
+            "from mod import value" + chr(10) * 3 + "def test_a():" + chr(10)
+            + "    assert value() == 1" + chr(10), encoding="utf-8")
+        (tmp / "tests" / "test_broken.py").write_text(
+            "import not_exist_module_xyz" + chr(10), encoding="utf-8")
+
+        def git(*args):
+            subprocess.run(["git", "-C", str(tmp), *args], capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL)
+
+        git("init", "-q")
+        git("add", "-A")
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "1")
+        (tmp / "mod.py").write_text("def value():" + chr(10) + "    return 2" + chr(10),
+                                    encoding="utf-8")
+        (tmp / "tests" / "test_ok.py").write_text(
+            "from mod import value" + chr(10) * 3 + "def test_a():" + chr(10)
+            + "    assert value() == 2" + chr(10), encoding="utf-8")
+        git("add", "-A")
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "2")
+        return tmp
+
+    def test_setup_error_is_not_collection_broken(self):
+        self.assertFalse(unfix.collection_broken_from(
+            "ERROR tests/a.py::test_x - RuntimeError: boom" + chr(10) + "1 failed in 0.10s"))
+        self.assertTrue(unfix.collection_broken_from(
+            "ERROR tests/a.py" + chr(10) + "2 passed, 1 error"))
+
+    def test_run_one_reports_infra_error_when_collection_is_broken(self):
+        repo = self._repo()
+        code = unfix.run_one(repo, pathlib.Path(sys.executable), "HEAD",
+                             ["tests/test_ok.py", "tests/test_broken.py"],
+                             repo / "out", apply_gold=True, patch=None, timeout=90,
+                             src_prefixes=("mod.py",))
+        rec = json.loads((repo / "out" / "HEAD.json").read_text(encoding="utf-8"))
+        self.assertEqual(rec["status"], "infra_error", rec)
+        self.assertIn("收集阶段就出错", rec["reason"])
+        self.assertEqual(code, 2)
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

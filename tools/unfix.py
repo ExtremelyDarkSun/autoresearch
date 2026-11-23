@@ -133,7 +133,16 @@ def collection_broken_from(output) -> bool:
     也不能只看尾部 3 行：收集错误清单可能很长，真错误在中间。
     """
     text = output or ""
-    return bool(re.search(r"^E?RROR\s+\S+", text, flags=re.M)) or "during collection" in text
+    if "during collection" in text:
+        return True
+    # 只认**收集阶段**的错误行：`ERROR tests/x.py`（路径里没有 `::`）。
+    # `ERROR tests/x.py::test_y` 是用例级错误（fixture/setup 抛异常）—— 那是真实的失败信号，
+    # 把它算成「没测成」会把「这道题做错了」悄悄从分母里拿掉。
+    for line in text.splitlines():
+        m = re.match(r"^E?RROR\s+(\S+)", line)
+        if m and "::" not in m.group(1):
+            return True
+    return False
 
 
 def regression_verdict(rcode: int, new_list) -> tuple[str | None, str | None]:
@@ -333,6 +342,7 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
             f"传给 --tests 的文件与这个提交改的测试文件不相交；"
             f"这个提交改的是：{'、'.join(sorted(wanted))}")
 
+    broken = False
     try:
         code, _, err = git(repo, "checkout", f"{commit}^", "--", *src)
         res["steps"]["revert"] = {"exit": code, "files": src}
@@ -372,6 +382,14 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
         res["steps"]["pytest"] = {"exit": code, "seconds": round(time.monotonic() - t0, 1),
                                   "tail": " ⏎ ".join((out or "").strip().splitlines()[-3:])}
         tail = res["steps"]["pytest"]["tail"]
+        # **同一个 exit 1 可以是两件事**：有测试失败，或者收集阶段就出错。
+        # `scan` 早就用 `collection_broken_from` 分开过，但 `run_one`（评补丁走的就是这条）
+        # 一直只看退出码 —— 于是带收集错误的红被记成 `failed`，甚至全过 + 收集错误被记成 `passed`。
+        # 实测（副机 L88，报告 220）：
+        #   `2 passed, 1 error` + exit 1  → 报成 failed（应该 infra_error）
+        #   全过但 collect 有错          → 报成 passed（应该 infra_error）
+        broken = collection_broken_from(out)
+        res["steps"]["pytest"]["collection_broken"] = broken
 
         # 回归检查：题目测试过了，不代表没把库弄坏。
         #
@@ -398,6 +416,10 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
     finally:
         restore(repo)
 
+    if broken:
+        # 收集错误时，测试根本没跑全 —— 这个结论无论退出码是 0 还是 1 都不成立。
+        return finish("infra_error",
+                      f"不是「测试失败」，是收集阶段就出错（pytest exit {code}）：{tail}")
     if code == 0:
         return finish("passed", notes="全部测试通过")
     if code == 1:
