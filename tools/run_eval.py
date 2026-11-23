@@ -286,6 +286,29 @@ def validate_render_inputs(raw: list[str], task: dict | None = None) -> str | No
 # 单题执行
 # ---------------------------------------------------------------------------
 
+def _reason_from_stdout(stdout: str | None, limit: int = 200) -> str | None:
+    """从执行器的 stdout 里取它自己写的失败原因。
+
+    约定：整段 stdout 能被 `json.loads` 解析，且是对象、带非空字符串 `reason`。
+    不满足就返回 None —— **不猜、不解析半行 JSON**，因为把半截 JSON 当原因读，
+    比「退出码 1」更误导人。
+    """
+    text = (stdout or "").strip()
+    if not text or not text.startswith("{"):
+        return None
+    try:
+        payload = json.loads(text.splitlines()[-1]) if "\n" in text else json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    reason = payload.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        return None
+    reason = reason.strip().replace("\n", " ⏎ ")
+    return reason[:limit]
+
+
 def run_one(task: dict, argv: list[str], *, cwd: Path | None, timeout: float) -> dict:
     """跑一道题，返回符合 schema 的结果行。任何异常都归入四态，不向外抛。"""
     started = time.monotonic()
@@ -322,6 +345,15 @@ def run_one(task: dict, argv: list[str], *, cwd: Path | None, timeout: float) ->
     base["status"] = "passed" if proc.returncode == 0 else "failed"
     if proc.returncode != 0:
         base["reason"] = f"退出码 {proc.returncode}"
+        # 执行器如果按约定在 stdout 打了一行 JSON（含 `reason`），就把它提上来。
+        #
+        # 为什么要做：`退出码 1` 这个词里装了两件事 —— 「3 条测试挂了」和「进程被杀 / 装包失败」
+        # 都是非零退出。四态分得清（0/1/其他），但 `reason` 字段对读的人没有信息量；
+        # 详细内容只在 `notes` 的 400 字尾串里，而且被截断。
+        # 这里把执行器**自己给出的**原因提到 reason，尾串照旧留在 notes —— 一个字段一个职责。
+        own = _reason_from_stdout(proc.stdout)
+        if own:
+            base["reason"] = f"退出码 {proc.returncode}：{own}"
     tail_out = (proc.stdout or "").strip()[-400:]
     tail_err = (proc.stderr or "").strip()[-400:]
     bits = []

@@ -131,6 +131,32 @@ class TestStatusMapping(unittest.TestCase):
         self.assertEqual([r["status"] for r in rows], ["infra_error"])
         self.assertIn("reason", rows[0])
 
+    def test_reason_from_executor_json_is_lifted(self):
+        """执行器把原因写成一行 JSON，就要提到 reason 上，而不是只留「退出码 1」。
+
+        `退出码 1` 这一个词里装了两件事：「3 条测试挂了」和「进程被杀 / 装包失败」
+        都是非零退出。四态分得清，但 reason 字段对读的人没有信息量。
+        """
+        stub = ("import json,sys;"
+                "print(json.dumps({'task_id':'x','status':'failed','reason':'3 failed, 2 passed'}));"
+                "sys.exit(1)")
+        _, rows = self._run_cases([{"task_id": "syn-own-reason", "command": [PY, "-c", stub]}])
+        self.assertEqual(rows[0]["status"], "failed")
+        self.assertIn("退出码 1", rows[0]["reason"])
+        self.assertIn("3 failed, 2 passed", rows[0]["reason"])
+
+    def test_half_json_stdout_is_not_treated_as_reason(self):
+        """半截 / 非 JSON 的 stdout 不许当原因读 —— 那比「退出码 1」更误导人。"""
+        stub = "import sys;print('{\"reason\": \"未闭合');sys.exit(1)"
+        _, rows = self._run_cases([{"task_id": "syn-half", "command": [PY, "-c", stub]}])
+        self.assertEqual(rows[0]["status"], "failed")
+        self.assertEqual(rows[0]["reason"], "退出码 1")
+
+    def test_json_without_reason_field_keeps_exit_code(self):
+        stub = "import json,sys;print(json.dumps({'task_id':'x','status':'failed'}));sys.exit(1)"
+        _, rows = self._run_cases([{"task_id": "syn-no-reason", "command": [PY, "-c", stub]}])
+        self.assertEqual(rows[0]["reason"], "退出码 1")
+
     def test_mixed_batch_counts_are_derived_not_hardcoded(self):
         rows_in = [
             {"task_id": "syn-1", "command": [PY, "-c", "pass"]},
