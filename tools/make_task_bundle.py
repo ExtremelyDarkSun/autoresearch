@@ -63,7 +63,14 @@ def build(repo: pathlib.Path, commit: str, dest: pathlib.Path,
     tests = [f for f in files if f.startswith(tuple(test_prefixes))]
 
     dest.parent.mkdir(parents=True, exist_ok=True)
+    # 上一次中断可能留下已注册的 worktree（目录被删了但 git 还记得），
+    # 直接 add 会报 "is a missing but already registered worktree"。先 prune，失败再强删重试。
+    sh("git", "-C", str(repo), "worktree", "prune")
     code, _o, err = sh("git", "-C", str(repo), "worktree", "add", "--detach", str(dest), parent)
+    if code != 0 and "already registered" in (err or ""):
+        sh("git", "-C", str(repo), "worktree", "remove", "--force", str(dest))
+        sh("git", "-C", str(repo), "worktree", "prune")
+        code, _o, err = sh("git", "-C", str(repo), "worktree", "add", "--detach", str(dest), parent)
     if code != 0:
         raise SystemExit(f"建 worktree 失败：{err[:160]}")
 

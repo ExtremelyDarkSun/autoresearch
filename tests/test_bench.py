@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import subprocess
 import sys
 import unittest
 
@@ -23,6 +24,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 import bench  # noqa: E402
+import study_round  # noqa: E402
 
 
 def _task(usable=True, neg="failed", gold="passed", patch="passed"):
@@ -239,5 +241,71 @@ class TestBudgetGate(unittest.TestCase):
         self.assertEqual(summary["usable"], 0)
         self.assertIn("因时间预算停止", (out / "summary.md").read_text(encoding="utf-8"))
 
+class TestStudyRound(unittest.TestCase):
+    """一轮完整实验：造题 → 造副本 → 收补丁 → 判分 → 报告。
+
+    三种输入给三种读数（都实测过）：
+      没补丁        → pass_rate_scored=None（没评，不是 0 分）
+      已知 gold 补丁 → 1.0
+      假 solver 补丁 → 0.0
+    """
+
+    def _fixture(self, tmp):
+        repo = tmp / "repo"
+        (repo / "tests").mkdir(parents=True)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repo), *args],
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+        def commit(msg):
+            git("add", "-A")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg)
+
+        git("init", "-q")
+        (repo / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (repo / "tests" / "test_f.py").write_text(
+            "from mod import f\n\n\ndef test_f():\n    assert f() == 2\n", encoding="utf-8")
+        commit("c1")
+        (repo / "mod.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+        (repo / "tests" / "test_f.py").write_text(
+            "from mod import f\n\n\ndef test_f():\n    assert f() == 2\n\n# c2\n", encoding="utf-8")
+        commit("c2")
+        return repo, git("rev-parse", "--short", "HEAD").stdout.strip()
+
+    def test_round_with_known_patch_scores_100(self):
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="round-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo, sha = self._fixture(tmp)
+
+        patches = tmp / "given"
+        patches.mkdir()
+        (patches / f"{sha}.patch").write_text(
+            "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n"
+            "@@ -1,2 +1,2 @@\n def f():\n-    return 1\n+    return 2\n", encoding="utf-8")
+
+        import study_round
+        rep = study_round.build_round(repo, pathlib.Path(sys.executable), 5, tmp / "round",
+                                      ("mod.py",), ("tests/",), patch_dir=patches,
+                                      timeout=120.0)
+        self.assertTrue(rep["ok"], rep)
+        self.assertEqual(rep["patch_scored"], 1, rep)
+        self.assertEqual(rep["patch_passed"], 1, rep)
+        self.assertEqual(rep["pass_rate_scored"], 1.0, rep)
+
+    def test_round_without_patch_is_not_zero(self):
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="round0-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo, _sha = self._fixture(tmp)
+        import study_round
+        rep = study_round.build_round(repo, pathlib.Path(sys.executable), 5, tmp / "round",
+                                      ("mod.py",), ("tests/",), timeout=120.0)
+        self.assertTrue(rep["ok"], rep)
+        self.assertEqual(rep["patch_scored"], 0, rep)
+        self.assertIsNone(rep["pass_rate_scored"], "没评必须是 None，不是 0.0")
 if __name__ == "__main__":
     unittest.main(verbosity=2)

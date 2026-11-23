@@ -116,3 +116,36 @@ python -X utf8 -B tools\bench.py --repo <repo> --python <py> \
 `--only-commit` 直接报不可用。清理后才 4 秒通过。
 
 **中断运行的残留会伪装成「这道题坏了」。**
+
+## 一条命令跑完一轮：`tools/study_round.py`
+
+前面这些零件（造题、造副本、收补丁、判分、汇总）原来是分开跑的。分开跑的代价不是慢，
+而是**每轮都要手工串五条命令，而且参数记在脑子里** —— 一旦某一步用了上次留下的目录，
+读数就混进旧产物。这几周里发生过不止一次。
+
+```bash
+python tools/study_round.py --repo D:\rich --python C:\py\python.exe \
+    --src-prefixes rich/ --limit 3 --out rounds/r1 \
+    --solver-cmd "dsh --profile headless --prompt {prompt_file}"
+```
+
+五个阶段，产物都在 `--out` 下：
+
+| 阶段 | 产物 |
+|---|---|
+| 1 造题 | `scan/candidates.jsonl` |
+| 2 造副本 | `tasks/taskNN/`（单提交，**目录名不含 sha**） |
+| 3 收补丁 | `patches/<commit>.patch`（或 `--patch-dir` 导入现成的） |
+| 4 判分 | `bench/summary.json`、`bench/task_results.jsonl` |
+| 5 汇总 | `round.json` |
+
+### 三种输入，三种读数（都实测）
+
+| 输入 | `patch_scored` | `pass_rate_scored` |
+|---|---|---|
+| 不给补丁 | 0 | **`None`**（没评，不是 0 分） |
+| 已知 gold 补丁 | 2 | `1.0` |
+| 假 solver（只加一行注释） | 2 | `0.0` |
+
+`solver-cmd` 里的 `{task_dir}`、`{prompt_file}` 会被替换；题面模板只给
+「哪个用例失败」和「不要改测试」，不给提交信息、不给 diff。
