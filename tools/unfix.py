@@ -161,6 +161,37 @@ def regression_verdict(rcode: int, new_list) -> tuple[str | None, str | None]:
     return "infra_error", f"回归检查没跑成（pytest exit {rcode}）—— 等于没查，不能算通过"
 
 
+def pytest_stats(xml_path) -> dict:
+    """从 `--junitxml` 里数出「真跑过几条」。
+
+    为什么不能只看退出码：实测（副机 L94 + 桥的裁判）一份让用例**全部 skip** 的补丁
+    让 pytest 以 **exit 0** 退出，`run_one` 就判 `passed` ——
+    「跳过」和「通过」在退出码上长得一样，而它们对判据的意义相反。
+    """
+    import xml.etree.ElementTree as ET
+
+    stats = {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "error": 0}
+    p = pathlib.Path(xml_path)
+    if not p.is_file():
+        return stats
+    try:
+        root = ET.parse(p).getroot()
+    except ET.ParseError:
+        return stats
+    for case in root.iter("testcase"):
+        stats["total"] += 1
+        tags = {child.tag for child in case}
+        if "failure" in tags:
+            stats["failed"] += 1
+        elif "error" in tags:
+            stats["error"] += 1
+        elif "skipped" in tags:
+            stats["skipped"] += 1
+        else:
+            stats["passed"] += 1
+    return stats
+
+
 def pytest_ids(repo: pathlib.Path, py: pathlib.Path, test_paths, timeout=180):
     if not test_paths:
         return 5, [], "没有测试文件"
@@ -471,10 +502,14 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
             res["steps"]["apply"] = {"source": None, "note": "负控：不打补丁"}
 
         t0 = time.monotonic()
+        xml_path = pathlib.Path(out_dir) / f"{commit}.junit.xml"
         code, out, _ = sh([str(py), "-m", "pytest", *tests, "-q", "--no-header",
-                           "-p", "no:cacheprovider"], cwd=repo, timeout=timeout)
+                           "-p", "no:cacheprovider", f"--junitxml={xml_path}"],
+                          cwd=repo, timeout=timeout)
+        stats = pytest_stats(xml_path)
         res["steps"]["pytest"] = {"exit": code, "seconds": round(time.monotonic() - t0, 1),
-                                  "tail": " ⏎ ".join((out or "").strip().splitlines()[-3:])}
+                                  "tail": " ⏎ ".join((out or "").strip().splitlines()[-3:]),
+                                  "stats": stats}
         tail = res["steps"]["pytest"]["tail"]
         # **同一个 exit 1 可以是两件事**：有测试失败，或者收集阶段就出错。
         # `scan` 早就用 `collection_broken_from` 分开过，但 `run_one`（评补丁走的就是这条）
@@ -515,6 +550,13 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
         return finish("infra_error",
                       f"不是「测试失败」，是收集阶段就出错（pytest exit {code}）：{tail}")
     if code == 0:
+        # 「跳过」和「通过」在退出码上都是 0，但对判据的意义相反。
+        # 一条都没真跑过却判 passed，等于让任何模型都能靠 skip 拿满分。
+        if stats.get("total", 0) > 0 and stats.get("passed", 0) == 0:
+            return finish("infra_error",
+                          f"绿是「一条都没真跑过」：{stats.get('total')} 条用例里 "
+                          f"passed={stats.get('passed')}、skipped={stats.get('skipped')}、"
+                          f"error={stats.get('error')} —— 跳过不等于通过")
         return finish("passed", notes="全部测试通过")
     if code == 1:
         return finish("failed", f"有测试失败：{tail}")

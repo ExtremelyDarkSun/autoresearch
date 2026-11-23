@@ -909,5 +909,72 @@ class TestJudgmentParserPrecision(unittest.TestCase):
         self.assertIn('judge_helper.py', rec['reason'])
         self.assertEqual(code, 2)
 
+
+
+class TestSkippedIsNotPassed(unittest.TestCase):
+    """「跳过」和「通过」在退出码上都是 0 —— 但对判据的意义相反。
+
+    实测（副机 L94 + 桥的裁判）：一份让用例**全部 skip** 的补丁让 pytest exit 0，
+    `run_one` 就判 `passed`。那等于任何模型都能靠 skip 拿满分。
+
+    现在读 `--junitxml` 数「真跑过几条」：一条都没跑过就不是通过。
+    """
+
+    def test_pytest_stats_counts_each_kind(self):
+        import tempfile
+        xml = ('<?xml version="1.0"?>' + chr(10)
+               + '<testsuites><testsuite tests="4">' + chr(10)
+               + '<testcase name="a" classname="t"/>' + chr(10)
+               + '<testcase name="b" classname="t"><failure/></testcase>' + chr(10)
+               + '<testcase name="c" classname="t"><skipped/></testcase>' + chr(10)
+               + '<testcase name="d" classname="t"><error/></testcase>' + chr(10)
+               + '</testsuite></testsuites>')
+        p = pathlib.Path(tempfile.mkdtemp()) / 'j.xml'
+        p.write_text(xml, encoding='utf-8')
+        self.addCleanup(lambda: __import__('shutil').rmtree(p.parent, ignore_errors=True))
+        s = unfix.pytest_stats(p)
+        self.assertEqual(s, {"total": 4, "passed": 1, "failed": 1, "skipped": 1, "error": 1})
+
+    def test_missing_xml_gives_zeros(self):
+        self.assertEqual(unfix.pytest_stats(pathlib.Path('nope-not-here.xml')),
+                         {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "error": 0})
+
+    def test_all_skipped_task_is_infra_error_not_passed(self):
+        import shutil
+        import subprocess
+        import tempfile
+        repo = pathlib.Path(tempfile.mkdtemp(prefix='unfix-skip-'))
+        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+        (repo / 'tests').mkdir()
+        (repo / 'mod.py').write_text('def f():' + chr(10) + '    return 1' + chr(10), encoding='utf-8')
+        (repo / 'tests' / 'test_f.py').write_text(
+            'import pytest' + chr(10) + 'from mod import f' + chr(10) + chr(10)
+            + "pytestmark = pytest.mark.skip(reason='x')" + chr(10) + chr(10)
+            + 'def test_f():' + chr(10) + '    assert f() == 1' + chr(10), encoding='utf-8')
+
+        def git(*args):
+            subprocess.run(['git', '-C', str(repo), *args], capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL)
+
+        git('init', '-q')
+        git('add', '-A')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', '1')
+        (repo / 'mod.py').write_text('def f():' + chr(10) + '    return 2' + chr(10), encoding='utf-8')
+        (repo / 'tests' / 'test_f.py').write_text(
+            'import pytest' + chr(10) + 'from mod import f' + chr(10) + chr(10)
+            + "pytestmark = pytest.mark.skip(reason='x')" + chr(10) + chr(10)
+            + '# c2' + chr(10) + 'def test_f():' + chr(10) + '    assert f() == 2' + chr(10), encoding='utf-8')
+        git('add', '-A')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', '2')
+
+        code = unfix.run_one(repo, pathlib.Path(sys.executable), 'HEAD', ['tests/test_f.py'],
+                             repo / 'out', apply_gold=True, patch=None, timeout=90,
+                             src_prefixes=('mod.py',))
+        rec = json.loads((repo / 'out' / 'HEAD.json').read_text(encoding='utf-8'))
+        self.assertEqual(rec['status'], 'infra_error', rec)
+        self.assertIn('一条都没真跑过', rec['reason'])
+        self.assertEqual(rec['steps']['pytest']['stats']['skipped'], 1)
+        self.assertEqual(code, 2)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
