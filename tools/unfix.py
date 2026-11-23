@@ -327,6 +327,32 @@ def pytest_ids(repo: pathlib.Path, py: pathlib.Path, test_paths, timeout=180, ta
     return code, ids, " ⏎ ".join(tail), collection_broken_from(out), stats, outcomes
 
 
+def commit_size(repo: pathlib.Path, commit: str, src_files) -> dict:
+    """这道题的「改动规模」：源码侧改了几行、动了几个文件。
+
+    为什么记这个：`+1/-1` 的题和 `+80/-40` 的题不是一回事，但在此之前两者在题集里
+    长得完全一样 —— 于是「通过率」把不同难度的东西平均成了一个数。
+    它不是难度真值（真正的难度要靠实测），但可以用来**分层**和**过滤掉一眼能看穿的题**。
+    """
+    code, out, _ = git(repo, "show", "--numstat", "--format=", commit)
+    if code != 0:
+        return {}
+    want = set(src_files or ())
+    added = deleted = files = 0
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3:
+            continue
+        a, d, path = parts
+        if want and path not in want:
+            continue
+        files += 1
+        added += int(a) if a.isdigit() else 0
+        deleted += int(d) if d.isdigit() else 0
+    return {"src_files": files, "added": added, "deleted": deleted,
+            "changed_lines": added + deleted}
+
+
 def changed_files(repo: pathlib.Path, commit: str, src_prefixes,
                   test_prefixes=DEFAULT_TEST_PREFIXES) -> tuple[list[str], list[str]]:
     code, out, err = git(repo, "show", "--name-only", "--format=", commit)
@@ -469,6 +495,8 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                         regressions = [k for k, v in rout_short.items()
                                        if v == 'passed' and gout_short.get(k) == 'failed']
                         rec["fail_to_pass"] = f2p
+                        rec["difficulty"] = commit_size(repo, cand["commit"], src)
+                        rec["test_size"] = commit_size(repo, cand["commit"], cand["test_files"])
                         rec["green"]["targets_ok"] = bool(f2p) and not regressions
                         if f2p and not regressions:
                             gc_for_classify = 0
