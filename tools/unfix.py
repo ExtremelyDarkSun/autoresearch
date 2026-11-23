@@ -913,7 +913,7 @@ def audit_rows(rows) -> dict:
 def _capture_run(repo, py, commit, tests, out_dir, apply_gold=False, patch=None,
                  timeout=180.0, src_prefixes=DEFAULT_SRC_PREFIXES,
                  test_prefixes=DEFAULT_TEST_PREFIXES, regression_tests=None,
-                 known_failures=()):
+                 known_failures=(), fail_to_pass=None):
     """跑一道题并**返回记录**（而不是打印 + 退码）。给 `bench.py` 用。
 
     刻意复用 `run_one`：这样 bench 与 CLI 走的是同一条路径，不会出现「两套评分逻辑各修各的」
@@ -929,7 +929,8 @@ def _capture_run(repo, py, commit, tests, out_dir, apply_gold=False, patch=None,
         run_one(repo, py, commit, tests, pathlib.Path(out_dir),
                 apply_gold=apply_gold, patch=patch, timeout=timeout,
                 src_prefixes=src_prefixes, test_prefixes=test_prefixes,
-                regression_tests=regression_tests, known_failures=known_failures)
+                regression_tests=regression_tests, known_failures=known_failures,
+                fail_to_pass=fail_to_pass)
     rec_path = pathlib.Path(out_dir) / f"{commit}.json"
     if not rec_path.is_file():
         return {"status": "infra_error", "reason": f"没写出结果文件：{rec_path}"}

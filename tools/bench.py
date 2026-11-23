@@ -164,10 +164,16 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
         print(f"[2/3] ({i}/{len(usable)}) {commit} 负控 / 正控", flush=True)
         neg = unfix._capture_run(repo, py, commit, tests, out_dir / f"neg-{commit}",
                                 apply_gold=False, patch=None, timeout=timeout,
-                                src_prefixes=src_prefixes, test_prefixes=test_prefixes)
+                                src_prefixes=src_prefixes, test_prefixes=test_prefixes,
+                                    # 判绿按题目要的用例，不是整文件：
+                                    # 同文件有既有失败时，正确补丁会被误判 failed。
+                                    fail_to_pass=task.get("fail_to_pass") or None)
         gold = unfix._capture_run(repo, py, commit, tests, out_dir / f"gold-{commit}",
                                  apply_gold=True, patch=None, timeout=timeout,
-                                 src_prefixes=src_prefixes, test_prefixes=test_prefixes)
+                                 src_prefixes=src_prefixes, test_prefixes=test_prefixes,
+                                    # 判绿按题目要的用例，不是整文件：
+                                    # 同文件有既有失败时，正确补丁会被误判 failed。
+                                    fail_to_pass=task.get("fail_to_pass") or None)
         task["neg_status"] = neg["status"]
         task["gold_status"] = gold["status"]
 
@@ -182,7 +188,10 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
             print(f"        评补丁 {patch.name}", flush=True)
             got = unfix._capture_run(repo, py, commit, tests, out_dir / f"patch-{commit}",
                                     apply_gold=False, patch=str(patch), timeout=timeout,
-                                    src_prefixes=src_prefixes, test_prefixes=test_prefixes)
+                                    src_prefixes=src_prefixes, test_prefixes=test_prefixes,
+                                    # 判绿按题目要的用例，不是整文件：
+                                    # 同文件有既有失败时，正确补丁会被误判 failed。
+                                    fail_to_pass=task.get("fail_to_pass") or None)
             task["patch_status"] = got["status"]
             task["patch_reason"] = got.get("reason")
         tasks.append(task)
