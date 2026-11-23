@@ -441,7 +441,7 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                         # **fail_to_pass 的定义**（SWE-bench 口径）：
                         #   红相位失败、绿相位通过的用例。
                         # 同文件里与本题无关的既有失败会**两边都失败**，因此自然被排除，
-                        # 不会连坐（实测 rich 4ca56966：同文件 3 条既有失败，旧实现把这道好题扔了）。
+                        # 不会连坐（实测 rich 4ca56966 曾是反例：那 3 条不是既有失败，是这次提交弄坏的 —— 见下方回归检查）。
                         #
                         # junit 的 `file` 是相对 rootdir 的 basename（实测 file="test_file_proxy.py"），
                         # 拼不回完整 id，所以按「文件名::用例名」比对。歧义会表现为「缺失」→ 拒绝，不会假通过。

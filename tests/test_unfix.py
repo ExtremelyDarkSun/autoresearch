@@ -1492,5 +1492,51 @@ class TestOnlyCommitFilter(unittest.TestCase):
             encoding="utf-8").splitlines() if x.strip()]
         self.assertEqual([r["commit"][:7] for r in rows], [second],
                          "只该验指定那一道")
+class TestRegressionCheckIsLive(unittest.TestCase):
+    """回归检查必须真的会拒人 —— 它曾经恒为「无回归」。
+
+    实测事故（rich `4ca56966`）：提交修好目标用例、同时弄坏同文件另 3 条，
+    而 `regressions` 恒为空（比对键被二次归一化），于是被判 `usable=True`。
+    **判据存在不等于判据生效。**
+    """
+
+    def test_commit_that_breaks_another_test_is_rejected(self):
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="regr-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo = tmp / "repo"
+        (repo / "tests").mkdir(parents=True)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repo), *args],
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+        def commit(msg):
+            git("add", "-A")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg)
+
+        git("init", "-q")
+        (repo / "mod.py").write_text("def f():\n    return 1\n\ndef g():\n    return 1\n",
+                                     encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(
+            "from mod import f, g\n\n\ndef test_a():\n    assert f() == 2\n\n\ndef test_b():\n    assert g() == 1\n",
+            encoding="utf-8")
+        commit("c1：test_a 红，test_b 绿")
+        # c2：修好 test_a，同时把 g 改坏 —— test_b 由绿转红
+        (repo / "mod.py").write_text("def f():\n    return 2\n\ndef g():\n    return 999\n",
+                                     encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(
+            "from mod import f, g\n\n\ndef test_a():\n    assert f() == 2\n\n\ndef test_b():\n    assert g() == 1\n\n# c2\n",
+            encoding="utf-8")
+        commit("c2：修好 test_a，弄坏 test_b")
+
+        out = tmp / "scan"
+        unfix.scan(repo, pathlib.Path(sys.executable), 5, out, ("mod.py",), ("tests/",))
+        rows = [json.loads(x) for x in (out / "candidates.jsonl").read_text(
+            encoding="utf-8").splitlines() if x.strip()]
+        row = next(r for r in rows if r["subject"].startswith("c2"))
+        self.assertFalse(row["usable"], row)
+        self.assertIn("回归", row["why"] or "", row)
 if __name__ == "__main__":
     unittest.main(verbosity=2)

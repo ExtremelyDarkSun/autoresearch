@@ -293,3 +293,31 @@ python -X utf8 -B tools/unfix.py run --repo <repo> --commit <sha> \
 | `run --patch p --allow-no-ftp` | 旧行为（整文件 exit 0），显式选择才允许 |
 
 **宁可拒评，也不给一个更"好看"的错读数。**
+
+## 回归检查曾经「存在但不生效」
+
+`scan` 里的回归检查写的是：
+
+```python
+regressions = [k for k, v in rout_short.items()
+               if v == "passed" and gout_short.get(test_key(k)) == "failed"]
+```
+
+而 `rout_short` 的 key **本来就是**归一化后的 `(类名, 用例名)`。
+再调一次 `test_key(k)` 会把元组转成字符串再拆，得到一个永远匹配不上的键 ——
+于是 `regressions` **恒为空**、`targets_ok` **恒为 True**。
+
+实测（rich `4ca56966`）：这个提交修好 `test_decode_newlines`，同时弄坏同文件另 3 条
+（`test_decode`、`test_decode_example`、`test_decode_issue_2688`），
+基线 23 passed，提交后 21 passed / 3 failed —— 却被判 `usable=True`。
+
+修完之后重扫同一批：
+
+```
+[1/3] 648ceda2 usable=True  ftp=1 红→绿成立
+[2/3] 4ca56966 usable=False ftp=1 有回归：红相位通过的 3 条用例在绿相位失败了
+[3/3] d4f8620c usable=True  ftp=1 红→绿成立
+```
+
+**判据存在不等于判据生效。** 这条用例（`TestRegressionCheckIsLive`）就是为这句话写的：
+把检查改回原样，它立刻变红。
