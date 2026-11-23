@@ -27,6 +27,8 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import unfix  # noqa: E402
 import make_loop_fixture  # noqa: E402
+import make_task_bundle  # noqa: E402
+import publish_from_kaggle  # noqa: E402
 
 
 class TestClassify(unittest.TestCase):
@@ -1274,5 +1276,66 @@ class TestLoopFixture(unittest.TestCase):
         log = subprocess.run(["git", "-C", str(dest), "rev-list", "--count", "HEAD"],
                              capture_output=True, text=True).stdout.strip()
         self.assertEqual(log, "2")
+class TestTaskBundle(unittest.TestCase):
+    """出题必须剥离未来 —— 否则模型可以直接 git log 找答案。"""
+
+    def test_bundle_has_single_commit_and_no_future_fix(self):
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="bundle-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo = tmp / "repo"
+        (repo / "tests").mkdir(parents=True)
+
+        def git(*args, cwd=None):
+            return subprocess.run(["git", "-C", str(cwd or repo), *args],
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+        def commit(msg):
+            git("add", "-A")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg)
+
+        git("init", "-q")
+        (repo / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (repo / "tests" / "test_f.py").write_text(
+            "from mod import f\n\n\ndef test_f():\n    assert f() == 1\n", encoding="utf-8")
+        commit("c1")
+        (repo / "mod.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+        (repo / "tests" / "test_f.py").write_text(
+            "from mod import f\n\n\ndef test_f():\n    assert f() == 2\n", encoding="utf-8")
+        commit("c2 the fix")
+        (repo / "mod.py").write_text("def f():\n    return 3\n", encoding="utf-8")
+        commit("c3 later")
+        c2 = git("rev-parse", "--short", "HEAD~1").stdout.strip()
+
+        dest = tmp / "bundle"
+        meta = make_task_bundle.build(repo, c2, dest, ("mod.py",), ("tests/",))
+
+        self.assertEqual(meta["commits"], 1, "题目副本里只许有 1 个提交")
+        out = git("log", "--all", "--oneline", cwd=dest).stdout.strip().splitlines()
+        self.assertEqual(len(out), 1)
+        # 答案（return 2）不许出现在副本里；起点应是 c1 的 return 1
+        self.assertIn("return 1", (dest / "mod.py").read_text(encoding="utf-8"))
+        self.assertNotIn("return 2", (dest / "mod.py").read_text(encoding="utf-8"))
+        self.assertNotIn("return 3", (dest / "mod.py").read_text(encoding="utf-8"))
+        # 测试要来自 c2（要 2），这样它才是红的
+        self.assertIn("== 2", (dest / "tests" / "test_f.py").read_text(encoding="utf-8"))
+class TestPublishSecretGate(unittest.TestCase):
+    """发布前的凭证闸：宁可少发，不可错发。"""
+
+    def test_kaggle_token_is_caught(self):
+        self.assertTrue(publish_from_kaggle.find_secrets("key: KGAT_abcdefghijklmnop123456"))
+
+    def test_private_key_is_caught(self):
+        self.assertTrue(publish_from_kaggle.find_secrets(
+            "-----BEGIN RSA PRIVATE KEY-----\nabc"))
+
+    def test_plain_prose_is_clean(self):
+        self.assertFalse(publish_from_kaggle.find_secrets(
+            "这一节讲 token 预算：判据文档 3.7 万字符，粗估多约 2.7 万输入 token。"))
+
+    def test_bearer_is_caught(self):
+        self.assertTrue(publish_from_kaggle.find_secrets(
+            "authorization: bearer abcdefghijklmnopqrstuvwxyz123456"))
 if __name__ == "__main__":
     unittest.main(verbosity=2)

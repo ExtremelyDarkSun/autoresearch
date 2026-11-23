@@ -1,0 +1,35 @@
+{
+  "source_root": "C:\\Program Files\\agent\\kaggle_competition",
+  "files": [
+    {
+      "from": "profiles/README.md",
+      "to": "profiles__README.md",
+      "sha256": "7523f6f4fc6b8368657b50c63900ca85b1bbf34cdea5dfcdaaa8526c4e9ff93a",
+      "bytes": 12468
+    },
+    {
+      "from": "INSTALL.md",
+      "to": "INSTALL.md",
+      "sha256": "dfa8a80b6034351103dcdc999491f5fb26e52b561e9aeb81785ca04f4e57ee4f",
+      "bytes": 69689
+    },
+    {
+      "from": "Kaggle平台/AGENTS.md",
+      "to": "Kaggle平台__AGENTS.md",
+      "sha256": "1442bfc572f98729afa1bf9f404a4b2647a0d3416535b7bbe41f22e3393f9627",
+      "bytes": 24917
+    },
+    {
+      "from": "Kaggle平台/实验/loop_2026-11-23_local_swe_probe/agent_attempts/bench-3tasks-summary.md",
+      "to": "Kaggle平台__实验__loop_2026-11-23_local_swe_probe__agent_attempts__bench-3tasks-summary.md",
+      "sha256": "9bb8379bbe04a121badf03b10868980074ccd1fd537fd1d045416cfb90030140",
+      "bytes": 956
+    },
+    {
+      "from": "Kaggle平台/实验/loop_2026-11-23_local_swe_probe/agent_attempts/bench-3tasks-summary.json",
+      "to": "Kaggle平台__实验__loop_2026-11-23_local_swe_probe__agent_attempts__bench-3tasks-summary.json",
+      "sha256": "c754eff013e993b4683ecd367cfa6c10989e620badaf6c3463aa6cc14dcd21cc",
+      "bytes": 1869
+    }
+  ]
+}

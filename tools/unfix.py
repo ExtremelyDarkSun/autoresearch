@@ -320,7 +320,7 @@ def changed_files(repo: pathlib.Path, commit: str, src_prefixes,
 
 
 def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path,
-         src_prefixes, test_prefixes=DEFAULT_TEST_PREFIXES) -> int:
+         src_prefixes, test_prefixes=DEFAULT_TEST_PREFIXES, budget_seconds: float = 900.0) -> int:
     code, out, err = git(repo, "log", "--name-only", "--format=@@%h|%s", timeout=900)
     if code != 0:
         raise SystemExit("git log 失败：" + err[:160])
@@ -351,7 +351,17 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
 
     out_dir.mkdir(parents=True, exist_ok=True)
     rows = []
+    t_start = time.monotonic()
+    stopped = False
     for i, cand in enumerate(keep[:limit], 1):
+        # 预算闸：到点就停手，已经验完的照样写出去。
+        # 实测：8 道题扫了 553 秒，其中 3 道各卡满 180 秒超时 —— **两个慢题就能把整轮拖死**，
+        # 而被杀掉的进程什么都不留（bench 那边已经吃过这个教训）。
+        if budget_seconds is not None and (time.monotonic() - t_start) > budget_seconds:
+            stopped = True
+            print(f"  预算用尽（>{budget_seconds:g}s）：还剩 {len(keep[:limit]) - i + 1} 道没验，"
+                  f"已验的照常写出", file=sys.stderr)
+            break
         rec = dict(cand)
         rec.update({"judge_version": JUDGE_VERSION,
                     "red": {}, "green": {}, "fail_to_pass": [], "usable": False,
@@ -856,6 +866,8 @@ def main(argv=None) -> int:
     s.add_argument("--python", default=None)
     s.add_argument("--src-prefixes", default=None, help="逗号分隔，默认内置几种布局")
     s.add_argument("--test-prefixes", default=None, help="逗号分隔，默认 tests/")
+    s.add_argument("--budget-seconds", type=float, default=900.0,
+                    help="整轮时间预算；到点就停并写出已有结果（默认 15 分钟）")
 
     au = sub.add_parser("audit", help="复核已存的 candidates.jsonl（版本 + 理由漂移）")
     au.add_argument("--file", required=True)

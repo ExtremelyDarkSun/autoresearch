@@ -56,3 +56,32 @@ python -X utf8 -B tools/unfix.py run --repo <dest> --commit <c2> \
 - 夹具只有一道题、一次尝试。它能证明**链路通**，不能证明**通过率**。
 - 判分器现在会拒绝改测试 / 改 conftest / 改配置 / 全跳过 / 收集中断的补丁；
   这些都是实测出来的绕过路径，写在 `docs/UNFIX_TASKS.md`。
+
+## 题目必须剥离未来（2026-11-24 补）
+
+第一版闭环用的是**真仓库**：让模型在 `commit^` 上做题，判分对着 `commit`。
+
+结果副机交回的补丁**逐字等于我自己某次提交** —— 连中文注释和实验编号都一样。
+原因不复杂：**题就出在那个仓库里，答案写在 git 历史里**，`git log -S` 一翻就有。
+
+所以出题改成两步，缺一不可：
+
+```bash
+# 1) 从真仓库造「看不到答案」的副本
+python tools/make_task_bundle.py --repo <repo> --commit <sha> --dest <题目目录>
+
+# 2) 判分仍在真仓库上做（模型看不到）
+python -X utf8 -B tools/unfix.py run --repo <repo> --commit <sha> --patch <候选补丁> ...
+```
+
+`make_task_bundle.py` 的产出是 **单提交**仓库：`commit^` 的整棵树 + `commit` 自己的测试。
+三道校验不通过就**拒绝出题**：
+
+1. `git log --all --oneline` 只能 1 行；
+2. `git status` 干净；
+3. 副本里不含 `commit` 的源码改动（自然满足，但由「单提交」保证）。
+
+### 这条和前面所有「防绕过」的关系
+
+前十几轮防的是「补丁改判据」；这一条防的是**「模型直接看答案」**——
+它不需要改任何东西，只要 `git log`。**判据再严也拦不住。**

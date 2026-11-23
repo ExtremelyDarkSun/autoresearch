@@ -1,0 +1,71 @@
+<!-- 来源：Kaggle 工作区 `Kaggle平台/实验/loop_2026-11-23_local_swe_probe/agent_attempts/bench-3tasks-summary.json`
+     sha256=c754eff013e993b4…  1869 字节
+     由 tools/publish_from_kaggle.py 发布；凭证扫描已通过 -->
+
+{
+  "summary": {
+    "tasks_total": 3,
+    "usable": 3,
+    "neg_control_failed": 3,
+    "gold_control_passed": 3,
+    "instrument_ok": true,
+    "patch_scored": 3,
+    "patch_passed": 3,
+    "unscored": 0,
+    "pass_rate_scored": 1.0,
+    "pass_rate_all": 1.0,
+    "note": "两个口径都给了：scored 是「真评过」的分母，all 是「全部可用题」的分母；只报其中一个等于替读者做决定",
+    "repo": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\swel\\mut-rich_4079",
+    "patched": true
+  },
+  "tasks": [
+    {
+      "commit": "648ceda2",
+      "subject": "proxy isatty",
+      "tests": [
+        "tests/test_file_proxy.py"
+      ],
+      "usable": true,
+      "fail_to_pass": [
+        "tests\\test_file_proxy.py::test_isatty"
+      ],
+      "neg_status": "failed",
+      "gold_status": "passed",
+      "patch_status": "passed",
+      "patch_reason": null
+    },
+    {
+      "commit": "4ca56966",
+      "subject": "preserve newlines",
+      "tests": [
+        "tests/test_ansi.py"
+      ],
+      "usable": true,
+      "fail_to_pass": [
+        "tests\\test_ansi.py::test_decode",
+        "tests\\test_ansi.py::test_decode_example",
+        "tests\\test_ansi.py::test_decode_issue_2688[\\x1b[31mFound",
+        "tests\\test_ansi.py::test_decode_newlines"
+      ],
+      "neg_status": "failed",
+      "gold_status": "passed",
+      "patch_status": "passed",
+      "patch_reason": null
+    },
+    {
+      "commit": "d4f8620c",
+      "subject": "empty with end",
+      "tests": [
+        "tests/test_console.py"
+      ],
+      "usable": true,
+      "fail_to_pass": [
+        "tests\\test_console.py::test_print_empty_with_end"
+      ],
+      "neg_status": "failed",
+      "gold_status": "passed",
+      "patch_status": "passed",
+      "patch_reason": null
+    }
+  ]
+}
