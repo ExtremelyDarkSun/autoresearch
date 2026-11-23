@@ -447,6 +447,7 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                                 rec["green"]["regressions"] = regressions[:5]
                         usable, why = classify(rc, gc_for_classify, red_ids_norm, rbroken,
                                                red_stats=rstats, green_stats=gstats)
+                        rec["classify_why"] = why  # audit 用这一句复现，别用被美化过的 why
                         # 把更贴近现象的理由放在前面（原来的「环境问题」会把人引到错的方向）
                         if not usable and rc != TIMEOUT_EXIT:
                             if skipped_targets and not f2p:
@@ -799,7 +800,7 @@ def audit_rows(rows) -> dict:
                                            red_stats=rp, green_stats=gp)
         except TypeError:
             continue
-        stored_why = (r.get("why") or "").strip()
+        stored_why = (r.get("classify_why") or r.get("why") or "").strip()
         if why_now.strip() != stored_why:
             mismatches.append({"commit": r.get("commit"),
                                "stored_usable": r.get("usable"),
