@@ -14,6 +14,15 @@
     python -X utf8 -B tools/bench.py --repo <仓库> --limit 3 --out <目录> --patch-dir <放 *.patch 的目录>
 
 `--patch-dir` 里按 `<commit>.patch` 命名；匹配到的会被评一次，没匹到的题会记 `no_patch`。
+
+## 输出约定（踩过一次）
+
+进度与汇总写 **stdout**，诊断与警告写 **stderr**。这是对的，但有个副作用：
+PowerShell 里 `python ... 2>&1 | Select-Object -Last 20` 会把 stderr 变成错误记录，
+于是**脚本/作业的退出码变成 1，而 bench 其实是 exit 0**。
+
+我曾经据此以为「退出码与产物不一致」，查了一轮才发现是抓输出的方式造成的。
+取输出时用 `*> 文件` 或 `2>$null`，别把 stderr 混进管道再去看退出码。
 """
 from __future__ import annotations
 
