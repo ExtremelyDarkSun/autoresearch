@@ -762,9 +762,19 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
         if patch:
             # 先查这个补丁有没有动测试。动了就不评 —— 因为判据来自测试。
             try:
-                patch_text = pathlib.Path(patch).read_text(encoding="utf-8", errors="replace")
+                raw = pathlib.Path(patch).read_bytes()
             except OSError as exc:
                 return finish("infra_error", f"读不到补丁 {patch}：{exc}")
+            # PowerShell 的 `>` 重定向默认写 **UTF-16LE**：`git diff > x.patch` 出来的文件
+            # 前面有 \xff\xfe，`git apply` 只会说 "No valid patches in input" ——
+            # 那句话把「编码不对」说成了「补丁是空的」。实测踩过。
+            if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+                return finish(
+                    "infra_error",
+                    f"补丁是 UTF-16 编码（{patch}）：多半是 PowerShell 的 `>` 重定向写的。"
+                    f"`git apply` 读不了它。请用 `git diff | Out-File -Encoding utf8` 或"
+                    f"直接用 Python 写字节。")
+            patch_text = raw.decode("utf-8", errors="replace")
             bad = patch_touches_judgment(patch_text, test_prefixes, repo)
             res["steps"]["patch_check"] = {"touched_tests": bad}
             if bad:

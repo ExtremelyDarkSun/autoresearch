@@ -1576,5 +1576,52 @@ class TestCommitSize(unittest.TestCase):
 
         only_test = unfix.commit_size(repo, "HEAD", ["tests/test_m.py"])
         self.assertEqual(only_test["added"], 2, only_test)
+class TestPatchEncodingGuard(unittest.TestCase):
+    """UTF-16 补丁要说「编码不对」，不能说「没有有效补丁」。
+
+    实测：PowerShell 的 `>` 默认写 UTF-16LE，`git apply` 只回
+    "No valid patches in input" —— 那句话把编码问题说成了补丁内容问题。
+    """
+
+    def test_utf16_patch_is_reported_as_encoding_problem(self):
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="u16-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo = tmp / "repo"
+        (repo / "tests").mkdir(parents=True)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repo), *args],
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+        def commit(msg):
+            git("add", "-A")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg)
+
+        git("init", "-q")
+        (repo / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(
+            "from mod import f\n\n\ndef test_f():\n    assert f() == 2\n", encoding="utf-8")
+        commit("c1")
+        (repo / "mod.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(
+            "from mod import f\n\n\ndef test_f():\n    assert f() == 2\n\n# c2\n", encoding="utf-8")
+        commit("c2")
+        sha = git("rev-parse", "--short", "HEAD").stdout.strip()
+
+        bad = tmp / "utf16.patch"
+        body = ("diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n"
+                "@@ -1,2 +1,2 @@\n def f():\n-    return 1\n+    return 2\n")
+        bad.write_bytes(body.encode("utf-16"))  # 带 BOM 的 UTF-16LE
+
+        out = tmp / "out"
+        unfix.run_one(repo, pathlib.Path(sys.executable), sha, ["tests/test_m.py"], out,
+                      False, str(bad), 60, ("mod.py",), ("tests/",),
+                      fail_to_pass=["tests/test_m.py::test_f"])
+        res = json.loads((out / f"{sha}.json").read_text(encoding="utf-8"))
+        self.assertEqual(res["status"], "infra_error", res)
+        self.assertIn("UTF-16", res["reason"])
+        self.assertNotIn("No valid patches", res["reason"])
 if __name__ == "__main__":
     unittest.main(verbosity=2)

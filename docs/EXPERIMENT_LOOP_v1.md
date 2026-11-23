@@ -149,3 +149,30 @@ python tools/study_round.py --repo D:\rich --python C:\py\python.exe \
 
 `solver-cmd` 里的 `{task_dir}`、`{prompt_file}` 会被替换；题面模板只给
 「哪个用例失败」和「不要改测试」，不给提交信息、不给 diff。
+
+## 第一次多题闭卷轮次（n=2，读数 0.5）
+
+题集来自 rich（已修好回归检查的扫描，10 道里可用 4 道）。我给每道题造了单提交副本，
+只看失败的用例，自己写补丁：
+
+| 题 | 目标用例 | 我的做法 | 判分 |
+|---|---|---|---|
+| `648ceda2` | `test_isatty` | 给 `FileProxy` 加 `isatty()` 委托 | **passed** |
+| `d4f8620c` | `test_print_empty_with_end` | 把 `objects = (NewLine(),)` 换成 `Text(end)` | **failed** |
+
+```
+可用 2；负控红 2；正控绿 2；量具成立=True
+评过 2，通过 1；pass_rate_scored=0.5 / pass_rate_all=0.5
+```
+
+**n=2 的 0.5 没有统计意义**，它的价值是：整条链（造题→副本→做题→补丁→判分）
+第一次在**多于一道题**上跑通，且两题的结果不同 —— 说明判据有区分度，不是恒绿也不是恒红。
+
+### 这一轮我自己踩到的坑
+
+`git diff > x.patch`：PowerShell 的 `>` 默认写 **UTF-16LE**，`git apply` 只回
+`No valid patches in input`。那句话把「编码不对」说成了「补丁是空的」，
+于是这道题被记成 `infra_error` —— **分母悄悄少了一个**。
+
+现在 `run` 会先看前两个字节：`ff fe` / `fe ff` 直接报「补丁是 UTF-16 编码……多半是
+PowerShell 的 `>` 写的」。
