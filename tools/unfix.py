@@ -448,6 +448,9 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
                         usable, why = classify(rc, gc_for_classify, red_ids_norm, rbroken,
                                                red_stats=rstats, green_stats=gstats)
                         rec["classify_why"] = why  # audit 用这一句复现，别用被美化过的 why
+                        # 绿相位给 classify 的是**合成**过的退出码（只看目标用例翻没翻），
+                        # 也必须存下来，否则 audit 用原始 exit 重算会得出另一句话。
+                        rec["classify_green_exit"] = gc_for_classify
                         # 把更贴近现象的理由放在前面（原来的「环境问题」会把人引到错的方向）
                         if not usable and rc != TIMEOUT_EXIT:
                             if skipped_targets and not f2p:
@@ -796,7 +799,7 @@ def audit_rows(rows) -> dict:
         if not gp and not rp:
             missing_stats += 1
         try:
-            usable_now, why_now = classify(red.get("exit"), green.get("exit"), red_ids, broken,
+            usable_now, why_now = classify(red.get("exit"), r.get("classify_green_exit", green.get("exit")), red_ids, broken,
                                            red_stats=rp, green_stats=gp)
         except TypeError:
             continue
