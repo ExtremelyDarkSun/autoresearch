@@ -333,5 +333,24 @@ class TestPatchTouchesTests(unittest.TestCase):
         self.assertEqual(unfix.patch_touches_tests(None, ("tests/",)), [])
 
 
+class TestSelftestNeedsPytest(unittest.TestCase):
+    """没有 pytest 的解释器上，`--selftest` 要说「环境缺东西」，不能报成「代码失败」。
+
+    实测（副机 L82）：用全局 python 3.12（没装 pytest）跑 `--selftest`，得到 **1 例 FAIL**；
+    换项目 venv 立刻 29 例 OK。那种读数读起来像代码坏了，其实是机器缺依赖。
+    """
+
+    def test_missing_pytest_says_so_and_exits_2(self):
+        import subprocess
+        script = pathlib.Path(unfix.__file__).resolve()
+        # `-S` 屏蔽 site-packages ≈ 一个没装 pytest 的解释器
+        proc = subprocess.run([sys.executable, "-S", "-X", "utf8", "-B", str(script), "--selftest"],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=120, stdin=subprocess.DEVNULL)
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("没有 pytest", proc.stderr)
+        self.assertIn("这不是代码缺陷", proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

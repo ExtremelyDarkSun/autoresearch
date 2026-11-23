@@ -116,6 +116,9 @@ python -X utf8 -B tools/unfix.py run --repo <r> --commit <sha> --tests tests/x.p
 1. **不能要求回归全绿**。很多仓库基线本身就有失败（rich 在本机是 `7 failed / 976 passed`，
    与 pygments、终端有关的既有问题）。所以比的是「**相对基线有没有新增**」，
    `--known-failures` 就是基线那批已知失败。
+1. **回归闸只在题目测试通过之后才跑**。题目都没修好时不需要查回归（`code == 0` 才进入），
+   所以想验证回归闸本身，命令要带 `--apply-gold` 或一个能修好题目的补丁 ——
+   否则你看到的是 `failed`（题目没过），看不到 `infra_error`（回归没跑成）。
 2. **回归检查没跑成，等于没查**。四种退出码都吃过亏：`4`（路径不存在）、`124`（挂住）、
    `5`（一条没收集到）、`2`（收集错误）。它们都让 `FAILED` 行为空，于是「新增 0 条」、
    闸悄悄放过 —— 实测 `status='passed'` 而 `steps.regression.exit=4`。

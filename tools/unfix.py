@@ -446,6 +446,22 @@ def main(argv=None) -> int:
     if getattr(args, "selftest", False):
         # 用路径加载，不依赖 cwd 是仓库根（在别的目录敲 `--selftest` 也该能跑）
         import unittest
+
+        # 先确认这个解释器里有 pytest。没有的话，`scan`/`run` 相关的用例会以「1 例失败」
+        # 的形式出现 —— 那读起来像「代码坏了」，其实是「这台机器的 python 没装 pytest」。
+        # 实测：副机用全局 python 3.12 跑 `--selftest`，得到 1 例 FAIL；换项目 venv 立刻 29 OK。
+        # 这种「环境缺失长得像代码缺陷」的读数，必须自己先说明白，不能让人去猜。
+        try:
+            import pytest  # noqa: F401
+        except ImportError:
+            print("这个解释器里没有 pytest：", sys.executable, file=sys.stderr)
+            print("自测需要它（多个用例会起真实 pytest 子进程）。", file=sys.stderr)
+            print("请用装了 pytest 的解释器，例如：", file=sys.stderr)
+            print(r"  <仓库>\.venv\Scripts\python.exe -X utf8 -B tools\unfix.py --selftest",
+                  file=sys.stderr)
+            print("（或用 --python 指定）。这不是代码缺陷。", file=sys.stderr)
+            return 2
+
         tests_dir = pathlib.Path(__file__).resolve().parents[1] / "tests"
         suite = unittest.TestLoader().discover(str(tests_dir), pattern="test_unfix.py")
         return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
