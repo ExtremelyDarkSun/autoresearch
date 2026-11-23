@@ -28,10 +28,15 @@ import unfix  # noqa: E402
 
 
 class TestClassify(unittest.TestCase):
+    @staticmethod
+    def ok_stats(n=1):
+        """一条真跑过、且通过的绿相位统计。生产里 `classify` 总会拿到它。"""
+        return {'total': n, 'passed': n, 'failed': 0, 'skipped': 0, 'error': 0}
+
     """`classify(red_exit, green_exit, red_ids, collection_broken) -> (usable, why)`。"""
 
     def test_standard_red_then_green_is_usable(self):
-        usable, why = unfix.classify(1, 0, ["tests/t.py::test_a"])
+        usable, why = unfix.classify(1, 0, ["tests/t.py::test_a"], green_stats=self.ok_stats())
         self.assertTrue(usable)
         self.assertIn("红→绿成立", why)
 
@@ -41,7 +46,7 @@ class TestClassify(unittest.TestCase):
         这是第 3 次「一个桶装两件事」的事故：rich 有 9 个提交是这类，
         原先被记成「超时 ⇒ 不可用」。
         """
-        usable, why = unfix.classify(unfix.TIMEOUT_EXIT, 0, [])
+        usable, why = unfix.classify(unfix.TIMEOUT_EXIT, 0, [], green_stats=self.ok_stats())
         self.assertTrue(usable)
         self.assertIn("挂死", why)
 
@@ -55,23 +60,24 @@ class TestClassify(unittest.TestCase):
         self.assertFalse(usable)
 
     def test_red_pass_means_test_does_not_cover_change(self):
-        usable, why = unfix.classify(0, 0, [])
+        usable, why = unfix.classify(0, 0, [], green_stats=self.ok_stats())
         self.assertFalse(usable)
         self.assertIn("没覆盖", why)
 
     def test_collection_error_is_not_a_failure(self):
         """`2` 是收集中断：测试根本没跑起来，不是「测出失败」。"""
-        usable, why = unfix.classify(2, 0, [], collection_broken=True)
+        usable, why = unfix.classify(2, 0, [], collection_broken=True,
+                                    green_stats=self.ok_stats())
         self.assertFalse(usable)
         self.assertIn("收集错误", why)
 
     def test_other_nonzero_is_not_a_failure(self):
-        usable, why = unfix.classify(3, 0, [])
+        usable, why = unfix.classify(3, 0, [], green_stats=self.ok_stats())
         self.assertFalse(usable)
         self.assertIn("不是「有测试失败」", why)
 
     def test_red_one_without_ids_is_not_usable(self):
-        usable, why = unfix.classify(1, 0, [])
+        usable, why = unfix.classify(1, 0, [], green_stats=self.ok_stats())
         self.assertFalse(usable)
         self.assertIn("解析不到用例 id", why)
 
@@ -993,7 +999,9 @@ class TestClassifySkipped(unittest.TestCase):
 
     def test_red_all_skipped_is_not_usable(self):
         red = {'total': 2, 'passed': 0, 'failed': 0, 'skipped': 2, 'error': 0}
-        usable, why = unfix.classify(0, 0, [], False, red_stats=red)
+        usable, why = unfix.classify(1, 0, ['tests/a.py::t'], False, red_stats=red,
+                                     green_stats={'total': 1, 'passed': 1, 'failed': 0,
+                                                  'skipped': 0, 'error': 0})
         self.assertFalse(usable)
         self.assertIn("全被跳过", why)
         self.assertNotIn("测试没覆盖", why, "全 skip 不该被说成「没覆盖」，那会把人引到补丁写法上")
@@ -1084,7 +1092,9 @@ class TestAuditRows(unittest.TestCase):
     def _row(self, why, usable, version=None, red=1, green=0, ids=('a::t',)):
         row = {'commit': 'x', 'usable': usable, 'why': why,
                'red': {'exit': red, 'failed_ids': list(ids), 'tail': ''},
-               'green': {'exit': green, 'failed_ids': [], 'tail': ''}}
+               'green': {'exit': green, 'failed_ids': [], 'tail': '',
+                         'stats': {'total': 1, 'passed': 1, 'failed': 0,
+                                   'skipped': 0, 'error': 0}}}
         if version is not None:
             row['judge_version'] = version
         return row

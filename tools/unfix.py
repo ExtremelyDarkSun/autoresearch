@@ -105,6 +105,15 @@ def classify(red_exit: int, green_exit: int, red_ids: list[str],
     纯函数，无副作用 —— 因为这套判据我连续错三次（见模块文档的表），
     必须能用单元测试逐条钉住，而不是靠在真实仓库上跑一遍看结果。
     """
+    # **绿侧守卫必须排在所有特例之前。**
+    # 实测（audit 一份 40 行的旧题集）：`red=124, green=0` 那条「挂死也算 bug」的特例
+    # 直接 return 了，于是「绿相位一条都没跑」这件事根本没被检查 —— 特例绕过了通用守卫。
+    if green_exit == 0:
+        missing, why = real_pass_missing(green_stats)
+        if missing:
+            return False, (f"绿不算通过：{why}（passed={(green_stats or {}).get('passed')}、"
+                           f"skipped={(green_stats or {}).get('skipped')}）")
+
     if red_exit == TIMEOUT_EXIT and green_exit == 0:
         return True, "红是挂住、绿是通过 ⇒ 可用（这个 bug 的表现就是挂死）"
     if red_exit == TIMEOUT_EXIT or green_exit == TIMEOUT_EXIT:
@@ -129,12 +138,6 @@ def classify(red_exit: int, green_exit: int, red_ids: list[str],
         return False, "红是 exit 1 但解析不到用例 id（输出里没有 FAILED 行）"
     # 「跳过」既不是「通过」也不是「失败」：全 skip 的题两边都绿，但一条都没测。
     # 实测（副机 L94 / 桥裁判）：让用例全 skip 的补丁让 pytest exit 0，被判 passed。
-    if green_exit == 0 and green_stats is not None:
-        missing, why = real_pass_missing(green_stats)
-        if missing:
-            return False, (f"绿不算通过：{why}"
-                           f"（passed={green_stats.get('passed')}、"
-                           f"skipped={green_stats.get('skipped')}）")
     if (red_stats and red_stats.get("total", 0) > 0 and red_stats.get("passed", 0) == 0
             and red_stats.get("skipped") == red_stats.get("total")):
         return False, "红是全跳过：一条都没真跑，这种「红」测不出东西"
@@ -643,6 +646,7 @@ def audit_rows(rows) -> dict:
     """
     versions = {}
     mismatches = []
+    missing_stats = 0
     for r in rows:
         ver = r.get("judge_version") or "(无版本)"
         versions[ver] = versions.get(ver, 0) + 1
@@ -650,8 +654,16 @@ def audit_rows(rows) -> dict:
         green = r.get("green") or {}
         red_ids = red.get("failed_ids") or []
         broken = bool(red.get("collection_broken")) or "during collection" in (red.get("tail") or "")
+        # **必须把 stats 也传进去**：不传就等于用一套比生产更弱的规则重算 ——
+        # 「两套判据各修各的」正是本文件反复警告的那类分叉。
+        # 旧文件没有 stats 时，`real_pass_missing` 会 fail-closed，audit 就会如实报「证据不足」。
+        gp = green.get("stats")
+        rp = red.get("stats")
+        if not gp and not rp:
+            missing_stats += 1
         try:
-            usable_now, why_now = classify(red.get("exit"), green.get("exit"), red_ids, broken)
+            usable_now, why_now = classify(red.get("exit"), green.get("exit"), red_ids, broken,
+                                           red_stats=rp, green_stats=gp)
         except TypeError:
             continue
         stored_why = (r.get("why") or "").strip()
@@ -663,7 +675,7 @@ def audit_rows(rows) -> dict:
                                "why_now": why_now})
     stale = sum(v for k, v in versions.items() if k != JUDGE_VERSION)
     return {"rows": len(rows), "versions": versions, "stale": stale,
-            "mismatches": mismatches}
+            "missing_stats": missing_stats, "mismatches": mismatches}
 
 
 def _capture_run(repo, py, commit, tests, out_dir, apply_gold=False, patch=None,
@@ -766,6 +778,9 @@ def main(argv=None) -> int:
         if rep["stale"]:
             print(f"  注意：当前判据版本是 {JUDGE_VERSION} —— 旧版本产出的文件，"
                   f"结论可能与现在不同，别直接当题集用")
+        if rep["missing_stats"]:
+            print(f"  其中 {rep['missing_stats']} 行缺执行统计（旧文件没有 junit 数据）："
+                  f"当前判据对它们只能 fail-closed —— **要么重扫，要么当它们不存在**")
         print(f"  理由与当前代码不一致：{len(rep['mismatches'])} 行")
         for m in rep["mismatches"][:args.audit_show]:
             print(f"  - {m['commit']}：旧 usable={m['stored_usable']} why={m['stored_why']}")
