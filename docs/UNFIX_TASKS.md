@@ -203,7 +203,7 @@ PYTEST_ADDOPTS 那一行是**主动写出来的缺口**：因为「守卫没覆�
 现在读 `--junitxml` 数「真跑过几条」：
 
 ```
-绿是「一条都没真跑过」：1 条用例里 passed=0、skipped=1、error=0 —— 跳过不等于通过
+绿不算通过：跳过不等于通过（total=1、passed=0、skipped=1、error=0）
 ```
 
 判定：`exit 0` 且 `total > 0` 且 `passed == 0` ⇒ `infra_error`。

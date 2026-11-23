@@ -121,9 +121,12 @@ def classify(red_exit: int, green_exit: int, red_ids: list[str],
         return False, "红是 exit 1 但解析不到用例 id（输出里没有 FAILED 行）"
     # 「跳过」既不是「通过」也不是「失败」：全 skip 的题两边都绿，但一条都没测。
     # 实测（副机 L94 / 桥裁判）：让用例全 skip 的补丁让 pytest exit 0，被判 passed。
-    if green_stats and green_stats.get("total", 0) > 0 and green_stats.get("passed", 0) == 0:
-        return False, (f"绿是「一条都没真跑过」：passed={green_stats.get('passed')}、"
-                       f"skipped={green_stats.get('skipped')} —— 跳过不等于通过")
+    if green_exit == 0 and green_stats is not None:
+        missing, why = real_pass_missing(green_stats)
+        if missing:
+            return False, (f"绿不算通过：{why}"
+                           f"（passed={green_stats.get('passed')}、"
+                           f"skipped={green_stats.get('skipped')}）")
     if (red_stats and red_stats.get("total", 0) > 0 and red_stats.get("passed", 0) == 0
             and red_stats.get("skipped") == red_stats.get("total")):
         return False, "红是全跳过：一条都没真跑，这种「红」测不出东西"
@@ -176,6 +179,31 @@ def regression_verdict(rcode: int, new_list) -> tuple[str | None, str | None]:
     if rcode == TIMEOUT_EXIT:
         return "infra_error", f"回归检查在预算内没跑完（挂住，exit {rcode}）—— 等于没查"
     return "infra_error", f"回归检查没跑成（pytest exit {rcode}）—— 等于没查，不能算通过"
+
+
+#: 绿相位「真跑过几条」的两种失败理由。抽成常量，让 scan 与 run_one 用**同一句话**。
+SKIP_GUARD_REASON = "跳过不等于通过"
+NO_STATS_REASON = "统计不到执行条数（junit 没写出来或解析失败）—— fail-closed，不能按通过处理"
+
+
+def real_pass_missing(stats) -> tuple:
+    """绿相位是不是「一条都没真跑过」。返回 (缺失?, 理由)。
+
+    两条都要拦：
+
+    * `passed == 0` —— 全跳过 / 全被 deselect，**跳过不等于通过**；
+    * `total == 0` —— 连 junit 都没写出来或解析失败。这时**不能假设它跑过了**
+      （fail-closed）：宁可丢一个候选，也不让一道「没证据」的题进题集。
+
+    这条 fail-closed 是副机 L96 提的。我原来写的是「total==0 就不检查」——
+    等于**守卫在拿不到数据时静默消失**，而那正是最该警惕的时刻。
+    """
+    stats = stats or {}
+    if stats.get("total", 0) <= 0:
+        return True, NO_STATS_REASON
+    if stats.get("passed", 0) == 0:
+        return True, SKIP_GUARD_REASON
+    return False, ""
 
 
 def pytest_stats(xml_path) -> dict:
@@ -580,11 +608,12 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
     if code == 0:
         # 「跳过」和「通过」在退出码上都是 0，但对判据的意义相反。
         # 一条都没真跑过却判 passed，等于让任何模型都能靠 skip 拿满分。
-        if stats.get("total", 0) > 0 and stats.get("passed", 0) == 0:
+        missing, why = real_pass_missing(stats)
+        if missing:
             return finish("infra_error",
-                          f"绿是「一条都没真跑过」：{stats.get('total')} 条用例里 "
+                          f"绿不算通过：{why}（total={stats.get('total')}、"
                           f"passed={stats.get('passed')}、skipped={stats.get('skipped')}、"
-                          f"error={stats.get('error')} —— 跳过不等于通过")
+                          f"error={stats.get('error')}）")
         return finish("passed", notes="全部测试通过")
     if code == 1:
         return finish("failed", f"有测试失败：{tail}")

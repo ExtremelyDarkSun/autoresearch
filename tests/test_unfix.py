@@ -972,7 +972,7 @@ class TestSkippedIsNotPassed(unittest.TestCase):
                              src_prefixes=('mod.py',))
         rec = json.loads((repo / 'out' / 'HEAD.json').read_text(encoding='utf-8'))
         self.assertEqual(rec['status'], 'infra_error', rec)
-        self.assertIn('一条都没真跑过', rec['reason'])
+        self.assertIn('跳过不等于通过', rec['reason'])
         self.assertEqual(rec['steps']['pytest']['stats']['skipped'], 1)
         self.assertEqual(code, 2)
 
@@ -1050,6 +1050,27 @@ class TestClassifySkipped(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertFalse(rows[0]['usable'], rows[0])
         self.assertIn('跳过不等于通过', rows[0]['why'])
+
+
+    def test_missing_stats_is_fail_closed(self):
+        """拿不到 junit（total==0）时**不能假设它跑过了** —— 副机 L96 提的 fail-closed。
+
+        我原来写的是「total==0 就不检查」，等于**守卫在拿不到数据时静默消失**，
+        而那正是最该警惕的时刻。
+        """
+        missing, why = unfix.real_pass_missing(None)
+        self.assertTrue(missing)
+        self.assertIn('统计不到执行条数', why)
+
+        missing, why = unfix.real_pass_missing({'total': 0, 'passed': 0})
+        self.assertTrue(missing, '空统计也要 fail-closed')
+
+        missing, why = unfix.real_pass_missing({'total': 3, 'passed': 0, 'skipped': 3})
+        self.assertTrue(missing)
+        self.assertEqual(why, unfix.SKIP_GUARD_REASON)
+
+        missing, why = unfix.real_pass_missing({'total': 3, 'passed': 2, 'skipped': 1})
+        self.assertFalse(missing, '只要有一条真跑过就不算缺失')
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
