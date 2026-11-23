@@ -75,5 +75,42 @@ class TestReproMatrix(unittest.TestCase):
                             "--keep-normalized 时要保留全文，便于定位差异")
 
 
+class TestNormalization(unittest.TestCase):
+    """规范化规则本身也要测——它是整张表的地基。
+
+    副机 L66 抓到的坑：原规则在空格处停下，于是解释器装在 `C:\\Program Files\\...`
+    的机器上得到 `"<PATH> Files<UNC>"`，而装在 `C:\\Python313\\...` 的机器得到 `"<PATH>"`。
+    **一个用来消除环境噪声的工具，自己制造了噪声**，而且只在「安装路径含空格」的机器上发作。
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT))
+        from tools.repro_matrix import normalize  # noqa: PLC0415
+        self.normalize = normalize
+
+    def test_quoted_path_with_spaces_equals_without_spaces(self):
+        with_spaces = r'command = ["C:\\Program Files\\Python312\\python.exe", "-X"]'
+        without = r'command = ["C:\\Python313\\python.exe", "-X"]'
+        a = self.normalize(with_spaces)
+        b = self.normalize(without)
+        self.assertEqual(a, b, f"带空格与不带空格应当规范化成同一文本：{a!r} vs {b!r}")
+        self.assertEqual(a, 'command = ["<PATH>", "-X"]')
+        self.assertNotIn("<UNC>", a, "`\\\\` 是 JSON 转义，不该被当成 UNC 前缀")
+
+    def test_tree_state_examples_collapse(self):
+        a = self.normalize("第 7 步 实际：无新增改动")
+        b = self.normalize("第 7 步 实际：与开始时一致（本来就脏 2 项）")
+        c = self.normalize("第 7 步 实际：与开始时一致（本来就脏 11 项）")
+        self.assertEqual(a, b)
+        self.assertEqual(b, c, "脏几项是前置条件，不该影响跨机比对")
+
+    def test_durations_and_timestamps_masked(self):
+        text = "Ran 1351 tests in 118.962s\n2026-11-23T05:14:37.293Z"
+        out = self.normalize(text)
+        self.assertIn("<DUR>", out)
+        self.assertIn("<TS>", out)
+        self.assertNotIn("118.962", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
