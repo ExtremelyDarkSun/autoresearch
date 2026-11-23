@@ -726,5 +726,41 @@ class TestCollectionErrorOutranksExitOne(unittest.TestCase):
 
 
 
+
+
+class TestConftestIsJudgment(unittest.TestCase):
+    """根目录 `conftest.py` 也是判据 —— 副机 L89/L90 报的第四条假绿。
+
+    实测：一道本来是红的题，只往仓库根加一个 conftest.py（把所有用例 skip），
+    `run_one` 就报 `passed`。它不在 `tests/` 前缀下，**前缀守卫对它完全无感**。
+    """
+
+    def test_root_conftest_is_judgment(self):
+        patch = "--- /dev/null" + chr(10) + "+++ b/conftest.py" + chr(10) + "@@ -0,0 +1 @@" + chr(10) + "+import pytest" + chr(10)
+        self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), ["conftest.py"])
+
+    def test_nested_conftest_is_judgment(self):
+        patch = "--- /dev/null" + chr(10) + "+++ b/tests/unit/conftest.py" + chr(10)
+        self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), ["tests/unit/conftest.py"])
+
+    def test_pytest_ini_is_judgment(self):
+        patch = "--- a/pytest.ini" + chr(10) + "+++ b/pytest.ini" + chr(10) + "@@ -1 +1 @@" + chr(10) + "-addopts = -q" + chr(10) + "+addopts = -q --continue-on-collection-errors" + chr(10)
+        self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), ["pytest.ini"])
+
+    def test_pyproject_pytest_section_is_judgment(self):
+        patch = ("--- a/pyproject.toml" + chr(10) + "+++ b/pyproject.toml" + chr(10) + "@@ -1 +1,2 @@" + chr(10)
+                 + " [build-system]" + chr(10) + "+[tool.pytest.ini_options]" + chr(10))
+        self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), ["pyproject.toml"])
+
+    def test_pyproject_unrelated_edit_is_not_judgment(self):
+        patch = ("--- a/pyproject.toml" + chr(10) + "+++ b/pyproject.toml" + chr(10) + "@@ -1 +1 @@" + chr(10)
+                 + "-name = old" + chr(10) + "+name = new" + chr(10))
+        self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), [])
+
+    def test_source_only_edit_is_not_judgment(self):
+        patch = "--- a/rich/cells.py" + chr(10) + "+++ b/rich/cells.py" + chr(10) + "@@ -1 +1 @@" + chr(10) + "-x" + chr(10) + "+y" + chr(10)
+        self.assertEqual(unfix.patch_touches_judgment(patch, ("tests/",)), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

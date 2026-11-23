@@ -271,28 +271,55 @@ def new_failures(failed_ids, known_ids) -> list[str]:
     return [i for i in (failed_ids or ()) if norm(i) not in known]
 
 
-def patch_touches_tests(patch_text: str, test_prefixes) -> list[str]:
-    """补丁里有没有改到测试文件。
+#: 不属于测试目录、但**会改变判据**的文件（按 basename 匹配）。
+#: 实测（副机 L89/L90）：只往仓库根加一个 `conftest.py`、里面把用例全 skip，
+#: 一道本来是红的题就变成 `passed` —— 而它不在 `tests/` 前缀下，前缀守卫看不见它。
+JUDGMENT_PATHS = ("conftest.py", "pytest.ini")
 
-    这是评测器**最危险的假绿**：判据（fail-to-pass）来自测试，被评测的 agent 只要改测试，
-    就能让任何实现变绿。判据本身没问题，是它被喂了假证据。
+#: 这些文件里只要动到与 pytest 有关的段，也算动了判据。
+JUDGMENT_CONFIG_FILES = ("tox.ini", "setup.cfg", "pyproject.toml")
+_JUDGMENT_CONFIG_MARKERS = ("[pytest]", "[tool:pytest]", "[tool.pytest")
 
-    只看 `+++ b/<path>` / `--- a/<path>` 两种行头 —— 不解析 hunk，不做模糊匹配。
-    返回被改到的测试文件列表（空表示没动测试）。
+
+def patch_touches_judgment(patch_text: str, test_prefixes) -> list[str]:
+    """补丁有没有动到**判据**（测试文件、conftest、pytest 配置）。
+
+    判据（fail-to-pass）来自测试。被评测的 agent 只要改判据，就能让任何实现变绿。
+    三类都算：
+
+    1. 测试前缀下的文件（`tests/...`）；
+    2. 任意位置的 `conftest.py` / `pytest.ini` —— **实测**：根 conftest 里把用例全 skip，
+       一道红题立刻变 `passed`，而前缀守卫对它完全无感；
+    3. `tox.ini` / `setup.cfg` / `pyproject.toml` 里动到 `[pytest]` / `[tool:pytest*]` 段。
     """
     prefixes = tuple(test_prefixes or DEFAULT_TEST_PREFIXES)
     touched = []
+    current = None
+    config_touched = []
     for line in (patch_text or "").splitlines():
-        if not line.startswith(("+++ ", "--- ")):
+        if line.startswith(("+++ ", "--- ")):
+            path = line[4:].strip()
+            if path.startswith(("b/", "a/")):
+                path = path[2:]
+            current = None if path in ("/dev/null", "") else path
+            if current is None:
+                continue
+            base = current.rsplit("/", 1)[-1]
+            if (current.startswith(prefixes) or base in JUDGMENT_PATHS) and current not in touched:
+                touched.append(current)
             continue
-        path = line[4:].strip()
-        if path.startswith(("b/", "a/")):
-            path = path[2:]
-        if path == "/dev/null" or not path:
-            continue
-        if path.startswith(prefixes) and path not in touched:
-            touched.append(path)
-    return sorted(touched)
+        # 配置文件里的改动：看上下文行里有没有 pytest 段标记
+        if current and current.rsplit("/", 1)[-1] in JUDGMENT_CONFIG_FILES and line[:1] in "+-":
+            low = line.lower()
+            if any(marker in low for marker in _JUDGMENT_CONFIG_MARKERS):
+                if current not in config_touched:
+                    config_touched.append(current)
+    return sorted(touched + config_touched)
+
+
+def patch_touches_tests(patch_text: str, test_prefixes) -> list[str]:
+    """向后兼容的别名：语义已扩为「动到判据」，见 `patch_touches_judgment`。"""
+    return patch_touches_judgment(patch_text, test_prefixes)
 
 
 def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
@@ -355,13 +382,21 @@ def run_one(repo: pathlib.Path, py: pathlib.Path, commit: str, tests: list[str],
                 patch_text = pathlib.Path(patch).read_text(encoding="utf-8", errors="replace")
             except OSError as exc:
                 return finish("infra_error", f"读不到补丁 {patch}：{exc}")
-            bad = patch_touches_tests(patch_text, test_prefixes)
+            bad = patch_touches_judgment(patch_text, test_prefixes)
             res["steps"]["patch_check"] = {"touched_tests": bad}
             if bad:
                 # 不是「没通过」，是**这份补丁不属于被评测的范围**：它改的是判据本身。
                 joined = "、".join(bad)
+                prefixes = tuple(test_prefixes or DEFAULT_TEST_PREFIXES)
+                only_tests = all(p.startswith(prefixes) for p in bad)
+                if only_tests:
+                    # 最常见的一种：直接改测试文件。措辞保持具体（下游用例与文档按这句断言）。
+                    return finish("infra_error",
+                                  f"补丁修改了测试文件：{joined}。"
+                                  f"判据来自测试，改测试等于改判据 —— 这份补丁不能评")
                 return finish("infra_error",
-                              f"补丁修改了测试文件：{joined}。判据来自测试，改测试等于改判据 —— 这份补丁不能评")
+                              f"补丁改动了判据：{joined}。"
+                              f"判据来自测试（conftest / pytest 配置也会改变判据）—— 这份补丁不能评")
             code, _, err = sh(["git", "-C", str(repo), "apply", patch])
             res["steps"]["apply"] = {"source": "指定补丁", "exit": code}
             if code != 0:
