@@ -104,6 +104,27 @@ class TestNormalization(unittest.TestCase):
         self.assertEqual(a, b)
         self.assertEqual(b, c, "脏几项是前置条件，不该影响跨机比对")
 
+    def test_bare_path_with_spaces_is_one_path(self):
+        """裸路径含空格也要整条吃掉 —— 规则来自副机 L67。
+
+        我原来那版在裸路径上遇空格即停，理由是「没法可靠判断结尾」。副机没接受这个偷懒，
+        给出判据：**只有当空格后面那一块仍以反斜杠结尾时**，才把空格并进来。
+        于是「路径 + 后面的散文」不会被吞。
+        """
+        cases = [
+            ("C:\\Python313\\python.exe", "<PATH>"),
+            ("C:\\Program Files\\Python312\\python.exe", "<PATH>"),
+            ("\\\\server\\share\\tool.exe", "<UNC>"),
+        ]
+        for src, want in cases:
+            with self.subTest(src=src):
+                self.assertEqual(self.normalize(src), want)
+
+    def test_bare_path_does_not_swallow_following_prose(self):
+        out = self.normalize("C:\\Python313\\python.exe 后面还有散文")
+        self.assertEqual(out, "<PATH> 后面还有散文",
+                         "路径后面的人类语言不能被当成路径的一部分")
+
     def test_durations_and_timestamps_masked(self):
         text = "Ran 1351 tests in 118.962s\n2026-11-23T05:14:37.293Z"
         out = self.normalize(text)
