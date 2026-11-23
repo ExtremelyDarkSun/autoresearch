@@ -352,5 +352,315 @@ class TestSelftestNeedsPytest(unittest.TestCase):
         self.assertIn("这不是代码缺陷", proc.stderr)
 
 
+class TestFalseGreens(unittest.TestCase):
+    """集成级「假绿入口」回归 —— 已对到 eec6a1b。
+
+    L81 写这组用例时基准是 dca9116；之后判据换过名字（`collection_broken` →
+    `collection_broken_from`），也补了两处入口（`32a2ef9` 拒绝改测试的补丁、
+    `eec6a1b` 在无 pytest 的解释器上 exit 2）。**用例必须跟着判据走**，否则它守的是
+    一个已经不存在的行为。
+
+    本类只调用 `tools/unfix.py` 的公开函数与真 CLI，不修改工具本身。
+    每条用例上方都有一行 `git apply -R`：把对应修复反向应用回坏版本，这条用例就应当变红
+    （反证补丁在 `C:\\rebuild\\l84\\counter\\`，逐条验证过）。
+    """
+
+    PY = pathlib.Path(sys.executable)
+
+    # ---- 小工具 -------------------------------------------------------
+    def _tmp(self) -> pathlib.Path:
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="unfix-t-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        return tmp
+
+    def _git(self, repo, *args) -> str:
+        import subprocess
+        p = subprocess.run(["git", "-C", str(repo), *args], capture_output=True,
+                           text=True, encoding="utf-8", errors="replace",
+                           stdin=subprocess.DEVNULL)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return p.stdout.strip()
+
+    def _commit(self, repo, msg) -> str:
+        self._git(repo, "add", "-A")
+        self._git(repo, "-c", "user.name=t", "-c", "user.email=t@t",
+                  "commit", "-q", "-m", msg)
+        return self._git(repo, "rev-parse", "--short", "HEAD")
+
+    @staticmethod
+    def _rows(out_dir) -> list[dict]:
+        path = pathlib.Path(out_dir) / "candidates.jsonl"
+        return [json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines()
+                if ln.strip()]
+
+    def _gate_repo(self):
+        """`probe_regression_gate.py` 同款合成仓库：base → 修 bug → 回归测试。
+
+        回归闸只在题目测试通过之后（pytest exit 0）才进入，所以 `_run_gate()` 用
+        `apply_gold=True` 让题目先过 —— 这正是 L83 指令写错、后来在
+        `docs/UNFIX_TASKS.md` 里更正的那一点。
+        """
+        repo = self._tmp()
+        self._git(repo, "init", "-q", "-b", "main")
+        (repo / "mod.py").write_text("def value():\n    return 0\n",
+                                     encoding="utf-8", newline="\n")
+        (repo / "other.py").write_text("def twice(x):\n    return x * 2\n",
+                                       encoding="utf-8", newline="\n")
+        (repo / "tests").mkdir()
+        (repo / "tests" / "test_mod.py").write_text(
+            "from mod import value\n\n\ndef test_value():\n    assert value() == 0\n",
+            encoding="utf-8", newline="\n")
+        self._commit(repo, "base")
+        (repo / "mod.py").write_text("def value():\n    return 1\n",
+                                     encoding="utf-8", newline="\n")
+        (repo / "tests" / "test_mod.py").write_text(
+            "from mod import value\n\n\ndef test_value():\n    assert value() == 1\n",
+            encoding="utf-8", newline="\n")
+        task = self._commit(repo, "fix: value returns 1")
+        (repo / "tests" / "test_other.py").write_text(
+            "from other import twice\n\n\ndef test_twice():\n    assert twice(2) == 4\n",
+            encoding="utf-8", newline="\n")
+        (repo / "tests" / "test_hang.py").write_text(
+            "import time\n\n\ndef test_hang():\n    time.sleep(30)\n",
+            encoding="utf-8", newline="\n")
+        (repo / "tests" / "test_empty.py").write_text(
+            "# no tests here on purpose\n", encoding="utf-8", newline="\n")
+        self._commit(repo, "add regression tests")
+        return repo, task
+
+    def _run_gate(self, regression_tests):
+        repo, task = self._gate_repo()
+        out = self._tmp()
+        unfix.run_one(repo, self.PY, task, ["tests/test_mod.py"], out,
+                      True, None, 3, ("mod.py",), ("tests/",),
+                      regression_tests=regression_tests)
+        return json.loads((out / f"{task}.json").read_text(encoding="utf-8"))
+
+    # ---- T1: scan 冒烟（函数入口 + 真 CLI） ---------------------------
+    def test_scan_smoke_with_test_prefixes(self):
+        """scan 的 `TEST_PREFIXES` 漏改：函数入口 NameError，CLI 也没有 --test-prefixes。
+
+        这正是「18 例 selftest 全绿也测不出来」的那条：没有一条用例调用 `scan()`。
+        """
+        # 反证（会红）：git apply -R C:\rebuild\l84\counter\14e803d-scan-test-prefixes.patch
+        repo = self._tmp()
+        self._git(repo, "init", "-q", "-b", "main")
+        (repo / "src").mkdir()
+        (repo / "tests").mkdir()
+        (repo / "src" / "mod.py").write_text("def value():\n    return 0\n",
+                                             encoding="utf-8", newline="\n")
+        (repo / "tests" / "test_mod.py").write_text(
+            "import pathlib\nimport sys\n\n"
+            "sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'src'))\n"
+            "from mod import value\n\n\ndef test_value():\n    assert value() == 0\n",
+            encoding="utf-8", newline="\n")
+        self._commit(repo, "base")
+        (repo / "src" / "mod.py").write_text("def value():\n    return 1\n",
+                                             encoding="utf-8", newline="\n")
+        (repo / "tests" / "test_mod.py").write_text(
+            "import pathlib\nimport sys\n\n"
+            "sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'src'))\n"
+            "from mod import value\n\n\ndef test_value():\n    assert value() == 1\n",
+            encoding="utf-8", newline="\n")
+        self._commit(repo, "fix: value returns 1")
+
+        # (a) 函数入口：默认 tests/ 前缀 + 显式 src/
+        out = self._tmp()
+        rc = unfix.scan(repo, self.PY, 1, out, ("src/",))
+        self.assertEqual(rc, 0)
+        rows = self._rows(out)
+        self.assertEqual(len(rows), 1, rows)
+        self.assertTrue(rows[0]["usable"], rows[0].get("why"))
+        self.assertTrue(rows[0]["fail_to_pass"], rows[0])
+
+        # (b) 真 CLI：--test-prefixes 必须存在且生效
+        import subprocess
+        out2 = self._tmp()
+        p = subprocess.run(
+            [str(self.PY), "-X", "utf8", "-B", str(ROOT / "tools" / "unfix.py"),
+             "scan", "--repo", str(repo), "--python", str(self.PY),
+             "--src-prefixes", "src/", "--test-prefixes", "tests/",
+             "--limit", "1", "--out", str(out2)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=180, stdin=subprocess.DEVNULL)
+        self.assertEqual(p.returncode, 0, p.stdout + "\n" + p.stderr)
+        rows2 = self._rows(out2)
+        self.assertEqual(len(rows2), 1, rows2)
+        self.assertTrue(rows2[0]["usable"], rows2[0].get("why"))
+        self.assertTrue(rows2[0]["fail_to_pass"], rows2[0])
+
+    # ---- T2–T4: 回归闸自己没跑成，不许静默 passed ---------------------
+    def test_regression_gate_missing_path_is_infra_error(self):
+        """回归测试路径不存在（pytest exit 4）—— 没跑成不能算通过。"""
+        # 反证（会红）：git apply -R C:\rebuild\l84\counter\83f6c8f-regression-verdict.patch
+        res = self._run_gate(["tests/does_not_exist.py"])
+        self.assertEqual(res["status"], "infra_error", res)
+        self.assertEqual(res["steps"]["regression"]["exit"], 4, res)
+
+    def test_regression_gate_hang_is_infra_error(self):
+        """回归测试挂住（本工具 exit 124）—— 没跑成不能算通过。"""
+        # 反证（会红）：git apply -R C:\rebuild\l84\counter\83f6c8f-regression-verdict.patch
+        res = self._run_gate(["tests/test_hang.py"])
+        self.assertEqual(res["status"], "infra_error", res)
+        self.assertEqual(res["steps"]["regression"]["exit"], unfix.TIMEOUT_EXIT, res)
+
+    def test_regression_gate_zero_tests_is_infra_error(self):
+        """回归测试一条也没收集到（pytest exit 5）—— 没跑成不能算通过。"""
+        # 反证（会红）：git apply -R C:\rebuild\l84\counter\83f6c8f-regression-verdict.patch
+        res = self._run_gate(["tests/test_empty.py"])
+        self.assertEqual(res["status"], "infra_error", res)
+        self.assertEqual(res["steps"]["regression"]["exit"], 5, res)
+
+    # ---- T5: 收集错误也走 exit 1（--continue-on-collection-errors） ---
+    def test_collection_error_detected_from_full_stdout(self):
+        """收集错误（1 条 ERROR + 1 条 FAILED）也是 exit 1，不能当成「有测试失败」。
+
+        判定必须看完整 stdout 里的行首 `ERROR <path>`，不能只看 tail 3 行。
+
+        注意（本轮实测发现的残留缺口，本补丁不改工具，故不在此断言）：
+        eec6a1b 的 `classify()` 写的是 `if red_exit != 1 and collection_broken`，
+        所以 `classify(1, 0, ids, collection_broken=True)` 仍返回 usable=True；
+        `run_one()` 的 exit 1 分支也不查这个布尔。真正被钉住的是「检测」这一层。
+        """
+        # 反证（会红）：git apply -R C:\rebuild\l84\counter\83f6c8f-regression-verdict.patch
+        # （该提交才引入 `collection_broken_from`；旧代码只用 tail 3 行的字符串判断）
+        # 真跑一把：一个文件收集 ERROR + 一个文件真 FAILED，exit 仍是 1。
+        import subprocess
+        repo = self._tmp()
+        (repo / "pytest.ini").write_text(
+            "[pytest]\naddopts = --continue-on-collection-errors\n",
+            encoding="utf-8", newline="\n")
+        (repo / "test_bad.py").write_text(
+            "import definitely_missing_module_xyz\n", encoding="utf-8", newline="\n")
+        (repo / "test_fail.py").write_text(
+            "def test_x():\n    assert False\n", encoding="utf-8", newline="\n")
+        p = subprocess.run(
+            [str(self.PY), "-m", "pytest", "test_bad.py", "test_fail.py", "-q",
+             "--no-header", "-p", "no:cacheprovider"],
+            cwd=repo, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=120, stdin=subprocess.DEVNULL)
+        self.assertEqual(p.returncode, 1, p.stdout + "\n" + p.stderr)
+        self.assertTrue(unfix.collection_broken_from(p.stdout),
+                        "完整 stdout 里同时有 ERROR 与 failed：\n" + p.stdout)
+        rc, ids, tail, broken = unfix.pytest_ids(
+            repo, self.PY, ["test_bad.py", "test_fail.py"])
+        self.assertEqual(rc, 1, tail)
+        self.assertIn("test_fail.py::test_x", ids)
+        self.assertTrue(broken, "pytest_ids 没把 collection_broken 带出来：" + tail)
+
+    # ---- T6: 子进程一律不写字节码 -------------------------------------
+    def test_sh_suppresses_bytecode(self):
+        """子进程写 `__pycache__` 会污染 `git status`，也会让同秒改写读到旧字节码。"""
+        # 反证（会红）：git apply -R C:\rebuild\l84\counter\83f6c8f-regression-verdict.patch
+        import os
+        old = os.environ.pop("PYTHONDONTWRITEBYTECODE", None)
+        try:
+            tmp = self._tmp()
+            (tmp / "mod.py").write_text("x = 1\n", encoding="utf-8", newline="\n")
+            code, out, err = unfix.sh([str(self.PY), "-c", "import mod"],
+                                      cwd=tmp, timeout=60)
+            self.assertEqual(code, 0, err)
+            self.assertFalse((tmp / "__pycache__").exists(),
+                             "unfix.sh() 没有给子进程注入 PYTHONDONTWRITEBYTECODE")
+        finally:
+            if old is not None:
+                os.environ["PYTHONDONTWRITEBYTECODE"] = old
+
+    # ---- T7–T8: patch_touches_tests 的两个边界 -----------------------
+    def test_deleted_test_file_is_detected(self):
+        """补丁删文件：`+++ /dev/null` 这一侧没有路径，必须从 `--- a/tests/...` 认出。
+
+        只读 `+++` 行头的实现会漏掉「删掉测试文件」——这也是在改判据。
+        """
+        # 反证（会红）：git apply -R C:\rebuild\l84\counter\32a2ef9-patch-touches-tests.patch
+        patch = (
+            "diff --git a/tests/test_x.py b/tests/test_x.py\n"
+            "deleted file mode 100644\n"
+            "--- a/tests/test_x.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,2 +0,0 @@\n"
+            "-def test_x():\n"
+            "-    assert True\n"
+        )
+        self.assertEqual(unfix.patch_touches_tests(patch, ("tests/",)),
+                         ["tests/test_x.py"])
+
+    def test_test_prefix_outside_tests_dir_follows_explicit_prefix(self):
+        """文件名带 `test_` 但不在 `tests/` 下：工具不猜，只认 `--test-prefixes`。
+
+        eec6a1b 的边界是**显式前缀**：默认 `tests/` 时根目录 `test_x.py` 不拦��
+        把 `test_` 纳入前缀，同一个补丁立刻被识别。这里把两侧都钉住，
+        免得以后有人把「没传前缀」误读成「工具漏拦」。
+        """
+        # 反证（会红）：git apply -R C:\rebuild\l84\counter\32a2ef9-patch-touches-tests.patch
+        patch = (
+            "diff --git a/test_x.py b/test_x.py\n"
+            "--- a/test_x.py\n"
+            "+++ b/test_x.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            "-def test_x():\n"
+            "-    assert False\n"
+            "+def test_x():\n"
+            "+    assert True\n"
+        )
+        self.assertEqual(unfix.patch_touches_tests(patch, ("tests/",)), [])
+        self.assertEqual(unfix.patch_touches_tests(patch, ("tests/", "test_")),
+                         ["test_x.py"])
+
+    # ---- T9: 无 pytest 的解释器上，--selftest 是 exit 2 不是 1 -------
+    def test_selftest_without_pytest_exits_2_not_1(self):
+        """`python -S` ≈ 没装 pytest 的解释器：必须 exit 2 并说清是环境缺东西。
+
+        修之前它会把「1 例 FAIL」交给上层，读起来像代码坏了。
+        """
+        # 反证（会红）：git apply -R C:\rebuild\l84\counter\eec6a1b-selftest-exit2-minimal.patch
+        # （最小坏版本只把 exit 2 降回 exit 1；完整回退 eec6a1b 会让既有
+        #   TestSelftestNeedsPytest 在 -S 下递归，故反证补丁保留 import 检查）
+        import subprocess
+        script = pathlib.Path(unfix.__file__).resolve()
+        proc = subprocess.run(
+            [sys.executable, "-S", "-X", "utf8", "-B", str(script), "--selftest"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=60, stdin=subprocess.DEVNULL)
+        self.assertEqual(proc.returncode, 2, proc.stdout + "\n" + proc.stderr)
+        self.assertIn("没有 pytest", proc.stderr)
+        self.assertIn("这不是代码缺陷", proc.stderr)
+
+    # ---- T10: 拒绝改测试的补丁，端到端接线 ---------------------------
+    def test_cheat_patch_is_rejected_end_to_end(self):
+        """只改断言的作弊补丁：必须在打补丁之前被拒，状态 infra_error 并指出文件。
+
+        纯函数用例只能证明 `patch_touches_tests` 会识别；这条证明 `run_one` 真的
+        调用了它，而且是在 `git apply` 之前 —— 否则工具会诚实地把假绿判成 passed。
+        """
+        # 反证（会红）：git apply -R C:\rebuild\l84\counter\32a2ef9-patch-touches-tests.patch
+        repo, task = self._gate_repo()
+        cheat = repo / "cheat.patch"
+        cheat.write_text(
+            "diff --git a/tests/test_mod.py b/tests/test_mod.py\n"
+            "--- a/tests/test_mod.py\n"
+            "+++ b/tests/test_mod.py\n"
+            "@@ -1,5 +1,5 @@\n"
+            " from mod import value\n"
+            " \n"
+            " \n"
+            " def test_value():\n"
+            "-    assert value() == 1\n"
+            "+    assert True\n",
+            encoding="utf-8", newline="\n")
+        out = self._tmp()
+        unfix.run_one(repo, self.PY, task, ["tests/test_mod.py"], out,
+                      False, str(cheat), 30, ("mod.py",), ("tests/",))
+        res = json.loads((out / f"{task}.json").read_text(encoding="utf-8"))
+        self.assertEqual(res["status"], "infra_error", res)
+        self.assertIn("补丁修改了测试文件", res["reason"])
+        self.assertIn("tests/test_mod.py", res["reason"])
+        self.assertEqual(res["steps"]["patch_check"]["touched_tests"],
+                         ["tests/test_mod.py"])
+        self.assertNotIn("pytest", res["steps"], "没打补丁就该拒，绝不能跑测试")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

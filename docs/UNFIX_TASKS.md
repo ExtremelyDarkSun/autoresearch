@@ -45,6 +45,19 @@
 
 ## 3. 为什么判据要写成纯函数并配测试
 
+判据分两层测，缺一不可：
+
+| 层次 | 测什么 | 抓得住 | 抓不住 |
+|---|---|---|---|
+| 纯函数级 | `classify` / `regression_verdict` / `collection_broken_from` / `patch_touches_tests` | 边界值组合 | import 期的名字解析错误 |
+| 集成级 | 起临时 git 仓库、走真 CLI（`TestFalseGreens`） | `scan` 的 `NameError` 这类整条路径崩 | 单个函数的边界 |
+
+**两层都是必需的**，有实例：`4ef9340` 把 `TEST_PREFIXES` 改名时漏了 `scan()` 里一行，
+纯函数级用例全绿（没有一条调用 `scan()`），是集成级用例才抓到的。
+
+集成级那组（`TestFalseGreens`）由副机编写并附逐条 `git apply -R` 反证；本地用独立变异复核过
+（例如只保留 `+++ ` 行头、不再看 `--- `，`test_deleted_test_file_is_detected` 立刻变红）。
+
 做这套实验时，判据**连续错三次**，每次都是把两件不同的事装进同一个桶：
 
 1. **pytest 的 `2` 与 `1` 混在「非零」里** —— 一次埋掉 22 个候选；
