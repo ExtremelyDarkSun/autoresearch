@@ -231,3 +231,35 @@ PowerShell 的 `>` 写的」。
 
 `summary["skipped_neg_hang"]` + `tasks_attempted`。否则读者看到「跑了 3 道、可用 2 道」
 会去猜第 3 道怎么了 —— **报告里不该有需要读者猜的缺口。**
+
+## 题单必须自带 `repo` 与前缀
+
+`scan` 产出的 `tasks_unfix.jsonl` 原来只有 `commit / test_files / fail_to_pass` 等字段。
+把它直接喂给下游会连撞两堵墙：
+
+1. `bench --tasks` 不知道在哪个仓库评（题单里没 `repo`）；
+2. 用自定义前缀（例如 `--src-prefixes mod.py`）扫出来的题，复评时前缀退回默认值，
+   **全部判 `infra_error`** ——「该提交里没有文件匹配源码前缀」。
+
+也就是说「scan 产题单 → 复评」是**半条链**，必须手改文件才能通。
+
+现在题单每行都带 `repo`、`src_prefixes`、`test_prefixes`；`bench` 用题单里的值，
+命令行参数只作兜底。实测（夹具仓库，命令里不给 `--repo` 也不给前缀）：
+
+```
+[3/3] 汇总
+  可用题 1；负控红 1；正控绿 1；量具成立=True
+```
+
+### 同一类错误的第 N 次
+
+本周已经四次「产物缺了消费者要的东西」：
+
+| 缺什么 | 现象 |
+|---|---|
+| `bench` 不透传 `fail_to_pass` | CLI 判 passed、benchmark 判 failed |
+| `bench` 不把 `only_commits` 传给 `scan` | 复评要多花十几分钟 |
+| `scan` 不传 `budget_seconds` | `--budget-seconds 0` 仍然跑满 |
+| 题单不带 `repo` / 前缀 | 复评全判 `infra_error` |
+
+四次都不是算法错，都是**接口没接上**。

@@ -191,6 +191,10 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
         try:
             task = {"commit": commit, "subject": row.get("subject"), "tests": tests,
                     "usable": True, "fail_to_pass": row.get("fail_to_pass", [])}
+            # 题单自带前缀就用题单的：用自定义前缀扫出来的题，
+            # 复评时不该因为「忘了带 --src-prefixes」而变成 infra_error。
+            task_src = tuple(row.get("src_prefixes") or src_prefixes)
+            task_tests = tuple(row.get("test_prefixes") or test_prefixes)
             t_task = time.monotonic()
             def _left():
                 # 单题预算：挂死一道题不该拖垮整轮。
@@ -198,7 +202,7 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
             print(f"[2/3] ({i}/{len(usable)}) {commit} 负控 / 正控", flush=True)
             neg = unfix._capture_run(repo, py, commit, tests, out_dir / f"neg-{commit}",
                                     apply_gold=False, patch=None, timeout=_left(),
-                                    src_prefixes=src_prefixes, test_prefixes=test_prefixes,
+                                    src_prefixes=task_src, test_prefixes=task_tests,
                                         # 判绿按题目要的用例，不是整文件：
                                         # 同文件有既有失败时，正确补丁会被误判 failed。
                                         fail_to_pass=task.get("fail_to_pass") or None)
@@ -213,7 +217,7 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
                 continue
             gold = unfix._capture_run(repo, py, commit, tests, out_dir / f"gold-{commit}",
                                      apply_gold=True, patch=None, timeout=_left(),
-                                     src_prefixes=src_prefixes, test_prefixes=test_prefixes,
+                                     src_prefixes=task_src, test_prefixes=task_tests,
                                         # 判绿按题目要的用例，不是整文件：
                                         # 同文件有既有失败时，正确补丁会被误判 failed。
                                         fail_to_pass=task.get("fail_to_pass") or None)
@@ -231,7 +235,7 @@ def run_bench(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib
                 print(f"        评补丁 {patch.name}", flush=True)
                 got = unfix._capture_run(repo, py, commit, tests, out_dir / f"patch-{commit}",
                                         apply_gold=False, patch=str(patch), timeout=_left(),
-                                        src_prefixes=src_prefixes, test_prefixes=test_prefixes,
+                                        src_prefixes=task_src, test_prefixes=task_tests,
                                         # 判绿按题目要的用例，不是整文件：
                                         # 同文件有既有失败时，正确补丁会被误判 failed。
                                         fail_to_pass=task.get("fail_to_pass") or None)

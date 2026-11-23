@@ -25,6 +25,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import bench  # noqa: E402
 import study_round  # noqa: E402
+import unfix  # noqa: E402
 
 
 def _task(usable=True, neg="failed", gold="passed", patch="passed"):
@@ -399,5 +400,52 @@ class TestSingleTaskErrorDoesNotKillRound(unittest.TestCase):
         bad = [t for t in summary["tasks"] if t["commit"] == "deadbeef"][0]
         self.assertEqual(bad.get("skipped"), "error", bad)
         self.assertIn("error", bad, "要把异常原文留在记录里")
+class TestTaskListIsSelfContained(unittest.TestCase):
+    """scan 产出的题单要能**直接**喂给 bench —— 不带 repo、不带前缀。
+
+    改前：题单里没有 `repo`（bench 报「不知道在哪个仓库评」）也没有前缀
+    （用自定义前缀扫出来的题被当默认前缀，全判 infra_error）。
+    也就是说「scan 产题单 → bench 复评」是**半条链**，必须手改文件才能通。
+    """
+
+    def test_scan_tasklist_feeds_bench_without_extra_flags(self):
+        import shutil
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="chain-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo = tmp / "repo"
+        (repo / "tests").mkdir(parents=True)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repo), *args],
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+        def commit(msg):
+            git("add", "-A")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg)
+
+        git("init", "-q")
+        (repo / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(
+            "from mod import f\n\n\ndef test_f():\n    assert f() == 2\n", encoding="utf-8")
+        commit("c1")
+        (repo / "mod.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+        (repo / "tests" / "test_m.py").write_text(
+            "from mod import f\n\n\ndef test_f():\n    assert f() == 2\n\n# c2\n", encoding="utf-8")
+        commit("c2")
+
+        scan_dir = tmp / "scan"
+        unfix.scan(repo, pathlib.Path(sys.executable), 5, scan_dir, ("mod.py",), ("tests/",))
+        tasks = scan_dir / "tasks_unfix.jsonl"
+        first = json.loads(tasks.read_text(encoding="utf-8").splitlines()[0])
+        self.assertEqual(first["repo"], str(repo), "题单必须自带 repo")
+        self.assertEqual(first["src_prefixes"], ["mod.py"], "题单必须自带前缀")
+
+        rc = bench.run_bench(repo, pathlib.Path(sys.executable), 5, tmp / "bench",
+                             None, None, timeout=120.0, tasks_file=str(tasks))
+        self.assertEqual(rc, 0)
+        summary = json.loads((tmp / "bench" / "summary.json").read_text(encoding="utf-8"))
+        self.assertTrue(summary["summary"]["instrument_ok"],
+                        "题单自带前缀时，量具必须成立（负控红、正控绿）")
 if __name__ == "__main__":
     unittest.main(verbosity=2)

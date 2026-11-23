@@ -547,7 +547,11 @@ def scan(repo: pathlib.Path, py: pathlib.Path, limit: int, out_dir: pathlib.Path
     # 把「预算用尽、什么都没验」说成「这个仓库的布局不对」—— 两种完全不同的原因，
     # 而报错只说了一种。实测：`--budget-seconds 0` 就踩到这。
     (out_dir / "candidates.jsonl").write_text("", encoding="utf-8") if not rows else None
-    tasks = [{"task_id": f"{repo.name}__{r['commit']}", "commit": r["commit"],
+    tasks = [{"task_id": f"{repo.name}__{r['commit']}",
+              "repo": str(repo),  # 下游（bench --tasks / research.py eval）要它
+              "src_prefixes": list(src_prefixes),
+              "test_prefixes": list(test_prefixes),
+              "commit": r["commit"],
               "subject": r["subject"], "src_files": r["src_files"],
               "test_files": r["test_files"], "fail_to_pass": r["fail_to_pass"],
               "fail_mode": r["fail_mode"]} for r in rows if r["usable"]]
