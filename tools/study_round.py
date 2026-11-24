@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import shlex
@@ -148,6 +149,13 @@ def build_round(repo: pathlib.Path, py: pathlib.Path, limit: int, out: pathlib.P
         "pass_rate_all": summary["summary"].get("pass_rate_all"),
         "instrument_ok": summary["summary"].get("instrument_ok"),
         "bench_rc": rc,
+        # 让「这份 round.json 是不是基于最新那份 summary」可判定：
+        # 单独重跑 bench 会更新 summary.json，但不会更新 round.json，
+        # 两个文件的指纹不一致就说明 round.json 是旧的。
+        "generated_at": __import__("datetime").datetime.now().astimezone().isoformat(
+            timespec="seconds"),
+        "bench_summary_sha256": hashlib.sha256(
+            (out / "bench" / "summary.json").read_bytes()).hexdigest()[:16],
     }
     (out / "round.json").write_text(json.dumps(report, ensure_ascii=False, indent=2),
                                     encoding="utf-8")

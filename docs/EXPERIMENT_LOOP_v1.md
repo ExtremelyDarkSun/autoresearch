@@ -286,3 +286,27 @@ $LASTEXITCODE = 0
    现在 `bench.py` 的模块说明里写了这条约定与正确抓法。
 2. 我上一轮的处理其实是对的 —— 没把它记成「完成」，而是记成「存疑」。
    如果当时顺手写成「已跑通、exit 0」，这条就永远查不出来。
+
+## `round.json` 与 `bench/summary.json` 会互相打架
+
+实测（副机 L117 现场）：先跑一次 `study_round` 写了 `round.json`，之后又**单独**跑了一次
+`bench` 写进同一个 `bench/` 目录。结果：
+
+| 文件 | `patch_scored` | `instrument_ok` |
+|---|---|---|
+| `round.json`（旧）| 0 | false |
+| `bench/summary.json`（新）| 1 | true |
+
+**两个文件都没有写「我是什么时候、基于哪份汇总写的」。** 读的人只能猜谁新。
+
+现在 `round.json` 里带两样东西：
+
+```json
+"generated_at": "2026-11-24T09:00:56+08:00",
+"bench_summary_sha256": "1f3c…"     // summary.json 的前 16 位
+```
+
+重跑 `bench` 之后，把 `summary.json` 的哈希和 `round.json` 里那个比一下就知道谁过期了。
+
+> 同一个实验留下两个读数文件、并且都不标新旧，比只留一个错读数更坏 ——
+> 因为读的人会挑那个好看的。
